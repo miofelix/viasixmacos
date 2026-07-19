@@ -11,7 +11,10 @@ final class PersistenceTests: XCTestCase {
         try DefaultResourceInstaller.install(into: paths)
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.ipv4List.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.ipv6List.path))
-        XCTAssertEqual(ConfigTemplate.address(in: try Data(contentsOf: paths.templateConfig)), "2400:cb00:2049:2a3b:d8ee:f827:92bf:461")
+        XCTAssertEqual(
+            ConfigTemplate.address(in: try Data(contentsOf: paths.templateConfig)),
+            "2001:db8::1"
+        )
 
         let custom = Data("custom-template".utf8)
         try custom.write(to: paths.templateConfig, options: .atomic)

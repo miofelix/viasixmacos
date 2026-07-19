@@ -11,7 +11,7 @@ final class AppSectionTests: XCTestCase {
         }
     }
 
-    func testProxyDefaultsMatchReferenceApplication() {
+    func testProxyEndpointUsesProductDefaults() {
         XCTAssertEqual(AppMetadata.proxyHost, "127.0.0.1")
         XCTAssertEqual(AppMetadata.proxyPort, 11_451)
     }

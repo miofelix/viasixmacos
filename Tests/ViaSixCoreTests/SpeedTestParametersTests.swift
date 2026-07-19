@@ -2,7 +2,7 @@ import XCTest
 @testable import ViaSixCore
 
 final class SpeedTestParametersTests: XCTestCase {
-    func testReferenceDefaultsAndArguments() throws {
+    func testDefaultParametersProduceExpectedArguments() throws {
         let parameters = SpeedTestParameters(ipFile: "/tmp/ipv6.txt")
         let args = try parameters.commandLineArguments(resultURL: URL(fileURLWithPath: "/tmp/result.csv"))
 

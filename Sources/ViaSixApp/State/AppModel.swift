@@ -28,6 +28,7 @@ final class AppModel {
 
     @ObservationIgnored private var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored private var runtimeTask: Task<Void, Never>?
+    @ObservationIgnored private var templateTask: Task<Void, Never>?
     @ObservationIgnored private var speedTestTask: Task<Void, Never>?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var detectTask: Task<Void, Never>?
@@ -122,6 +123,37 @@ final class AppModel {
                 showNotice("导入失败：\(error.localizedDescription)", style: .error)
             }
             runtimeTask = nil
+        }
+    }
+
+    func importXrayTemplate(from url: URL) {
+        guard templateTask == nil else { return }
+        switch state.xrayPhase {
+        case .validating, .starting, .running, .stopping:
+            showNotice("请先停止本地代理再更换连接配置", style: .error)
+            return
+        case .stopped, .failed:
+            break
+        }
+
+        let selectedIP = state.preferences.selectedIP
+        templateTask = Task { [weak self] in
+            guard let self else { return }
+            let isAccessingSecurityScopedResource = url.startAccessingSecurityScopedResource()
+            defer {
+                if isAccessingSecurityScopedResource {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+            do {
+                try await bootstrapper.importTemplate(from: url, selectedIP: selectedIP)
+                appendLog(source: .app, level: .success, message: "已导入代理连接模板")
+                showNotice("代理配置已导入", style: .success)
+            } catch {
+                appendLog(source: .app, level: .error, message: "导入代理配置失败：\(error.localizedDescription)")
+                showNotice("导入失败：\(error.localizedDescription)", style: .error)
+            }
+            templateTask = nil
         }
     }
 
@@ -289,9 +321,8 @@ final class AppModel {
                 guard !selectedIP.isEmpty else {
                     throw AppModelError.missingSelectedIP
                 }
-                if try await bootstrapper.ensureConfig(ip: selectedIP) {
-                    appendLog(source: .app, message: "已同步当前节点到 Xray 配置")
-                }
+                try await bootstrapper.prepareConfigForLaunch(ip: selectedIP)
+                appendLog(source: .app, message: "已应用当前节点与代理连接配置")
 
                 var environment: [String: String] = [:]
                 if state.runtimeStatus?.xrayIsReady == true,
@@ -411,6 +442,7 @@ final class AppModel {
         let pendingTasks = [
             bootstrapTask,
             runtimeTask,
+            templateTask,
             speedTestTask,
             saveTask,
             detectTask,

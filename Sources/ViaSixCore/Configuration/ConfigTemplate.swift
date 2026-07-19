@@ -3,27 +3,31 @@ import Foundation
 public enum ConfigTemplateError: LocalizedError, Equatable, Sendable {
     case invalidJSON
     case missingOutbounds
+    case missingProxyOutbound
     case missingVnext
+    case connectionNotConfigured
 
     public var errorDescription: String? {
         switch self {
         case .invalidJSON: "Xray 模板不是有效 JSON"
         case .missingOutbounds: "Xray 模板缺少 outbounds"
-        case .missingVnext: "Xray 模板缺少 outbounds[0].settings.vnext"
+        case .missingProxyOutbound: "Xray 模板缺少 tag 为 proxy 的出站配置"
+        case .missingVnext: "proxy 出站缺少 settings.vnext"
+        case .connectionNotConfigured: "代理连接尚未配置，请在“设置”中导入或编辑你自己的 Xray 模板"
         }
     }
 }
 
 public enum ConfigTemplate {
+    public static let placeholderUserID = "00000000-0000-0000-0000-000000000000"
+    public static let placeholderServerName = "example.com"
+
     public static func replacingAddress(in template: Data, with ip: String) throws -> Data {
-        guard let object = try? JSONSerialization.jsonObject(with: template),
-              var config = object as? [String: Any] else {
-            throw ConfigTemplateError.invalidJSON
+        var config = try configurationObject(in: template)
+        var outbounds = try outboundList(in: config)
+        guard let proxyIndex = outbounds.firstIndex(where: { $0["tag"] as? String == "proxy" }) else {
+            throw ConfigTemplateError.missingProxyOutbound
         }
-        guard var outbounds = config["outbounds"] as? [[String: Any]], !outbounds.isEmpty else {
-            throw ConfigTemplateError.missingOutbounds
-        }
-        let proxyIndex = outbounds.firstIndex { $0["tag"] as? String == "proxy" } ?? 0
         guard var settings = outbounds[proxyIndex]["settings"] as? [String: Any],
               var vnext = settings["vnext"] as? [[String: Any]], !vnext.isEmpty else {
             throw ConfigTemplateError.missingVnext
@@ -38,6 +42,28 @@ public enum ConfigTemplate {
             throw ConfigTemplateError.invalidJSON
         }
         return try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys])
+    }
+
+    public static func validateTemplate(_ template: Data) throws {
+        _ = try replacingAddress(in: template, with: "2001:db8::1")
+    }
+
+    public static func validateForLaunch(_ config: Data) throws {
+        let object = try configurationObject(in: config)
+        let outbounds = try outboundList(in: object)
+        guard let proxy = outbounds.first(where: { $0["tag"] as? String == "proxy" }) else {
+            throw ConfigTemplateError.missingProxyOutbound
+        }
+        guard let settings = proxy["settings"] as? [String: Any],
+              let vnext = settings["vnext"] as? [[String: Any]],
+              let server = vnext.first,
+              let address = server["address"] as? String,
+              !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ConfigTemplateError.missingVnext
+        }
+        guard !containsPlaceholder(in: proxy) else {
+            throw ConfigTemplateError.connectionNotConfigured
+        }
     }
 
     public static func write(
@@ -56,12 +82,41 @@ public enum ConfigTemplate {
         guard let object = try? JSONSerialization.jsonObject(with: config),
               let dictionary = object as? [String: Any],
               let outbounds = dictionary["outbounds"] as? [[String: Any]],
-              let proxy = outbounds.first(where: { $0["tag"] as? String == "proxy" }) ?? outbounds.first,
+              let proxy = outbounds.first(where: { $0["tag"] as? String == "proxy" }),
               let settings = proxy["settings"] as? [String: Any],
               let vnext = settings["vnext"] as? [[String: Any]],
               let address = vnext.first?["address"] as? String else {
             return nil
         }
         return address
+    }
+
+    private static func configurationObject(in data: Data) throws -> [String: Any] {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let config = object as? [String: Any] else {
+            throw ConfigTemplateError.invalidJSON
+        }
+        return config
+    }
+
+    private static func outboundList(in config: [String: Any]) throws -> [[String: Any]] {
+        guard let outbounds = config["outbounds"] as? [[String: Any]], !outbounds.isEmpty else {
+            throw ConfigTemplateError.missingOutbounds
+        }
+        return outbounds
+    }
+
+    private static func containsPlaceholder(in value: Any) -> Bool {
+        if let string = value as? String {
+            let normalized = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return normalized == placeholderUserID || normalized == placeholderServerName
+        }
+        if let dictionary = value as? [String: Any] {
+            return dictionary.values.contains(where: containsPlaceholder)
+        }
+        if let array = value as? [Any] {
+            return array.contains(where: containsPlaceholder)
+        }
+        return false
     }
 }

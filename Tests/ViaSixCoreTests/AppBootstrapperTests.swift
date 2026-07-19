@@ -22,6 +22,23 @@ final class AppBootstrapperTests: XCTestCase {
         XCTAssertEqual(ipv4Ranges.last, "131.0.72.0/22")
     }
 
+    func testPrepareDefaultsInstallsNeutralConnectionTemplate() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+
+        try await bootstrapper.prepareDefaults()
+
+        let template = try Data(contentsOf: paths.templateConfig)
+        let templateText = String(decoding: template, as: UTF8.self)
+        let legacyValues = try TestConfigFixtures.legacyConnectionValues()
+        XCTAssertFalse(templateText.contains(legacyValues.userID))
+        XCTAssertFalse(templateText.contains(legacyValues.serverName))
+        XCTAssertTrue(templateText.contains(ConfigTemplate.placeholderUserID))
+        XCTAssertTrue(templateText.contains(ConfigTemplate.placeholderServerName))
+        XCTAssertEqual(ConfigTemplate.address(in: template), "2001:db8::1")
+    }
+
     func testPrepareDefaultsMigratesOnlyThePreviouslyShippedIPv4List() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
@@ -40,8 +57,7 @@ final class AppBootstrapperTests: XCTestCase {
         198.41.128.0/17
         162.158.0.0/15
         104.16.0.0/12
-
-        """
+        """ + "\n\n"
         try Data(legacyIPv4List.utf8).write(to: paths.ipv4List)
 
         try await bootstrapper.prepareDefaults()
@@ -159,6 +175,41 @@ final class AppBootstrapperTests: XCTestCase {
         let currentIP = try await bootstrapper.currentConfigIP()
         XCTAssertTrue(repaired)
         XCTAssertEqual(currentIP, "2606::2")
+    }
+
+    func testPrepareConfigForLaunchRebuildsConnectionDetailsWhenIPIsUnchanged() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        let firstTemplate = try TestConfigFixtures.connectionTemplate(
+            userID: "f4edc501-056c-4572-9da8-ad63a264a698",
+            serverName: "first.example.net",
+            path: "/first"
+        )
+        try await bootstrapper.replaceTemplate(with: firstTemplate)
+        try await bootstrapper.prepareConfigForLaunch(ip: "2606::8")
+
+        let secondTemplate = try TestConfigFixtures.connectionTemplate(
+            userID: "22de5d8d-17f7-40e8-a83f-567ae87c865a",
+            serverName: "second.example.net",
+            path: "/second"
+        )
+        try secondTemplate.write(to: paths.templateConfig, options: .atomic)
+
+        try await bootstrapper.prepareConfigForLaunch(ip: "2606::8")
+
+        let generated = String(
+            decoding: try Data(contentsOf: paths.generatedConfig),
+            as: UTF8.self
+        )
+        XCTAssertTrue(generated.contains("22de5d8d-17f7-40e8-a83f-567ae87c865a"))
+        XCTAssertTrue(generated.contains("second.example.net"))
+        XCTAssertTrue(generated.contains("/second"))
+        XCTAssertFalse(generated.contains("f4edc501-056c-4572-9da8-ad63a264a698"))
+        XCTAssertFalse(generated.contains("first.example.net"))
+        XCTAssertFalse(generated.contains("/first"))
+        XCTAssertEqual(ConfigTemplate.address(in: Data(generated.utf8)), "2606::8")
     }
 
     private func makePaths() -> AppPaths {

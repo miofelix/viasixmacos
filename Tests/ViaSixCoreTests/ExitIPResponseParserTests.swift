@@ -2,7 +2,7 @@ import XCTest
 @testable import ViaSixCore
 
 final class ExitIPResponseParserTests: XCTestCase {
-    func testParsesReferenceServiceResponse() throws {
+    func testParsesMyIPLAJSONResponse() throws {
         let data = Data(#"{"ip":"2606::1","location":{"country_name":"美国","city":"圣何塞"}}"#.utf8)
         XCTAssertEqual(
             try ExitIPResponseParser.parse(data),
@@ -21,4 +21,3 @@ final class ExitIPResponseParserTests: XCTestCase {
         XCTAssertThrowsError(try ExitIPResponseParser.parse(Data(" \n".utf8)))
     }
 }
-

@@ -26,6 +26,34 @@ public actor AppBootstrapper {
         )
     }
 
+    public func prepareConfigForLaunch(ip: String) throws {
+        let template = try Data(contentsOf: paths.templateConfig)
+        let config = try ConfigTemplate.replacingAddress(in: template, with: ip)
+        try ConfigTemplate.validateForLaunch(config)
+        try config.write(to: paths.generatedConfig, options: .atomic)
+    }
+
+    public func replaceTemplate(with data: Data, selectedIP: String? = nil) throws {
+        try ConfigTemplate.validateTemplate(data)
+        let normalizedIP = selectedIP?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let validationIP = normalizedIP.isEmpty ? "2001:db8::2" : normalizedIP
+        let generatedConfig = try ConfigTemplate.replacingAddress(in: data, with: validationIP)
+        try ConfigTemplate.validateForLaunch(generatedConfig)
+
+        try data.write(to: paths.templateConfig, options: .atomic)
+        if normalizedIP.isEmpty {
+            if FileManager.default.fileExists(atPath: paths.generatedConfig.path) {
+                try FileManager.default.removeItem(at: paths.generatedConfig)
+            }
+        } else {
+            try generatedConfig.write(to: paths.generatedConfig, options: .atomic)
+        }
+    }
+
+    public func importTemplate(from sourceURL: URL, selectedIP: String? = nil) throws {
+        try replaceTemplate(with: Data(contentsOf: sourceURL), selectedIP: selectedIP)
+    }
+
     @discardableResult
     public func ensureConfig(ip: String) throws -> Bool {
         let normalizedIP = ip.trimmingCharacters(in: .whitespacesAndNewlines)
