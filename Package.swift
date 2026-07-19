@@ -14,7 +14,10 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "ViaSixCore"
+            name: "ViaSixCore",
+            resources: [
+                .process("Resources")
+            ]
         ),
         .executableTarget(
             name: "ViaSixApp",
@@ -26,4 +29,3 @@ let package = Package(
         )
     ]
 )
-
