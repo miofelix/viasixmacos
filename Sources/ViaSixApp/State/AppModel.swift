@@ -270,7 +270,9 @@ final class AppModel {
         guard activeXray == nil, xrayStartTask == nil, xrayStopTask == nil else { return }
         guard let executableURL = resolvedExecutable(
             preferredPath: state.preferences.xrayPath,
-            managedURL: state.runtimeStatus?.xrayURL,
+            managedURL: state.runtimeStatus?.xrayIsReady == true
+                ? state.runtimeStatus?.xrayURL
+                : nil,
             commandName: "xray"
         ) else {
             showNotice("请先安装 Xray 运行组件", style: .error)
@@ -282,15 +284,19 @@ final class AppModel {
         xrayStartTask = Task { [weak self] in
             guard let self else { return }
             do {
-                if !FileManager.default.fileExists(atPath: paths.generatedConfig.path) {
-                    guard !state.preferences.selectedIP.isEmpty else {
-                        throw AppModelError.missingSelectedIP
-                    }
-                    try await bootstrapper.writeConfig(ip: state.preferences.selectedIP)
+                let selectedIP = state.preferences.selectedIP
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !selectedIP.isEmpty else {
+                    throw AppModelError.missingSelectedIP
+                }
+                if try await bootstrapper.ensureConfig(ip: selectedIP) {
+                    appendLog(source: .app, message: "已同步当前节点到 Xray 配置")
                 }
 
                 var environment: [String: String] = [:]
-                if let assetURL = state.runtimeStatus?.geoIPURL {
+                if state.runtimeStatus?.xrayIsReady == true,
+                   executableURL.standardizedFileURL == state.runtimeStatus?.xrayURL?.standardizedFileURL,
+                   let assetURL = state.runtimeStatus?.geoIPURL {
                     environment["XRAY_LOCATION_ASSET"] = assetURL.deletingLastPathComponent().path
                 }
                 let controller = XrayController(
@@ -432,21 +438,28 @@ final class AppModel {
             try await bootstrapper.prepareDefaults()
             let defaults = UserPreferences(parameters: .defaults(ipv6File: paths.ipv6List))
             var preferences = await preferencesStore.load(defaults: defaults)
+            let loadedPreferences = preferences
             normalizeBundledSourcePath(in: &preferences)
 
             async let results = bootstrapper.loadResults()
             async let status = runtimeManager.installedStatus()
             let (loadedResults, installedStatus) = try await (results, status)
 
-            if preferences.selectedIP.isEmpty,
-               let configuredIP = try await bootstrapper.currentConfigIP() {
+            if let configuredIP = try await bootstrapper.currentConfigIP()?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !configuredIP.isEmpty {
                 preferences.selectedIP = configuredIP
+            } else if !preferences.selectedIP.isEmpty {
+                try await bootstrapper.ensureConfig(ip: preferences.selectedIP)
             }
             state.preferences = preferences
             state.results = loadedResults
             state.runtimeStatus = installedStatus
             refreshRuntimePhase()
             state.launchPhase = .ready
+            if preferences != loadedPreferences {
+                schedulePreferencesSave()
+            }
             appendLog(source: .app, level: .success, message: "应用已就绪")
         } catch {
             state.launchPhase = .failed(error.localizedDescription)
@@ -480,9 +493,12 @@ final class AppModel {
             managedURL: state.runtimeStatus?.cfstURL,
             commandName: "cfst"
         )
+        let managedXrayURL = state.runtimeStatus?.xrayIsReady == true
+            ? state.runtimeStatus?.xrayURL
+            : nil
         let xray = resolvedExecutable(
             preferredPath: state.preferences.xrayPath,
-            managedURL: state.runtimeStatus?.xrayURL,
+            managedURL: managedXrayURL,
             commandName: "xray"
         )
         state.runtimePhase = cfst != nil && xray != nil ? .ready : .missing

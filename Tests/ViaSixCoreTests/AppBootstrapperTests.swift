@@ -135,6 +135,32 @@ final class AppBootstrapperTests: XCTestCase {
         XCTAssertNoThrow(try JSONSerialization.jsonObject(with: generated))
     }
 
+    func testEnsureConfigRepairsMismatchWithoutRewritingAnAlreadyMatchingConfig() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        try await bootstrapper.writeConfig(ip: "2606::1")
+
+        try Data("not json".utf8).write(to: paths.templateConfig, options: .atomic)
+        let unchanged = try await bootstrapper.ensureConfig(ip: " 2606::1 ")
+        XCTAssertFalse(unchanged)
+
+        do {
+            _ = try await bootstrapper.ensureConfig(ip: "2606::2")
+            XCTFail("Expected the mismatched config to be regenerated from the template")
+        } catch {
+            XCTAssertEqual(error as? ConfigTemplateError, .invalidJSON)
+        }
+
+        try FileManager.default.removeItem(at: paths.templateConfig)
+        try DefaultResourceInstaller.install(into: paths)
+        let repaired = try await bootstrapper.ensureConfig(ip: "2606::2")
+        let currentIP = try await bootstrapper.currentConfigIP()
+        XCTAssertTrue(repaired)
+        XCTAssertEqual(currentIP, "2606::2")
+    }
+
     private func makePaths() -> AppPaths {
         AppPaths(
             root: FileManager.default.temporaryDirectory

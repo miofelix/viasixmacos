@@ -26,6 +26,15 @@ public actor AppBootstrapper {
         )
     }
 
+    @discardableResult
+    public func ensureConfig(ip: String) throws -> Bool {
+        let normalizedIP = ip.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedIP.isEmpty else { return false }
+        guard try currentConfigIP() != normalizedIP else { return false }
+        try writeConfig(ip: normalizedIP)
+        return true
+    }
+
     public func currentConfigIP() throws -> String? {
         guard FileManager.default.fileExists(atPath: paths.generatedConfig.path) else {
             return nil

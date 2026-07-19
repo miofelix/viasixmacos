@@ -26,6 +26,10 @@ let package = Package(
         .testTarget(
             name: "ViaSixCoreTests",
             dependencies: ["ViaSixCore"]
+        ),
+        .testTarget(
+            name: "ViaSixAppTests",
+            dependencies: ["ViaSixApp", "ViaSixCore"]
         )
     ]
 )

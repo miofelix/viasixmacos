@@ -233,7 +233,13 @@ struct SettingsView: View {
         case .cfst:
             (model.state.preferences.cfstPath, model.state.runtimeStatus?.cfstURL, "cfst")
         case .xray:
-            (model.state.preferences.xrayPath, model.state.runtimeStatus?.xrayURL, "xray")
+            (
+                model.state.preferences.xrayPath,
+                model.state.runtimeStatus?.xrayIsReady == true
+                    ? model.state.runtimeStatus?.xrayURL
+                    : nil,
+                "xray"
+            )
         }
 
         var candidates: [URL] = []

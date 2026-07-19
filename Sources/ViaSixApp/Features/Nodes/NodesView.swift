@@ -890,10 +890,10 @@ private struct ParameterDisclosure<Content: View>: View {
         }
         .tint(VisualStyle.accent)
         .padding(14)
-        .background(.white.opacity(0.36), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(VisualStyle.subtleSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(.white.opacity(0.52), lineWidth: 1)
+                .stroke(VisualStyle.surfaceBorder, lineWidth: 1)
         }
     }
 }
@@ -934,7 +934,7 @@ private struct SourceChoiceButton: View {
                 if isSelected {
                     VisualStyle.banner
                 } else {
-                    Color.white.opacity(0.42)
+                    VisualStyle.subtleSurface
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
@@ -979,7 +979,7 @@ private struct TestModeButton: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                isSelected ? VisualStyle.accent.opacity(0.10) : Color.white.opacity(0.38),
+                isSelected ? VisualStyle.accent.opacity(0.10) : VisualStyle.subtleSurface,
                 in: RoundedRectangle(cornerRadius: 12)
             )
             .overlay {
@@ -1038,7 +1038,7 @@ private struct ToggleSetting: View {
         }
         .toggleStyle(.switch)
         .padding(12)
-        .background(.white.opacity(0.38), in: RoundedRectangle(cornerRadius: 12))
+        .background(VisualStyle.subtleSurface, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -1094,7 +1094,7 @@ private struct TopResultCard: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 17, style: .continuous)
                     .stroke(
-                        isSelected ? VisualStyle.accent.opacity(0.58) : Color.white.opacity(0.52),
+                        isSelected ? VisualStyle.accent.opacity(0.58) : VisualStyle.surfaceBorder,
                         lineWidth: isSelected ? 1.5 : 1
                     )
             }

@@ -51,10 +51,19 @@ public struct RuntimeInstallationStatus: Equatable, Sendable {
     public var missingFiles: Set<RuntimePayloadFile> { discoveredFiles.missingFiles }
     public var isInstalled: Bool { discoveredFiles.isComplete }
 
-    public var isReady: Bool {
-        isInstalled
-            && executableFiles.contains(.cfst)
+    public var cfstIsReady: Bool {
+        cfstURL != nil && executableFiles.contains(.cfst)
+    }
+
+    public var xrayIsReady: Bool {
+        xrayURL != nil
+            && geoIPURL != nil
+            && geoSiteURL != nil
             && executableFiles.contains(.xray)
+    }
+
+    public var isReady: Bool {
+        isInstalled && cfstIsReady && xrayIsReady
     }
 }
 

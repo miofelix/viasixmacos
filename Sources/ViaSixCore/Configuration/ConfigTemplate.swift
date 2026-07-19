@@ -16,7 +16,8 @@ public enum ConfigTemplateError: LocalizedError, Equatable, Sendable {
 
 public enum ConfigTemplate {
     public static func replacingAddress(in template: Data, with ip: String) throws -> Data {
-        guard var config = try JSONSerialization.jsonObject(with: template) as? [String: Any] else {
+        guard let object = try? JSONSerialization.jsonObject(with: template),
+              var config = object as? [String: Any] else {
             throw ConfigTemplateError.invalidJSON
         }
         guard var outbounds = config["outbounds"] as? [[String: Any]], !outbounds.isEmpty else {

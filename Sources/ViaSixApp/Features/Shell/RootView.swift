@@ -145,7 +145,7 @@ private struct NoticeView: View {
         .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(.white.opacity(0.55))
+                .stroke(VisualStyle.surfaceBorder)
         }
         .shadow(color: .black.opacity(0.12), radius: 16, y: 7)
         .onTapGesture(perform: dismiss)

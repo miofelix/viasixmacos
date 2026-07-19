@@ -104,6 +104,37 @@ final class RuntimeManifestTests: XCTestCase {
         assertSendable(RuntimeComponentError.sourceNotFound(URL(fileURLWithPath: "/tmp/missing")))
     }
 
+    func testManagedXrayRequiresBothGeoAssetsBeforeItIsReady() {
+        let runtimeDirectory = URL(fileURLWithPath: "/tmp/runtime")
+        let xrayURL = runtimeDirectory.appendingPathComponent("xray")
+        let geoIPURL = runtimeDirectory.appendingPathComponent("geoip.dat")
+        let incomplete = RuntimeInstallationStatus(
+            runtimeDirectory: runtimeDirectory,
+            discoveredFiles: RuntimeDiscoveredFiles(files: [
+                .xray: xrayURL,
+                .geoIP: geoIPURL,
+            ]),
+            executableFiles: [.xray]
+        )
+
+        XCTAssertFalse(incomplete.xrayIsReady)
+        XCTAssertFalse(incomplete.isReady)
+
+        let complete = RuntimeInstallationStatus(
+            runtimeDirectory: runtimeDirectory,
+            discoveredFiles: RuntimeDiscoveredFiles(files: [
+                .cfst: runtimeDirectory.appendingPathComponent("cfst"),
+                .xray: xrayURL,
+                .geoIP: geoIPURL,
+                .geoSite: runtimeDirectory.appendingPathComponent("geosite.dat"),
+            ]),
+            executableFiles: [.cfst, .xray]
+        )
+        XCTAssertTrue(complete.cfstIsReady)
+        XCTAssertTrue(complete.xrayIsReady)
+        XCTAssertTrue(complete.isReady)
+    }
+
     func testDiscoversAndAtomicallyInstallsLocalPayload() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ViaSix-Runtime-\(UUID().uuidString)", isDirectory: true)
