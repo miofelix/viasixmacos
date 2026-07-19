@@ -8,20 +8,35 @@ struct MenuBarView: View {
     @State private var copyNotice: String?
 
     var body: some View {
-        Button("打开 ViaSix", systemImage: "macwindow") {
-            openMainWindow()
+        Label(xrayStatusTitle, systemImage: xrayStatusIcon)
+        if !model.state.preferences.selectedIP.isEmpty {
+            Text("当前节点 IP：\(model.state.preferences.selectedIP)")
         }
-        .keyboardShortcut("o")
 
-        SettingsLink {
-            Label("打开设置", systemImage: "gearshape")
+        if case .failed(let message) = model.state.xrayPhase {
+            Text(message)
+                .lineLimit(2)
+                .foregroundStyle(.secondary)
         }
 
         Divider()
 
-        Label(xrayStatusTitle, systemImage: xrayStatusIcon)
+        if let proxyUnavailableMessage {
+            Label(proxyUnavailableMessage, systemImage: "info.circle")
+                .foregroundStyle(.secondary)
+        }
+        xrayActions
+
+        if let speedTestUnavailableMessage {
+            Label(speedTestUnavailableMessage, systemImage: "info.circle")
+                .foregroundStyle(.secondary)
+        }
+        speedTestStatus
+        speedTestAction
+
+        Divider()
+
         if !model.state.preferences.selectedIP.isEmpty {
-            Text("当前节点 IP：\(model.state.preferences.selectedIP)")
             Button("复制当前节点 IP", systemImage: "doc.on.doc") {
                 copyToPasteboard(model.state.preferences.selectedIP, label: "节点 IP")
             }
@@ -35,26 +50,16 @@ struct MenuBarView: View {
                 .foregroundStyle(.secondary)
         }
 
-        if case .failed(let message) = model.state.xrayPhase {
-            Text(message)
-                .lineLimit(2)
-                .foregroundStyle(.secondary)
-        }
-
         Divider()
 
-        if let speedTestUnavailableMessage {
-            Label(speedTestUnavailableMessage, systemImage: "info.circle")
-                .foregroundStyle(.secondary)
+        Button("打开 ViaSix", systemImage: "macwindow") {
+            openMainWindow()
         }
-        speedTestStatus
-        speedTestAction
+        .keyboardShortcut("o")
 
-        if let proxyUnavailableMessage {
-            Label(proxyUnavailableMessage, systemImage: "info.circle")
-                .foregroundStyle(.secondary)
+        SettingsLink {
+            Label("打开设置", systemImage: "gearshape")
         }
-        xrayActions
 
         Divider()
 
