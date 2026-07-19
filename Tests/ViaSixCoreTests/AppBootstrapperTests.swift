@@ -14,6 +14,49 @@ final class AppBootstrapperTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.templateConfig.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.runtime.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.logs.path))
+
+        let ipv4Ranges = try String(contentsOf: paths.ipv4List, encoding: .utf8)
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+        XCTAssertEqual(ipv4Ranges.count, 25)
+        XCTAssertEqual(ipv4Ranges.last, "131.0.72.0/22")
+    }
+
+    func testPrepareDefaultsMigratesOnlyThePreviouslyShippedIPv4List() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try paths.prepare()
+        let legacyIPv4List = """
+        173.245.48.0/20
+        103.21.244.0/22
+        103.22.200.0/22
+        103.31.4.0/22
+        141.101.64.0/18
+        108.162.192.0/18
+        190.93.240.0/20
+        188.114.96.0/20
+        197.234.240.0/22
+        198.41.128.0/17
+        162.158.0.0/15
+        104.16.0.0/12
+
+        """
+        try Data(legacyIPv4List.utf8).write(to: paths.ipv4List)
+
+        try await bootstrapper.prepareDefaults()
+
+        let migrated = try String(contentsOf: paths.ipv4List, encoding: .utf8)
+        XCTAssertTrue(migrated.contains("172.67.0.0/16"))
+        XCTAssertTrue(migrated.contains("131.0.72.0/22"))
+
+        let customized = migrated + "203.0.113.0/24\n"
+        try Data(customized.utf8).write(to: paths.ipv4List, options: .atomic)
+        try await bootstrapper.prepareDefaults()
+        XCTAssertEqual(
+            try String(contentsOf: paths.ipv4List, encoding: .utf8),
+            customized
+        )
     }
 
     func testLoadResultsReturnsEmptyWhenMissingAndThrowsForMalformedCSV() async throws {
