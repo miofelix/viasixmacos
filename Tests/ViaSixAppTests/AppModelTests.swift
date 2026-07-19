@@ -242,6 +242,75 @@ final class AppModelTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testStopSpeedTestDoesNotCancelCurrentConfigurationTest() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let model = try await makeSpeedTestModel(
+            paths: paths,
+            selectedIP: "2606::9",
+            script: #"""
+                #!/bin/sh
+                output=""
+                selected_ip=""
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    -o) output="$2"; shift 2 ;;
+                    -ip) selected_ip="$2"; shift 2 ;;
+                    *) shift ;;
+                  esac
+                done
+                printf 'started\n' > current-test-started.txt
+                sleep 0.3
+                printf 'IP,Sent,Recv,Loss,Latency,Speed,Region\n%s,4,4,0,12.5,24.0,SJC\n' "$selected_ip" > "$output"
+                """#
+        )
+
+        model.startCurrentConfigurationTest()
+        let markerURL = paths.root.appendingPathComponent("current-test-started.txt")
+        try await waitUntil { FileManager.default.fileExists(atPath: markerURL.path) }
+
+        model.stopSpeedTest()
+
+        XCTAssertEqual(model.state.speedTest.phase, .idle)
+        XCTAssertEqual(model.state.configurationTest.phase, .running)
+        try await waitUntil { model.state.configurationTest.result != nil }
+        XCTAssertEqual(model.state.configurationTest.result?.ip, "2606::9")
+        XCTAssertEqual(model.state.configurationTest.result?.latency, "12.5")
+        XCTAssertFalse(model.isCfstBusy)
+        await model.shutdown()
+    }
+
+    func testStopSpeedTestStillCancelsFullSpeedTest() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let model = try await makeSpeedTestModel(
+            paths: paths,
+            selectedIP: "2606::10",
+            script: #"""
+                #!/bin/sh
+                output=""
+                while [ "$#" -gt 0 ]; do
+                  if [ "$1" = "-o" ]; then output="$2"; shift 2; else shift; fi
+                done
+                printf 'started\n' > full-test-started.txt
+                sleep 30
+                printf 'IP,Sent,Recv,Loss,Latency,Speed,Region\n2606::10,4,4,0,12.5,24.0,SJC\n' > "$output"
+                """#
+        )
+
+        model.startSpeedTest()
+        let markerURL = paths.root.appendingPathComponent("full-test-started.txt")
+        try await waitUntil { FileManager.default.fileExists(atPath: markerURL.path) }
+
+        model.stopSpeedTest()
+
+        XCTAssertEqual(model.state.speedTest.phase, .stopping)
+        try await waitUntil { model.state.speedTest.phase == .idle }
+        XCTAssertFalse(model.isCfstBusy)
+        XCTAssertEqual(model.state.configurationTest.phase, .idle)
+        await model.shutdown()
+    }
+
     func testExitIPDetectionStoresDirectContextAndPreservesResultWhenModeChanges() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
@@ -394,6 +463,35 @@ final class AppModelTests: XCTestCase {
             exitDetector: exitDetector ?? ExitIPDetector(),
             templateReplacer: templateReplacer
         )
+    }
+
+    private func makeSpeedTestModel(
+        paths: AppPaths,
+        selectedIP: String,
+        script: String
+    ) async throws -> AppModel {
+        let store = PreferencesStore(fileURL: paths.preferences)
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        try await bootstrapper.writeConfig(ip: selectedIP)
+
+        let executableURL = paths.root.appendingPathComponent("cfst-test")
+        try script.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                selectedIP: selectedIP,
+                cfstPath: executableURL.path
+            ))
+
+        let model = makeModel(paths: paths, store: store, bootstrapper: bootstrapper)
+        model.start()
+        try await waitUntilReady(model)
+        return model
     }
 
     private func makePaths() -> AppPaths {

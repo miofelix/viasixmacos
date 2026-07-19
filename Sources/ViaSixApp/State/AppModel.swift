@@ -390,7 +390,7 @@ final class AppModel {
     }
 
     func stopSpeedTest() {
-        guard let runner = activeRunner else { return }
+        guard activeSpeedTestID != nil, let runner = activeRunner else { return }
         state.speedTest.phase = .stopping
         speedTestTask?.cancel()
         Task { await runner.cancel() }
