@@ -75,6 +75,65 @@ final class AppModelTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testBootstrapBacksUpCorruptPreferencesAndRecordsWarning() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        try paths.prepare()
+        let corruptData = Data("not valid preferences json".utf8)
+        try corruptData.write(to: paths.preferences, options: .atomic)
+        let model = makeModel(paths: paths)
+
+        model.start()
+        try await waitUntilReady(model)
+
+        XCTAssertEqual(model.state.preferences.selectedIP, "")
+        XCTAssertTrue(
+            model.state.logs.contains {
+                $0.level == .warning
+                    && $0.message.contains("偏好文件无法解析")
+                    && $0.message.contains("preferences.corrupt-")
+                    && $0.message.contains("本次使用默认设置")
+            }
+        )
+        let backups = try corruptPreferenceBackups(in: paths)
+        XCTAssertEqual(backups.count, 1)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(backups.first)), corruptData)
+        await model.shutdown()
+    }
+
+    func testBootstrapFailsOnPreferencesReadErrorWithoutOverwritingOriginal() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        try paths.prepare()
+        try FileManager.default.createDirectory(
+            at: paths.preferences,
+            withIntermediateDirectories: false
+        )
+        let model = makeModel(paths: paths)
+
+        model.start()
+        try await waitUntil {
+            if case .failed = model.state.launchPhase { return true }
+            return false
+        }
+
+        guard case .failed(let message) = model.state.launchPhase else {
+            return XCTFail("Expected bootstrap to fail")
+        }
+        XCTAssertTrue(message.contains("无法读取偏好文件"))
+        await model.shutdown()
+
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: paths.preferences.path,
+                isDirectory: &isDirectory
+            )
+        )
+        XCTAssertTrue(isDirectory.boolValue)
+        XCTAssertTrue(try corruptPreferenceBackups(in: paths).isEmpty)
+    }
+
     func testBootstrapAllowsRepairingCorruptProxyTemplate() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
@@ -631,6 +690,16 @@ final class AppModelTests: XCTestCase {
             root: FileManager.default.temporaryDirectory
                 .appendingPathComponent("AppModelTests-\(UUID().uuidString)", isDirectory: true)
         )
+    }
+
+    private func corruptPreferenceBackups(in paths: AppPaths) throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(
+            at: paths.preferences.deletingLastPathComponent(),
+            includingPropertiesForKeys: nil
+        ).filter {
+            $0.lastPathComponent.hasPrefix("preferences.corrupt-")
+                && $0.pathExtension == "json"
+        }
     }
 
     private func validTemplate(host: String = "127.0.0.1", port: Int = 11_451) -> Data {

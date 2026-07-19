@@ -830,7 +830,9 @@ final class AppModel {
             _ = try? await pendingTemplateSaveTask.value
         }
         state.templateOperationPhase = .idle
-        try? await preferencesStore.save(state.preferences)
+        if state.launchPhase == .ready {
+            try? await preferencesStore.save(state.preferences)
+        }
     }
 
     private func bootstrap() async {
@@ -838,8 +840,16 @@ final class AppModel {
         do {
             try await bootstrapper.prepareDefaults()
             let defaults = UserPreferences(parameters: .defaults(ipv6File: paths.ipv6List))
-            var preferences = await preferencesStore.load(defaults: defaults)
+            let preferencesLoadResult = try await preferencesStore.load(defaults: defaults)
+            var preferences = preferencesLoadResult.preferences
             let loadedPreferences = preferences
+            var preferencesRecoveryWarning: String?
+            if case .recoveredCorruptFile(let backupURL) = preferencesLoadResult.source {
+                let warning =
+                    "偏好文件无法解析，已在原目录备份为 \(backupURL.lastPathComponent)，本次使用默认设置。"
+                preferencesRecoveryWarning = warning
+                appendLog(source: .app, level: .warning, message: warning)
+            }
             normalizeBundledSourcePath(in: &preferences)
             if preferences.exitIPEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 preferences.exitIPEndpoint = AppMetadata.defaultExitIPEndpoint
@@ -881,10 +891,13 @@ final class AppModel {
             state.proxyEndpoint = proxyEndpoint
             refreshRuntimePhase()
             state.launchPhase = .ready
-            if preferences != loadedPreferences {
+            if preferences != loadedPreferences || preferencesRecoveryWarning != nil {
                 schedulePreferencesSave()
             }
             appendLog(source: .app, level: .success, message: "应用已就绪")
+            if let preferencesRecoveryWarning {
+                showNotice(preferencesRecoveryWarning)
+            }
             if let configurationWarning {
                 showNotice("代理配置需要重新导入或修复：\(configurationWarning)", style: .error)
             }

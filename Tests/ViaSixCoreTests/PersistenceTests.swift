@@ -38,8 +38,86 @@ final class PersistenceTests: XCTestCase {
         changed.exitIPDetectionMode = .ipv4
 
         try await store.save(changed)
-        let loaded = await store.load(defaults: defaults)
-        XCTAssertEqual(loaded, changed)
+        let loaded = try await store.load(defaults: defaults)
+        XCTAssertEqual(loaded.preferences, changed)
+        XCTAssertEqual(loaded.source, .persisted)
+    }
+
+    func testMissingPreferencesReturnDefaultsWithoutCreatingAFile() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ViaSixTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = AppPaths(root: root)
+        let store = PreferencesStore(fileURL: paths.preferences)
+        let defaults = UserPreferences(parameters: .defaults(ipv6File: paths.ipv6List))
+
+        let loaded = try await store.load(defaults: defaults)
+
+        XCTAssertEqual(loaded.preferences, defaults)
+        XCTAssertEqual(loaded.source, .missing)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.preferences.path))
+    }
+
+    func testCorruptPreferencesAreMovedToUniqueBackupsBeforeReturningDefaults() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ViaSixTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = AppPaths(root: root)
+        try paths.prepare()
+        let store = PreferencesStore(fileURL: paths.preferences)
+        let defaults = UserPreferences(parameters: .defaults(ipv6File: paths.ipv6List))
+        let firstCorruptData = Data("not-json-one".utf8)
+        try firstCorruptData.write(to: paths.preferences)
+
+        let firstLoad = try await store.load(defaults: defaults)
+        let firstBackupURL = try recoveredBackupURL(from: firstLoad)
+
+        XCTAssertEqual(firstLoad.preferences, defaults)
+        XCTAssertEqual(try Data(contentsOf: firstBackupURL), firstCorruptData)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.preferences.path))
+        XCTAssertEqual(firstBackupURL.deletingLastPathComponent(), paths.preferences.deletingLastPathComponent())
+        XCTAssertTrue(firstBackupURL.lastPathComponent.hasPrefix("preferences.corrupt-"))
+        XCTAssertTrue(firstBackupURL.lastPathComponent.hasSuffix(".json"))
+
+        let secondCorruptData = Data("not-json-two".utf8)
+        try secondCorruptData.write(to: paths.preferences)
+        let secondLoad = try await store.load(defaults: defaults)
+        let secondBackupURL = try recoveredBackupURL(from: secondLoad)
+
+        XCTAssertNotEqual(secondBackupURL, firstBackupURL)
+        XCTAssertEqual(try Data(contentsOf: firstBackupURL), firstCorruptData)
+        XCTAssertEqual(try Data(contentsOf: secondBackupURL), secondCorruptData)
+    }
+
+    func testPreferencesReadFailureThrowsWithoutMovingTheOriginal() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ViaSixTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = AppPaths(root: root)
+        try paths.prepare()
+        try FileManager.default.createDirectory(at: paths.preferences, withIntermediateDirectories: false)
+        let store = PreferencesStore(fileURL: paths.preferences)
+        let defaults = UserPreferences(parameters: .defaults(ipv6File: paths.ipv6List))
+
+        do {
+            _ = try await store.load(defaults: defaults)
+            XCTFail("Expected an unreadable preferences file to throw")
+        } catch {
+            guard case .unreadableFile(let url, _) = error as? PreferencesStoreError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(url, paths.preferences)
+        }
+
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: paths.preferences.path,
+                isDirectory: &isDirectory
+            )
+        )
+        XCTAssertTrue(isDirectory.boolValue)
+        XCTAssertTrue(try corruptPreferenceBackups(in: paths).isEmpty)
     }
 
     func testApplicationDataUsesOwnerOnlyPermissions() async throws {
@@ -79,5 +157,23 @@ final class PersistenceTests: XCTestCase {
     private func permissions(of url: URL) throws -> Int {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         return try XCTUnwrap(attributes[.posixPermissions] as? NSNumber).intValue & 0o777
+    }
+
+    private func recoveredBackupURL(from result: PreferencesLoadResult) throws -> URL {
+        guard case .recoveredCorruptFile(let backupURL) = result.source else {
+            XCTFail("Expected a recovered corrupt preferences result")
+            throw CocoaError(.coderInvalidValue)
+        }
+        return backupURL
+    }
+
+    private func corruptPreferenceBackups(in paths: AppPaths) throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(
+            at: paths.preferences.deletingLastPathComponent(),
+            includingPropertiesForKeys: nil
+        ).filter {
+            $0.lastPathComponent.hasPrefix("preferences.corrupt-")
+                && $0.pathExtension == "json"
+        }
     }
 }
