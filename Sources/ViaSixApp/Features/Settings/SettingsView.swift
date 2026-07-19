@@ -210,6 +210,8 @@ struct SettingsView: View {
                     )
                 )
                 .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("出口 IP 检测服务地址")
+                .accessibilityHint("使用 HTTP 或 HTTPS 地址")
                 Text("自动模式使用此 HTTP/HTTPS 服务；强制 IPv4 或 IPv6 时使用对应的专用检测服务。")
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -101,6 +101,9 @@ struct ParameterField<Content: View>: View {
 
             content
                 .frame(minHeight: VisualStyle.controlHeight)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(label)
+                .accessibilityHint(hint)
 
             Text(hint)
                 .font(.caption)

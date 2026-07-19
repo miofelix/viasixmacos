@@ -21,16 +21,23 @@ extension NodesView {
 
                 Button(action: copyCandidateIP) {
                     Image(
-                        systemName: copiedCandidateIP == candidateSelection
+                        systemName: candidateSelection != nil
+                            && copiedCandidateIP == candidateSelection
                             ? "checkmark"
                             : "doc.on.doc"
                     )
                 }
                 .buttonStyle(.borderless)
                 .iconButtonHitTarget()
-                .help(copiedCandidateIP == candidateSelection ? "已复制" : "复制所选 IP")
+                .help(
+                    candidateSelection != nil && copiedCandidateIP == candidateSelection
+                        ? "已复制"
+                        : "复制所选 IP"
+                )
                 .accessibilityLabel(
-                    copiedCandidateIP == candidateSelection ? "已复制所选 IP" : "复制所选 IP"
+                    candidateSelection != nil && copiedCandidateIP == candidateSelection
+                        ? "已复制所选 IP"
+                        : "复制所选 IP"
                 )
                 .disabled(candidateSelection == nil)
 
