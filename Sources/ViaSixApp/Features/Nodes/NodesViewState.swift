@@ -116,16 +116,8 @@ extension NodesView {
         }
     }
 
-    var sourceColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 145), spacing: 10)]
-    }
-
     var fieldColumns: [GridItem] {
         [GridItem(.adaptive(minimum: 220), spacing: 14)]
-    }
-
-    var resultColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 205), spacing: 12)]
     }
 
     var resultsTableHeight: CGFloat {

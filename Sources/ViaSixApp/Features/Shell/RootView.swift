@@ -19,17 +19,14 @@ struct RootView: View {
                 HStack(spacing: 9) {
                     Circle()
                         .fill(sidebarStatusColor)
-                        .frame(width: 8, height: 8)
+                        .frame(width: 7, height: 7)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(sidebarStatusTitle)
-                            .font(.caption.weight(.semibold))
-                        Text("127.0.0.1:11451")
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.secondary)
+                            .font(.caption.weight(.medium))
                     }
                     Spacer()
                 }
-                .padding(14)
+                .padding(12)
             }
             .navigationTitle(AppMetadata.name)
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
@@ -39,7 +36,10 @@ struct RootView: View {
                     .ignoresSafeArea()
 
                 detailContent
-                    .padding(26)
+                    .frame(maxWidth: 1_120, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let notice = model.state.notice {
                     NoticeView(notice: notice) {
@@ -51,7 +51,7 @@ struct RootView: View {
             }
         }
         .tint(VisualStyle.accent)
-        .frame(minWidth: 980, minHeight: 660)
+        .frame(minWidth: 960, minHeight: 640)
         .animation(.easeOut(duration: 0.18), value: model.state.notice?.id)
     }
 
@@ -140,14 +140,14 @@ private struct NoticeView: View {
             .foregroundStyle(.secondary)
             .accessibilityLabel("关闭通知")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .stroke(VisualStyle.surfaceBorder)
         }
-        .shadow(color: .black.opacity(0.12), radius: 16, y: 7)
+        .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
         .onTapGesture(perform: dismiss)
     }
 

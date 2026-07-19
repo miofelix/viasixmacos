@@ -9,12 +9,6 @@ extension NodesView {
     var parametersCard: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.headline)
-                    .foregroundStyle(VisualStyle.accent)
-                    .frame(width: 38, height: 38)
-                    .background(VisualStyle.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 11))
-
                 VStack(alignment: .leading, spacing: 3) {
                     Text("测速参数")
                         .font(.headline)
@@ -27,13 +21,6 @@ extension NodesView {
 
                 Spacer()
 
-                Text("完整设置")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(VisualStyle.accent)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(VisualStyle.accent.opacity(0.09), in: Capsule())
-
                 Button {
                     model.resetParameters()
                 } label: {
@@ -42,11 +29,11 @@ extension NodesView {
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
             }
-            .padding(18)
+            .padding(16)
 
             Divider()
 
-            VStack(spacing: 10) {
+            VStack(spacing: 0) {
                 ParameterDisclosure(
                     title: "数据源",
                     subtitle: sourceSummary,
@@ -85,23 +72,29 @@ extension NodesView {
                     performanceSettings
                 }
             }
-            .padding(14)
+            .padding(.vertical, 4)
         }
         .cardStyle()
     }
 
     var sourceSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
-            LazyVGrid(columns: sourceColumns, spacing: 10) {
-                ForEach(IPSourceMode.allCases, id: \.rawValue) { mode in
-                    SourceChoiceButton(
-                        mode: mode,
-                        isSelected: model.ipSourceMode == mode
-                    ) {
+            Picker(
+                "地址来源",
+                selection: Binding(
+                    get: { model.ipSourceMode.rawValue },
+                    set: { rawValue in
+                        guard let mode = IPSourceMode(rawValue: rawValue) else { return }
                         chooseSource(mode)
                     }
+                )
+            ) {
+                ForEach(IPSourceMode.allCases, id: \.rawValue) { mode in
+                    Text(mode.title).tag(mode.rawValue)
                 }
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
 
             switch model.ipSourceMode {
             case .range:
@@ -165,23 +158,20 @@ extension NodesView {
 
     var modeSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 10) {
-                TestModeButton(
-                    title: "TCPing",
-                    subtitle: "快速、资源占用低",
-                    isSelected: !model.parameters.httping
-                ) {
-                    updateParameter(\.httping, to: false)
-                }
-
-                TestModeButton(
-                    title: "HTTPing",
-                    subtitle: "可识别地区并过滤区域",
-                    isSelected: model.parameters.httping
-                ) {
-                    updateParameter(\.httping, to: true)
-                }
+            Picker(
+                "测速模式",
+                selection: Binding(
+                    get: { model.parameters.httping ? "http" : "tcp" },
+                    set: { mode in
+                        updateParameter(\.httping, to: mode == "http")
+                    }
+                )
+            ) {
+                Text("TCPing").tag("tcp")
+                Text("HTTPing").tag("http")
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
 
             LazyVGrid(columns: fieldColumns, alignment: .leading, spacing: 14) {
                 ParameterField(label: "测速端口", hint: "1–65535，默认 443") {

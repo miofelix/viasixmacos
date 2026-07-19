@@ -5,23 +5,24 @@ import ViaSixCore
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
+    @State private var showsCustomExecutables = false
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("设置")
-                        .font(.title2.weight(.bold))
-                    Text("管理本地代理、运行组件与应用数据")
+                        .font(.title2.weight(.semibold))
+                    Text("代理配置、运行组件与应用数据")
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
 
                 proxyConfigurationCard
                 runtimeCard
-                pathCard
                 dataCard
-                aboutCard
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -52,7 +53,6 @@ struct SettingsView: View {
                 Button("安装上游组件", systemImage: "arrow.down.circle") {
                     model.installRuntime()
                 }
-                .buttonStyle(.borderedProminent)
                 .disabled(runtimeActionsDisabled)
 
                 Button("导入本地组件", systemImage: "square.and.arrow.down") {
@@ -68,7 +68,7 @@ struct SettingsView: View {
                 }
             }
 
-            Text("组件来自各自上游项目的 GitHub Releases，并在安装前校验文件完整性；CloudflareSpeedTest 是独立第三方项目。")
+            Text("自动安装会从上游 Releases 下载，并在使用前校验完整性。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -78,8 +78,34 @@ struct SettingsView: View {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            Divider()
+
+            DisclosureGroup(isExpanded: $showsCustomExecutables) {
+                VStack(alignment: .leading, spacing: 14) {
+                    executablePicker(
+                        title: "CFST 路径",
+                        value: model.state.preferences.cfstPath,
+                        component: .cfst
+                    )
+                    executablePicker(
+                        title: "Xray 路径",
+                        value: model.state.preferences.xrayPath,
+                        component: .xray
+                    )
+
+                    Text("留空时使用 ViaSix 管理的组件，也会检查 Homebrew 与 PATH。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 12)
+            } label: {
+                Text("自定义可执行文件")
+                    .font(.subheadline.weight(.medium))
+            }
         }
-        .padding(20)
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle()
     }
 
@@ -88,7 +114,7 @@ struct SettingsView: View {
             Label("代理配置", systemImage: "point.3.connected.trianglepath.dotted")
                 .font(.headline)
 
-            Text("ViaSix 不提供代理账号或服务器。请导入你自己的 Xray JSON 配置，应用会将所选节点 IP 写入名为“proxy”的出站连接。")
+            Text("导入你自己的 Xray JSON 配置，ViaSix 会将所选 IP 写入名为“proxy”的出站连接。")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -96,7 +122,6 @@ struct SettingsView: View {
                 Button("导入 Xray JSON…", systemImage: "square.and.arrow.down") {
                     importXrayTemplate()
                 }
-                .buttonStyle(.borderedProminent)
                 .disabled(proxyImportDisabled)
 
                 Button("编辑当前配置", systemImage: "doc.text") {
@@ -118,63 +143,29 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(20)
-        .cardStyle()
-    }
-
-    private var pathCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label("自定义可执行文件", systemImage: "terminal")
-                .font(.headline)
-
-            executablePicker(
-                title: "CFST 路径",
-                value: model.state.preferences.cfstPath,
-                component: .cfst
-            )
-            executablePicker(
-                title: "Xray 路径",
-                value: model.state.preferences.xrayPath,
-                component: .xray
-            )
-
-            Text("留空时依次使用 ViaSix 管理的组件、Homebrew 路径和 PATH。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(20)
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle()
     }
 
     private var dataCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("应用数据", systemImage: "folder")
+            Label("应用与数据", systemImage: "folder")
                 .font(.headline)
             Text(model.paths.root.path)
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
 
-            HStack {
-                Button("打开数据目录", systemImage: "folder.badge.gearshape") {
-                    NSWorkspace.shared.open(model.paths.root)
-                }
+            Button("打开数据目录", systemImage: "folder") {
+                NSWorkspace.shared.open(model.paths.root)
             }
 
             Text("节点列表、测速结果、偏好设置和代理配置都保存在此目录。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-        }
-        .padding(20)
-        .cardStyle()
-    }
 
-    private var aboutCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("关于 ViaSix", systemImage: "info.circle")
-                .font(.headline)
-            Text("原生 macOS IPv4 / IPv6 节点优选与本地代理工具。ViaSix 不会自动修改系统代理，本地代理地址为 127.0.0.1:11451，同时支持 HTTP 与 SOCKS。")
-                .foregroundStyle(.secondary)
+            Divider()
 
             HStack {
                 Button("使用帮助", systemImage: "questionmark.circle") {
@@ -185,7 +176,8 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(20)
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle()
     }
 
@@ -198,12 +190,14 @@ struct SettingsView: View {
             case .ready: ("已就绪", .green)
             case .failed: ("异常", .red)
             }
-        return Text(label)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(color.opacity(0.10), in: Capsule())
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text(label)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
     }
 
     private func componentRow(

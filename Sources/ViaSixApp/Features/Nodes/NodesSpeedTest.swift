@@ -6,15 +6,6 @@ extension NodesView {
     var speedTestCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
-                Image(systemName: "bolt.horizontal.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(VisualStyle.secondaryAccent)
-                    .frame(width: 40, height: 40)
-                    .background(
-                        VisualStyle.secondaryAccent.opacity(0.10),
-                        in: RoundedRectangle(cornerRadius: 12)
-                    )
-
                 VStack(alignment: .leading, spacing: 3) {
                     Text("IP 测速")
                         .font(.headline)
@@ -63,15 +54,15 @@ extension NodesView {
             .accessibilityValue(progressAccessibilityValue)
 
             HStack(spacing: 16) {
-                Label(progressLabel, systemImage: "number")
-                Label(progressPercentage, systemImage: "percent")
+                Text(progressLabel)
+                Text(progressPercentage)
                 Spacer()
-                Label(receivedOutputLabel, systemImage: "arrow.down.circle")
+                Text(receivedOutputLabel)
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
         }
-        .padding(18)
+        .padding(16)
         .cardStyle()
     }
 }

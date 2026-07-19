@@ -10,14 +10,9 @@ struct NodesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                summaryBanner
+                pageHeader
                 parametersCard
                 speedTestCard
-
-                if !model.state.results.isEmpty {
-                    topResultsSection
-                }
-
                 resultsCard
             }
             .frame(maxWidth: .infinity, alignment: .leading)

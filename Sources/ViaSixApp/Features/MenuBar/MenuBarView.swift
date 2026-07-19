@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ViaSixCore
 
 struct MenuBarView: View {
     @Environment(AppModel.self) private var model
@@ -81,11 +82,12 @@ struct MenuBarView: View {
     }
 
     private var xrayStatusTitle: String {
-        switch model.state.xrayPhase {
-        case .stopped: "本地代理已停止 · 127.0.0.1:11451"
+        let endpoint = "\(AppMetadata.proxyHost):\(AppMetadata.proxyPort)"
+        return switch model.state.xrayPhase {
+        case .stopped: "本地代理已停止 · \(endpoint)"
         case .validating: "正在检查代理配置"
         case .starting: "正在启动本地代理"
-        case .running: "本地代理运行中 · 127.0.0.1:11451"
+        case .running: "本地代理运行中 · \(endpoint)"
         case .stopping: "正在停止本地代理"
         case .failed: "本地代理运行异常"
         }

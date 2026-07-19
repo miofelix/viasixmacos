@@ -2,43 +2,13 @@ import SwiftUI
 import ViaSixCore
 
 extension NodesView {
-    var topResultsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("最快节点")
-                        .font(.headline)
-                    Text("按结果顺序展示前三名，点击即可切换")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-            }
-
-            LazyVGrid(columns: resultColumns, alignment: .leading, spacing: 12) {
-                ForEach(Array(model.state.results.prefix(3).enumerated()), id: \.element.id) { index, result in
-                    TopResultCard(
-                        rank: index + 1,
-                        result: result,
-                        isSelected: result.ip == model.state.preferences.selectedIP,
-                        isSwitching: model.switchingIP == result.ip
-                    ) {
-                        selectIP(result.ip)
-                    }
-                }
-            }
-            .disabled(nodeSelectionDisabled)
-        }
-    }
-
     var resultsCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("候选节点")
                         .font(.headline)
-                    Text("点击任意一行切换节点，完整测速数据可滚动查看")
+                    Text("已按测速结果排序，可直接选择节点")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
