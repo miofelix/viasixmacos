@@ -9,6 +9,80 @@ public actor AppBootstrapper {
 
     public func prepareDefaults() throws {
         try DefaultResourceInstaller.install(into: paths)
+        try removeStaleSpeedTestResults()
+    }
+
+    /// Removes only temporary result files created by an interrupted speed
+    /// test. The data directory is application-owned, but names are still
+    /// matched strictly so the persistent result and user files are never
+    /// mistaken for cleanup artifacts.
+    private func removeStaleSpeedTestResults() throws {
+        let fileManager = FileManager.default
+        let temporaryNames = try fileManager.contentsOfDirectory(
+            at: paths.data,
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+            options: []
+        )
+
+        for fileURL in temporaryNames {
+            guard Self.isTemporarySpeedTestResultName(fileURL.lastPathComponent) else {
+                continue
+            }
+
+            let resourceValues = try fileURL.resourceValues(
+                forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
+            )
+            guard resourceValues.isRegularFile == true || resourceValues.isSymbolicLink == true else {
+                continue
+            }
+            try fileManager.removeItem(at: fileURL)
+        }
+    }
+
+    private static func isTemporarySpeedTestResultName(_ name: String) -> Bool {
+        if uuidBetween(
+            name,
+            prefix: ".result.csv.",
+            suffix: ".tmp"
+        ) != nil {
+            return true
+        }
+
+        if uuidBetween(
+            name,
+            prefix: ".current-test-",
+            suffix: ".csv"
+        ) != nil {
+            return true
+        }
+
+        // CfstRunner adds one more leading dot and a temporary UUID when the
+        // current-node test supplies `.current-test-<UUID>.csv` as its result
+        // URL. Keep this pattern explicit instead of deleting arbitrary dot
+        // files ending in `.tmp`.
+        let currentTestPrefix = "..current-test-"
+        let currentTestSuffix = ".tmp"
+        guard name.hasPrefix(currentTestPrefix), name.hasSuffix(currentTestSuffix) else {
+            return false
+        }
+        let body = name.dropFirst(currentTestPrefix.count)
+            .dropLast(currentTestSuffix.count)
+        guard let separator = body.range(of: ".csv.") else { return false }
+        let runID = String(body[..<separator.lowerBound])
+        let temporaryID = String(body[separator.upperBound...])
+        return UUID(uuidString: runID) != nil && UUID(uuidString: temporaryID) != nil
+    }
+
+    private static func uuidBetween(
+        _ name: String,
+        prefix: String,
+        suffix: String
+    ) -> UUID? {
+        guard name.hasPrefix(prefix), name.hasSuffix(suffix) else { return nil }
+        let start = name.index(name.startIndex, offsetBy: prefix.count)
+        let end = name.index(name.endIndex, offsetBy: -suffix.count)
+        guard start <= end else { return nil }
+        return UUID(uuidString: String(name[start..<end]))
     }
 
     public func loadResults() throws -> [SpeedTestResult] {

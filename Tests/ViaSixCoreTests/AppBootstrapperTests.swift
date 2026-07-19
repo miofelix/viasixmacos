@@ -38,6 +38,62 @@ final class AppBootstrapperTests: XCTestCase {
         XCTAssertNoThrow(try ConfigTemplate.validateTemplate(template))
     }
 
+    func testPrepareDefaultsRemovesOnlyStaleSpeedTestResultsFromDataDirectory() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try paths.prepare()
+
+        let runID = UUID().uuidString
+        let temporaryID = UUID().uuidString
+        let staleResult = paths.data.appendingPathComponent(
+            ".result.csv.\(temporaryID).tmp"
+        )
+        let staleCurrentResult = paths.data.appendingPathComponent(
+            ".current-test-\(runID).csv"
+        )
+        let staleCurrentTemporaryResult = paths.data.appendingPathComponent(
+            "..current-test-\(runID).csv.\(temporaryID).tmp"
+        )
+        for url in [staleResult, staleCurrentResult, staleCurrentTemporaryResult] {
+            try Data("temporary".utf8).write(to: url)
+        }
+
+        let persistentResult = paths.resultCSV
+        let similarNames = [
+            paths.data.appendingPathComponent(".result.csv.not-a-uuid.tmp"),
+            paths.data.appendingPathComponent(".result.csv.\(temporaryID).tmp.backup"),
+            paths.data.appendingPathComponent(".current-test-not-a-uuid.csv"),
+            paths.data.appendingPathComponent(".current-test-\(runID).csv.backup"),
+        ]
+        for url in [persistentResult] + similarNames {
+            try Data("keep".utf8).write(to: url)
+        }
+
+        let matchingDirectory = paths.data.appendingPathComponent(
+            ".current-test-\(UUID().uuidString).csv",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: matchingDirectory,
+            withIntermediateDirectories: false
+        )
+        let matchingFileOutsideData = paths.root.appendingPathComponent(
+            ".result.csv.\(UUID().uuidString).tmp"
+        )
+        try Data("outside".utf8).write(to: matchingFileOutsideData)
+
+        try await bootstrapper.prepareDefaults()
+
+        for url in [staleResult, staleCurrentResult, staleCurrentTemporaryResult] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: url.path), url.path)
+        }
+        for url in [persistentResult] + similarNames + [matchingDirectory, matchingFileOutsideData] {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), url.path)
+        }
+        XCTAssertEqual(try String(contentsOf: persistentResult, encoding: .utf8), "keep")
+    }
+
     func testPrepareDefaultsMigratesOnlyThePreviouslyShippedIPv4List() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
