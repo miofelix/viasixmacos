@@ -33,6 +33,7 @@ final class PersistenceTests: XCTestCase {
         var changed = defaults
         changed.selectedIP = "2606::1"
         changed.parameters.threads = 64
+        changed.exitIPEndpoint = "https://status.example.test/ip"
 
         try await store.save(changed)
         let loaded = await store.load(defaults: defaults)
@@ -68,6 +69,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.selectedIP, "")
         XCTAssertEqual(decoded.cfstPath, "")
         XCTAssertEqual(decoded.xrayPath, "")
+        XCTAssertEqual(decoded.exitIPEndpoint, AppMetadata.defaultExitIPEndpoint)
     }
 
     private func permissions(of url: URL) throws -> Int {

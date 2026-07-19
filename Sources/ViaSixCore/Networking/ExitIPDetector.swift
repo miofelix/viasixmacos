@@ -26,11 +26,13 @@ public struct ExitIPInfo: Codable, Equatable, Sendable {
 }
 
 public enum ExitIPDetectionError: LocalizedError, Equatable, Sendable {
+    case invalidEndpoint
     case invalidResponse
     case httpStatus(Int)
 
     public var errorDescription: String? {
         switch self {
+        case .invalidEndpoint: "出口 IP 服务地址必须是有效的 HTTP 或 HTTPS URL"
         case .invalidResponse: "出口 IP 服务返回了无法识别的数据"
         case .httpStatus(let code): "出口 IP 服务返回 HTTP \(code)"
         }
@@ -42,14 +44,20 @@ public actor ExitIPDetector {
     private let timeout: TimeInterval
 
     public init(
-        endpoint: URL = URL(string: "https://api.myip.la/cn?json")!,
+        endpoint: URL = URL(string: AppMetadata.defaultExitIPEndpoint)!,
         timeout: TimeInterval = 15
     ) {
         self.endpoint = endpoint
         self.timeout = timeout
     }
 
-    public func detect(proxy: ProxyEndpoint? = nil) async throws -> ExitIPInfo {
+    public func detect(proxy: ProxyEndpoint? = nil, endpoint: URL? = nil) async throws -> ExitIPInfo {
+        let endpoint = endpoint ?? self.endpoint
+        guard let scheme = endpoint.scheme?.lowercased(), ["http", "https"].contains(scheme),
+            endpoint.host != nil
+        else {
+            throw ExitIPDetectionError.invalidEndpoint
+        }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = timeout

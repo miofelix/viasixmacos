@@ -140,18 +140,19 @@ public enum ConfigTemplate {
             throw ConfigTemplateError.invalidLocalInbound
         }
 
-        guard let managedInbound = inbounds.first(where: { inbound in
-            let listen = (inbound["listen"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            let protocolName = (inbound["protocol"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            let port = inbound["port"] as? Int
-            return listen.map(isLoopbackHost) == true
-                && protocolName == "mixed"
-                && port.map({ (1...65_535).contains($0) }) == true
-        }),
+        guard
+            let managedInbound = inbounds.first(where: { inbound in
+                let listen = (inbound["listen"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                let protocolName = (inbound["protocol"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                let port = inbound["port"] as? Int
+                return listen.map(isLoopbackHost) == true
+                    && protocolName == "mixed"
+                    && port.map({ (1...65_535).contains($0) }) == true
+            }),
             let host = (managedInbound["listen"] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased(),

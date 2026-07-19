@@ -75,7 +75,7 @@ ViaSix 的可变数据默认保存在：
 - ViaSix 不收集遥测，也不要求创建 ViaSix 账号。
 - 安装组件时会连接 CloudflareSpeedTest 与 Xray-core 各自上游项目的发布地址。
 - 节点测速会访问测速组件的默认地址，或你填写的自定义测速 URL。
-- 出口 IP 检测使用 `https://api.myip.la/cn?json`。
+- 出口 IP 检测默认使用 `https://api.myip.la/cn?json`，也可在设置中改为其他 HTTP / HTTPS 服务。
 - 本地代理只允许监听 Xray 配置声明的回环地址和端口，不会主动向局域网开放端口。
 
 第三方组件及网络服务受各自许可证、隐私政策和可用性约束。

@@ -174,6 +174,22 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("出口 IP 检测服务")
+                    .font(.caption.weight(.medium))
+                TextField(
+                    AppMetadata.defaultExitIPEndpoint,
+                    text: Binding(
+                        get: { model.exitIPEndpoint },
+                        set: { model.exitIPEndpoint = $0 }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+                Text("用于“连接”中的出口 IP 检测，支持 HTTP 或 HTTPS 地址。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Divider()
 
             HStack {

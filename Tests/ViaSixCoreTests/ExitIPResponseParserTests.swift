@@ -34,4 +34,15 @@ final class ExitIPResponseParserTests: XCTestCase {
             ExitIPInfo(ip: "1.1.1.1", location: "澳大利亚")
         )
     }
+
+    func testDetectorRejectsUnsupportedEndpointBeforeMakingRequest() async {
+        let detector = ExitIPDetector()
+
+        do {
+            _ = try await detector.detect(endpoint: URL(string: "file:///tmp/exit-ip")!)
+            XCTFail("Expected unsupported endpoint to be rejected")
+        } catch {
+            XCTAssertEqual(error as? ExitIPDetectionError, .invalidEndpoint)
+        }
+    }
 }

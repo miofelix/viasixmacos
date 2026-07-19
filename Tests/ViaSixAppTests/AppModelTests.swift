@@ -103,7 +103,22 @@ final class AppModelTests: XCTestCase {
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
         let template = Data(
-            #"{"inbounds":[{"listen":"127.0.0.2","port":18080,"protocol":"mixed"}],"outbounds":[{"tag":"proxy","settings":{"vnext":[{"address":"2606::5","users":[{"id":"7b602ceb-cc3f-4274-a79d-c1a38f0fb0da"}]}]},"streamSettings":{"tlsSettings":{"serverName":"proxy.example.net"},"wsSettings":{"host":"proxy.example.net","path":"/viasix"}}}]}"#.utf8
+            #"""
+            {
+              "inbounds": [{"listen": "127.0.0.2", "port": 18080, "protocol": "mixed"}],
+              "outbounds": [{
+                "tag": "proxy",
+                "settings": {"vnext": [{
+                  "address": "2606::5",
+                  "users": [{"id": "7b602ceb-cc3f-4274-a79d-c1a38f0fb0da"}]
+                }]},
+                "streamSettings": {
+                  "tlsSettings": {"serverName": "proxy.example.net"},
+                  "wsSettings": {"host": "proxy.example.net", "path": "/viasix"}
+                }
+              }]
+            }
+            """#.utf8
         )
         try await bootstrapper.replaceTemplate(with: template)
 

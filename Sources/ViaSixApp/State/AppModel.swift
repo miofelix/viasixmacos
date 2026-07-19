@@ -20,6 +20,14 @@ final class AppModel {
         state.preferences.ipSourceMode
     }
 
+    var exitIPEndpoint: String {
+        get { state.preferences.exitIPEndpoint }
+        set {
+            state.preferences.exitIPEndpoint = newValue
+            schedulePreferencesSave()
+        }
+    }
+
     /// CFST and Xray are independent capabilities. Keeping them separate lets
     /// the UI offer node testing even when the proxy component is not installed.
     var hasCfstExecutable: Bool {
@@ -467,7 +475,10 @@ final class AppModel {
             guard let self else { return }
             do {
                 let proxy = state.isXrayRunning ? state.proxyEndpoint : nil
-                state.exit.info = try await exitDetector.detect(proxy: proxy)
+                guard let endpoint = URL(string: state.preferences.exitIPEndpoint) else {
+                    throw ExitIPDetectionError.invalidEndpoint
+                }
+                state.exit.info = try await exitDetector.detect(proxy: proxy, endpoint: endpoint)
                 appendLog(source: .app, level: .success, message: "出口 IP：\(state.exit.info?.ip ?? "")")
             } catch {
                 state.exit.errorMessage = error.localizedDescription
