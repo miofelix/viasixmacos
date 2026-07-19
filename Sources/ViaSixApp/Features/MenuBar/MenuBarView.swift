@@ -71,6 +71,25 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var speedTestAction: some View {
+        if isCurrentConfigurationTestActive {
+            switch model.state.configurationTest.phase {
+            case .running:
+                Button("停止当前节点测速", systemImage: "stop.fill") {
+                    model.stopCurrentConfigurationTest()
+                }
+            case .stopping:
+                Button("正在停止当前节点测速…", systemImage: "hourglass") {}
+                    .disabled(true)
+            case .idle, .failed:
+                EmptyView()
+            }
+        } else {
+            fullSpeedTestAction
+        }
+    }
+
+    @ViewBuilder
+    private var fullSpeedTestAction: some View {
         switch model.state.speedTest.phase {
         case .idle, .failed:
             Button("开始节点测速", systemImage: "gauge.with.dots.needle.67percent") {
@@ -95,6 +114,24 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var speedTestStatus: some View {
+        if isCurrentConfigurationTestActive {
+            switch model.state.configurationTest.phase {
+            case .running:
+                Label("正在测试当前节点…", systemImage: "gauge.with.dots.needle.67percent")
+                    .foregroundStyle(.secondary)
+            case .stopping:
+                Label("正在停止当前节点测速…", systemImage: "hourglass")
+                    .foregroundStyle(.secondary)
+            case .idle, .failed:
+                EmptyView()
+            }
+        } else {
+            fullSpeedTestStatus
+        }
+    }
+
+    @ViewBuilder
+    private var fullSpeedTestStatus: some View {
         switch model.state.speedTest.phase {
         case .running:
             if model.state.speedTest.total > 0 {
@@ -115,7 +152,24 @@ struct MenuBarView: View {
                 .lineLimit(2)
                 .foregroundStyle(.secondary)
         case .idle:
-            EmptyView()
+            if case .failed(let message) = model.state.configurationTest.phase {
+                Text("当前节点测速失败：\(message)")
+                    .lineLimit(2)
+                    .foregroundStyle(.secondary)
+            } else if let result = model.state.configurationTest.result {
+                Label(
+                    "当前节点：\(result.latency) ms · \(result.speed) MB/s",
+                    systemImage: "checkmark.circle"
+                )
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var isCurrentConfigurationTestActive: Bool {
+        switch model.state.configurationTest.phase {
+        case .running, .stopping: true
+        case .idle, .failed: false
         }
     }
 
