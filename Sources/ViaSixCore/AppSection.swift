@@ -12,7 +12,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .overview: "总览"
         case .nodes: "节点优选"
-        case .logs: "运行日志"
+        case .logs: "运行记录"
         case .settings: "设置"
         }
     }
@@ -26,4 +26,3 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
         }
     }
 }
-

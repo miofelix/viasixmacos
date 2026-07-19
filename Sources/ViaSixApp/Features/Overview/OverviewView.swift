@@ -11,16 +11,16 @@ struct OverviewView: View {
 
                 LazyVGrid(columns: metricColumns, spacing: 14) {
                     MetricCard(
-                        title: "当前代理 IP",
+                        title: "当前节点 IP",
                         value: selectedResult?.ip ?? selectedIP,
-                        detail: "Cloudflare 节点",
+                        detail: "Cloudflare 优选节点",
                         systemImage: "globe.asia.australia",
                         tint: .blue
                     )
                     MetricCard(
-                        title: "出口地区",
+                        title: "节点地区",
                         value: selectedResult?.region ?? "",
-                        detail: "IATA 地区码",
+                        detail: "数据中心地区",
                         systemImage: "mappin.and.ellipse",
                         tint: .purple
                     )
@@ -73,7 +73,7 @@ struct OverviewView: View {
                         .foregroundStyle(.white.opacity(0.82))
                     Text("IPv6 节点优选，一目了然")
                         .font(.system(size: 29, weight: .bold, design: .rounded))
-                    Text("测速、切换与代理进程都由原生 macOS 应用统一管理。")
+                    Text("节点测速、切换与本地代理都在一个应用中完成。")
                         .foregroundStyle(.white.opacity(0.76))
                 }
                 Spacer(minLength: 16)
@@ -100,7 +100,7 @@ struct OverviewView: View {
     private var proxyCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Label("Xray 代理", systemImage: "point.3.connected.trianglepath.dotted")
+                Label("本地代理", systemImage: "point.3.connected.trianglepath.dotted")
                     .font(.headline)
                 Spacer()
                 Text(xrayStatusText)
@@ -111,8 +111,8 @@ struct OverviewView: View {
                     .background(xrayStatusColor.opacity(0.10), in: Capsule())
             }
 
-            infoRow(label: "本地入站", value: "127.0.0.1:11451 · HTTP/SOCKS mixed")
-            infoRow(label: "配置节点", value: selectedIP.isEmpty ? "尚未选择" : selectedIP)
+            infoRow(label: "代理地址", value: "127.0.0.1:11451 · HTTP / SOCKS")
+            infoRow(label: "节点 IP", value: selectedIP.isEmpty ? "尚未选择" : selectedIP)
 
             VStack(alignment: .leading, spacing: 7) {
                 HStack {
@@ -125,7 +125,7 @@ struct OverviewView: View {
                     }
                     .buttonStyle(.link)
                     .disabled(model.state.exit.isDetecting || isXrayTransitioning)
-                    .accessibilityHint(model.state.isXrayRunning ? "通过本地 Xray 代理检测出口" : "直接检测本机出口")
+                    .accessibilityHint(model.state.isXrayRunning ? "通过本地代理检测出口" : "直接检测本机出口")
                 }
                 Text(model.state.exit.info?.ip ?? "未检测")
                     .font(.system(.body, design: .monospaced).weight(.medium))
@@ -159,7 +159,7 @@ struct OverviewView: View {
                         .disabled(true)
 
                 case .stopped, .failed:
-                    Button("启动 Xray", systemImage: "play.fill", action: model.startXray)
+                    Button("启动本地代理", systemImage: "play.fill", action: model.startXray)
                         .buttonStyle(.borderedProminent)
                         .tint(VisualStyle.accent)
                         .disabled(
@@ -190,8 +190,8 @@ struct OverviewView: View {
             }
 
             TipRow(number: 1, text: "在“节点优选”中配置参数并运行 IPv4 或 IPv6 测速。")
-            TipRow(number: 2, text: "选择候选节点后，ViaSix 会原子更新 Xray 配置。")
-            TipRow(number: 3, text: "Xray 运行时切换节点会自动重启，并等待本地端口重新就绪。")
+            TipRow(number: 2, text: "选择候选节点后，ViaSix 会自动应用该节点 IP。")
+            TipRow(number: 3, text: "本地代理运行时切换节点会自动重启并应用新节点。")
             TipRow(number: 4, text: "ViaSix 不修改系统代理，需要在目标应用中使用 127.0.0.1:11451。")
 
             if model.state.runtimePhase != .ready {

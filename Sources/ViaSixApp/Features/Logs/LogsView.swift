@@ -7,9 +7,9 @@ struct LogsView: View {
         VStack(spacing: 18) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("运行日志")
+                    Text("测速与代理运行记录")
                         .font(.title2.weight(.bold))
-                    Text("集中查看测速、Xray 与应用诊断信息")
+                    Text("查看节点测速、本地代理与应用状态")
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -22,9 +22,9 @@ struct LogsView: View {
             Group {
                 if model.state.logs.isEmpty {
                     ContentUnavailableView(
-                        "暂无日志",
+                        "暂无运行记录",
                         systemImage: "text.alignleft",
-                        description: Text("开始测速或启动 Xray 后，输出会显示在这里。")
+                        description: Text("开始节点测速或启动本地代理后，记录会显示在这里。")
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {

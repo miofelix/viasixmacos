@@ -55,7 +55,7 @@ extension NodesView {
         case .running:
             model.state.speedTest.total > 0 ? "正在扫描并测试候选 IP" : "正在等待测速进度"
         case .stopping:
-            "正在安全停止测速进程"
+            "正在停止测速"
         case .failed(let message):
             "测速失败：\(message)"
         }
@@ -178,7 +178,7 @@ extension NodesView {
     func chooseIPFile() {
         let panel = NSOpenPanel()
         panel.title = "选择 IP 地址列表"
-        panel.message = "选择 CFST 可读取的纯文本或 CSV 文件"
+        panel.message = "选择包含 IP 地址的纯文本或 CSV 文件"
         panel.prompt = "选择"
         panel.canChooseDirectories = false
         panel.canChooseFiles = true

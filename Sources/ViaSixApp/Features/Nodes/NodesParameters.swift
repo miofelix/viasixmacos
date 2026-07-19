@@ -27,7 +27,7 @@ extension NodesView {
 
                 Spacer()
 
-                Text("17 项")
+                Text("完整设置")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(VisualStyle.accent)
                     .padding(.horizontal, 9)
@@ -104,7 +104,7 @@ extension NodesView {
             switch model.ipSourceMode {
             case .range:
                 ParameterField(
-                    label: "自定义 CIDR / IP (-ip)",
+                    label: "自定义 CIDR / IP",
                     hint: "多个地址用英文逗号分隔，例如 2606:4700::/32, 104.16.0.0/12"
                 ) {
                     TextField("输入 IP、CIDR 或逗号分隔的组合", text: parameterBinding(\.ipRange))
@@ -113,8 +113,8 @@ extension NodesView {
 
             case .file:
                 ParameterField(
-                    label: "自定义 IP 文件 (-f)",
-                    hint: "支持 CFST 可读取的纯文本或 CSV 地址列表"
+                    label: "自定义 IP 文件",
+                    hint: "支持包含 IP 地址的纯文本或 CSV 列表"
                 ) {
                     HStack(spacing: 10) {
                         Text(model.parameters.ipFile.isEmpty ? "尚未选择文件" : model.parameters.ipFile)
@@ -154,7 +154,7 @@ extension NodesView {
             }
 
             ToggleSetting(
-                title: "测速 IPv4 网段中的全部 IP (-allip)",
+                title: "测速 IPv4 网段中的全部 IP",
                 hint: "默认每个 /24 网段随机选择一个 IP；开启后测速时间会显著增加。",
                 isOn: parameterBinding(\.allIP)
             )
@@ -182,13 +182,13 @@ extension NodesView {
             }
 
             LazyVGrid(columns: fieldColumns, alignment: .leading, spacing: 14) {
-                ParameterField(label: "测速端口 (-tp)", hint: "1–65535，默认 443") {
+                ParameterField(label: "测速端口", hint: "1–65535，默认 443") {
                     TextField("443", value: parameterBinding(\.port), format: .number.grouping(.never))
                         .textFieldStyle(.roundedBorder)
                 }
 
                 ParameterField(
-                    label: "HTTP 状态码 (-httping-code)",
+                    label: "HTTP 状态码",
                     hint: "0 使用默认的 200 / 301 / 302"
                 ) {
                     TextField("0", value: parameterBinding(\.httpingCode), format: .number.grouping(.never))
@@ -197,15 +197,15 @@ extension NodesView {
                 }
 
                 ParameterField(
-                    label: "测速 URL (-url)",
-                    hint: "留空使用 CFST 默认地址"
+                    label: "测速 URL",
+                    hint: "留空使用默认测速地址"
                 ) {
                     TextField("https://your-domain.com/url", text: parameterBinding(\.url))
                         .textFieldStyle(.roundedBorder)
                 }
 
                 ParameterField(
-                    label: "区域过滤 (-cfcolo)",
+                    label: "区域过滤",
                     hint: "IATA 代码，逗号分隔，如 HKG,NRT,SJC"
                 ) {
                     TextField("留空表示全部区域", text: parameterBinding(\.colo))
@@ -217,7 +217,7 @@ extension NodesView {
 
     var filterSettings: some View {
         LazyVGrid(columns: fieldColumns, alignment: .leading, spacing: 14) {
-            ParameterField(label: "延迟上限 (-tl)", hint: "仅保留低于该值的 IP，单位 ms") {
+            ParameterField(label: "延迟上限", hint: "仅保留低于该值的 IP，单位 ms") {
                 TextField(
                     "9999",
                     value: parameterBinding(\.latencyUpperBound),
@@ -226,7 +226,7 @@ extension NodesView {
                 .textFieldStyle(.roundedBorder)
             }
 
-            ParameterField(label: "延迟下限 (-tll)", hint: "过滤异常低延迟，单位 ms") {
+            ParameterField(label: "延迟下限", hint: "过滤异常低延迟，单位 ms") {
                 TextField(
                     "0",
                     value: parameterBinding(\.latencyLowerBound),
@@ -235,7 +235,7 @@ extension NodesView {
                 .textFieldStyle(.roundedBorder)
             }
 
-            ParameterField(label: "丢包率上限 (-tlr)", hint: "0.00–1.00，0 表示不允许丢包") {
+            ParameterField(label: "丢包率上限", hint: "0.00–1.00，0 表示不允许丢包") {
                 TextField(
                     "1.00",
                     value: parameterBinding(\.lossRateUpperBound),
@@ -244,7 +244,7 @@ extension NodesView {
                 .textFieldStyle(.roundedBorder)
             }
 
-            ParameterField(label: "下载速度下限 (-sl)", hint: "单位 MB/s，0 表示不限制") {
+            ParameterField(label: "下载速度下限", hint: "单位 MB/s，0 表示不限制") {
                 TextField(
                     "0",
                     value: parameterBinding(\.speedLowerBound),
@@ -258,17 +258,17 @@ extension NodesView {
     var performanceSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
             LazyVGrid(columns: fieldColumns, alignment: .leading, spacing: 14) {
-                ParameterField(label: "延迟测速线程 (-n)", hint: "1–1000，过高可能触发限制") {
+                ParameterField(label: "延迟测速线程", hint: "1–1000，过高可能触发限制") {
                     TextField("200", value: parameterBinding(\.threads), format: .number.grouping(.never))
                         .textFieldStyle(.roundedBorder)
                 }
 
-                ParameterField(label: "单 IP Ping 次数 (-t)", hint: "1–100，默认 4") {
+                ParameterField(label: "单 IP Ping 次数", hint: "1–100，默认 4") {
                     TextField("4", value: parameterBinding(\.pingCount), format: .number.grouping(.never))
                         .textFieldStyle(.roundedBorder)
                 }
 
-                ParameterField(label: "下载测速数量 (-dn)", hint: "从延迟最低的候选节点开始") {
+                ParameterField(label: "下载测速数量", hint: "从延迟最低的候选节点开始") {
                     TextField(
                         "10",
                         value: parameterBinding(\.downloadCount),
@@ -277,7 +277,7 @@ extension NodesView {
                     .textFieldStyle(.roundedBorder)
                 }
 
-                ParameterField(label: "单 IP 下载时长 (-dt)", hint: "单位秒，范围 1–3600") {
+                ParameterField(label: "单 IP 下载时长", hint: "单位秒，范围 1–3600") {
                     TextField(
                         "10",
                         value: parameterBinding(\.downloadTime),
@@ -289,14 +289,14 @@ extension NodesView {
 
             LazyVGrid(columns: fieldColumns, alignment: .leading, spacing: 12) {
                 ToggleSetting(
-                    title: "禁用下载测速 (-dd)",
+                    title: "禁用下载测速",
                     hint: "仅测试延迟，并按延迟排序。",
                     isOn: parameterBinding(\.disableDownload)
                 )
 
                 ToggleSetting(
-                    title: "调试模式 (-debug)",
-                    hint: "将更多诊断信息写入运行日志。",
+                    title: "调试模式",
+                    hint: "在运行记录中显示更多诊断信息。",
                     isOn: parameterBinding(\.debug)
                 )
             }

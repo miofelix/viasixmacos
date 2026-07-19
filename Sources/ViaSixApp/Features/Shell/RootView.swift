@@ -64,7 +64,7 @@ struct RootView: View {
                     .controlSize(.large)
                 Text("正在准备 ViaSix…")
                     .font(.headline)
-                Text("初始化应用数据并检查运行组件")
+                Text("正在检查应用数据与必要组件")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -111,12 +111,12 @@ struct RootView: View {
 
     private var sidebarStatusTitle: String {
         switch model.state.xrayPhase {
-        case .running: "Xray 运行中"
+        case .running: "本地代理运行中"
         case .validating: "正在校验"
         case .starting: "正在启动"
         case .stopping: "正在停止"
-        case .failed: "Xray 异常"
-        case .stopped: "Xray 已停止"
+        case .failed: "本地代理异常"
+        case .stopped: "本地代理已停止"
         }
     }
 }

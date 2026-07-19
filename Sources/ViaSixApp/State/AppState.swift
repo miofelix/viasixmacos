@@ -77,7 +77,7 @@ struct AppLogEntry: Identifiable, Equatable, Sendable {
     enum Source: String, Sendable {
         case app = "应用"
         case speedTest = "测速"
-        case xray = "Xray"
+        case xray = "代理"
     }
 
     enum Level: Sendable {
@@ -125,4 +125,3 @@ struct AppNotice: Identifiable, Equatable, Sendable {
         self.style = style
     }
 }
-

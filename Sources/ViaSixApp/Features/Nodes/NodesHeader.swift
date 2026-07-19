@@ -70,7 +70,7 @@ extension NodesView {
                 Image(systemName: "scope")
                     .foregroundStyle(.white.opacity(0.72))
 
-                Text("当前节点")
+                Text("当前节点 IP")
                     .foregroundStyle(.white.opacity(0.68))
 
                 Text(currentIPLabel)

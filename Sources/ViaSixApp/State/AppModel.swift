@@ -291,7 +291,7 @@ final class AppModel {
             do {
                 try await restartActiveXray()
             } catch {
-                showNotice("节点已切换，但 Xray 重启失败", style: .error)
+                showNotice("节点已切换，但本地代理重新连接失败", style: .error)
                 return
             }
         }
@@ -307,7 +307,7 @@ final class AppModel {
                 : nil,
             commandName: "xray"
         ) else {
-            showNotice("请先安装 Xray 运行组件", style: .error)
+            showNotice("请先安装代理运行组件", style: .error)
             return
         }
 
@@ -339,20 +339,20 @@ final class AppModel {
                 let controllerID = UUID()
                 activeXray = controller
                 activeXrayID = controllerID
-                appendLog(source: .xray, message: "正在校验配置并启动 Xray")
+                appendLog(source: .xray, message: "正在检查连接配置并启动本地代理")
 
                 try await controller.start { [weak self] event in
                     await self?.receiveXrayEvent(event, controllerID: controllerID)
                 }
                 guard activeXrayID == controllerID else { return }
-                appendLog(source: .xray, level: .success, message: "Xray 已启动，监听 127.0.0.1:11451")
-                showNotice("Xray 已启动", style: .success)
+                appendLog(source: .xray, level: .success, message: "本地代理已启动，监听 127.0.0.1:11451")
+                showNotice("本地代理已启动", style: .success)
             } catch XrayControllerError.cancelled where xrayStopRequested {
                 state.xrayPhase = .stopped
             } catch {
                 state.xrayPhase = .failed(error.localizedDescription)
                 appendLog(source: .xray, level: .error, message: error.localizedDescription)
-                showNotice("Xray 启动失败：\(error.localizedDescription)", style: .error)
+                showNotice("本地代理启动失败：\(error.localizedDescription)", style: .error)
                 activeXray = nil
                 activeXrayID = nil
             }
@@ -381,8 +381,8 @@ final class AppModel {
             activeXray = nil
             activeXrayID = nil
             state.xrayPhase = .stopped
-            appendLog(source: .xray, level: .warning, message: "Xray 已停止")
-            showNotice("Xray 已停止")
+            appendLog(source: .xray, level: .warning, message: "本地代理已停止")
+            showNotice("本地代理已停止")
             xrayStopRequested = false
             xrayStopTask = nil
         }
@@ -398,9 +398,9 @@ final class AppModel {
             guard let self else { return }
             do {
                 try await restartActiveXray()
-                showNotice("Xray 已重启", style: .success)
+                showNotice("本地代理已重新连接", style: .success)
             } catch {
-                showNotice("Xray 重启失败：\(error.localizedDescription)", style: .error)
+                showNotice("本地代理重新连接失败：\(error.localizedDescription)", style: .error)
             }
             xrayStartTask = nil
         }
@@ -566,16 +566,16 @@ final class AppModel {
 
     private func restartActiveXray() async throws {
         guard let controller = activeXray, let controllerID = activeXrayID else { return }
-        appendLog(source: .xray, message: "节点已变更，正在重启 Xray")
+        appendLog(source: .xray, message: "节点已变更，正在重新连接本地代理")
         do {
             try await controller.restart { [weak self] event in
                 await self?.receiveXrayEvent(event, controllerID: controllerID)
             }
             guard activeXrayID == controllerID else { return }
-            appendLog(source: .xray, level: .success, message: "Xray 已使用新节点重新启动")
+            appendLog(source: .xray, level: .success, message: "本地代理已应用新节点")
         } catch {
             state.xrayPhase = .failed(error.localizedDescription)
-            appendLog(source: .xray, level: .error, message: "Xray 重启失败：\(error.localizedDescription)")
+            appendLog(source: .xray, level: .error, message: "本地代理重新连接失败：\(error.localizedDescription)")
             activeXray = nil
             activeXrayID = nil
             throw error
@@ -606,9 +606,9 @@ final class AppModel {
             }
         case .unexpectedExit(let status, let output):
             let detail = output.isEmpty ? "状态码 \(status)" : output
-            state.xrayPhase = .failed("Xray 意外退出：\(detail)")
-            appendLog(source: .xray, level: .error, message: "Xray 意外退出：\(detail)")
-            showNotice("Xray 意外退出", style: .error)
+            state.xrayPhase = .failed("本地代理意外退出：\(detail)")
+            appendLog(source: .xray, level: .error, message: "本地代理意外退出：\(detail)")
+            showNotice("本地代理意外退出", style: .error)
             activeXray = nil
             activeXrayID = nil
         }

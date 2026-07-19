@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import ViaSixCore
 
 struct SettingsView: View {
@@ -11,10 +12,11 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("设置")
                         .font(.title2.weight(.bold))
-                    Text("管理运行组件、数据文件与本机可执行路径")
+                    Text("管理本地代理、运行组件与应用数据")
                         .foregroundStyle(.secondary)
                 }
 
+                proxyConfigurationCard
                 runtimeCard
                 pathCard
                 dataCard
@@ -66,7 +68,7 @@ struct SettingsView: View {
                 }
             }
 
-            Text("下载内容来自项目官方 GitHub Releases，并在安装前校验固定 SHA-256。")
+            Text("组件分别来自 CloudflareSpeedTest 与 Xray-core 的官方发布，并在安装前校验文件完整性。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -75,6 +77,45 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(20)
+        .cardStyle()
+    }
+
+    private var proxyConfigurationCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("代理配置", systemImage: "point.3.connected.trianglepath.dotted")
+                .font(.headline)
+
+            Text("ViaSix 不提供代理账号或服务器。请导入你自己的 Xray JSON 配置，应用会将所选节点 IP 写入名为“proxy”的出站连接。")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Button("导入 Xray JSON…", systemImage: "square.and.arrow.down") {
+                    importXrayTemplate()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(proxyImportDisabled)
+
+                Button("编辑当前配置", systemImage: "doc.text") {
+                    NSWorkspace.shared.open(model.paths.templateConfig)
+                }
+                .disabled(
+                    proxyImportDisabled
+                        || !FileManager.default.fileExists(atPath: model.paths.templateConfig.path)
+                )
+            }
+
+            if proxyImportDisabled {
+                Text("请先停止本地代理，再导入或编辑连接配置。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("导入前会检查 JSON 结构；当前配置文件保存在 ViaSix 应用数据目录中。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(20)
@@ -118,13 +159,9 @@ struct SettingsView: View {
                 Button("打开数据目录", systemImage: "folder.badge.gearshape") {
                     NSWorkspace.shared.open(model.paths.root)
                 }
-                Button("打开 Xray 模板", systemImage: "doc.text") {
-                    NSWorkspace.shared.open(model.paths.templateConfig)
-                }
-                .disabled(!FileManager.default.fileExists(atPath: model.paths.templateConfig.path))
             }
 
-            Text("模板仅在首次启动时复制，后续更新不会覆盖你的修改。参考模板包含原项目的连接资料，请在分发前确认其授权与安全性。")
+            Text("节点列表、测速结果、偏好设置和代理配置都保存在此目录。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -136,11 +173,17 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("关于 ViaSix", systemImage: "info.circle")
                 .font(.headline)
-            Text("原生 macOS IPv4 / IPv6 节点优选与 Xray 控制工具。ViaSix 不会自动修改系统代理，只在 127.0.0.1:11451 启动 mixed HTTP/SOCKS 入站。")
+            Text("原生 macOS IPv4 / IPv6 节点优选与本地代理工具。ViaSix 不会自动修改系统代理，本地代理地址为 127.0.0.1:11451，同时支持 HTTP 与 SOCKS。")
                 .foregroundStyle(.secondary)
-            Text("CloudflareSpeedTest 使用 GPL-3.0；Xray-core 使用 MPL-2.0。详情见项目 THIRD_PARTY_NOTICES.md。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+            HStack {
+                Button("使用帮助", systemImage: "questionmark.circle") {
+                    AppDocumentOpener.open(.userGuide)
+                }
+                Button("第三方许可", systemImage: "doc.plaintext") {
+                    AppDocumentOpener.open(.thirdPartyNotices)
+                }
+            }
         }
         .padding(20)
         .cardStyle()
@@ -278,6 +321,16 @@ struct SettingsView: View {
         }
     }
 
+    private var proxyImportDisabled: Bool {
+        guard model.state.launchPhase == .ready else { return true }
+        return switch model.state.xrayPhase {
+        case .validating, .starting, .running, .stopping:
+            true
+        case .stopped, .failed:
+            false
+        }
+    }
+
     private func chooseExecutable(_ component: RuntimeComponent) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -297,6 +350,20 @@ struct SettingsView: View {
         panel.prompt = "导入"
         if panel.runModal() == .OK {
             model.importRuntime(from: panel.urls)
+        }
+    }
+
+    private func importXrayTemplate() {
+        let panel = NSOpenPanel()
+        panel.title = "导入代理配置"
+        panel.message = "选择包含“proxy”出站连接的 Xray JSON 配置。"
+        panel.prompt = "导入"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.json]
+        if panel.runModal() == .OK, let url = panel.url {
+            model.importXrayTemplate(from: url)
         }
     }
 }

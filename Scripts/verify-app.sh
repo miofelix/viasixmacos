@@ -36,7 +36,19 @@ for resource_name in ip.txt ipv6.txt template.json; do
 done
 
 [[ -f "$contents_dir/Resources/THIRD_PARTY_NOTICES.md" ]] || fail "missing third-party notices"
+[[ -f "$contents_dir/Resources/USER_GUIDE.md" ]] || fail "missing user guide"
 [[ -f "$contents_dir/Resources/AppIcon.icns" ]] || fail "missing application icon"
+
+for forbidden_text in \
+    "ipv6""-plan" \
+    "ipv6""plan" \
+    "67440c65-c674-4d02""-a035-04f8ef2892f1" \
+    "fragrant-butterfly-4660"".xiaodanfj.workers.dev"; do
+    if LC_ALL=C grep -R -a -F -q -- "$forbidden_text" "$contents_dir"; then
+        fail "forbidden inherited content found in application bundle: $forbidden_text"
+    fi
+done
+
 codesign --verify --deep --strict --verbose=2 "$app_bundle"
 
 architectures=$(lipo -archs "$executable_path")

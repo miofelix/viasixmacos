@@ -29,6 +29,7 @@ rm -rf "$app_bundle"
 mkdir -p "$contents_dir/MacOS" "$contents_dir/Resources"
 cp "$binary_path" "$contents_dir/MacOS/ViaSix"
 cp "$project_root/Packaging/Info.plist" "$contents_dir/Info.plist"
+cp "$project_root/Docs/USER_GUIDE.md" "$contents_dir/Resources/USER_GUIDE.md"
 cp "$project_root/THIRD_PARTY_NOTICES.md" "$contents_dir/Resources/THIRD_PARTY_NOTICES.md"
 "$project_root/Scripts/generate-icon.sh" \
     "$project_root/Packaging/AppIcon.svg" \

@@ -104,7 +104,7 @@ extension NodesView {
                     }
                     .width(min: 78, ideal: 94)
 
-                    TableColumn("区域") { result in
+                    TableColumn("节点地区") { result in
                         Text(metric(result.region))
                     }
                     .width(min: 54, ideal: 72)

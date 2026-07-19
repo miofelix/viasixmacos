@@ -15,7 +15,7 @@ struct MenuBarView: View {
 
         Label(xrayStatusTitle, systemImage: xrayStatusIcon)
         if !model.state.preferences.selectedIP.isEmpty {
-            Text("当前节点：\(model.state.preferences.selectedIP)")
+            Text("当前节点 IP：\(model.state.preferences.selectedIP)")
         }
 
         Divider()
@@ -56,7 +56,7 @@ struct MenuBarView: View {
     private var xrayActions: some View {
         switch model.state.xrayPhase {
         case .stopped, .failed:
-            Button("启动 Xray", systemImage: "play.fill") {
+            Button("启动本地代理", systemImage: "play.fill") {
                 model.startXray()
             }
             .disabled(
@@ -64,30 +64,30 @@ struct MenuBarView: View {
                     || model.state.runtimePhase == .installing
             )
         case .validating, .starting:
-            Button("停止 Xray", systemImage: "stop.fill") {
+            Button("停止本地代理", systemImage: "stop.fill") {
                 model.stopXray()
             }
         case .running:
-            Button("重启 Xray", systemImage: "arrow.clockwise") {
+            Button("重启本地代理", systemImage: "arrow.clockwise") {
                 model.restartXray()
             }
-            Button("停止 Xray", systemImage: "stop.fill") {
+            Button("停止本地代理", systemImage: "stop.fill") {
                 model.stopXray()
             }
         case .stopping:
-            Button("正在停止 Xray…", systemImage: "hourglass") {}
+            Button("正在停止本地代理…", systemImage: "hourglass") {}
                 .disabled(true)
         }
     }
 
     private var xrayStatusTitle: String {
         switch model.state.xrayPhase {
-        case .stopped: "Xray 已停止 · 127.0.0.1:11451"
-        case .validating: "正在校验 Xray 配置"
-        case .starting: "正在启动 Xray"
-        case .running: "Xray 运行中 · 127.0.0.1:11451"
-        case .stopping: "正在停止 Xray"
-        case .failed: "Xray 运行异常"
+        case .stopped: "本地代理已停止 · 127.0.0.1:11451"
+        case .validating: "正在检查代理配置"
+        case .starting: "正在启动本地代理"
+        case .running: "本地代理运行中 · 127.0.0.1:11451"
+        case .stopping: "正在停止本地代理"
+        case .failed: "本地代理运行异常"
         }
     }
 
