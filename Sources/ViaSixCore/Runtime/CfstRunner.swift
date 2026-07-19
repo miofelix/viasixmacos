@@ -7,7 +7,7 @@ public enum CfstRunnerError: Error, Equatable, LocalizedError, Sendable {
     case alreadyRunning
     case executableNotFound(String)
     case executableNotExecutable(String)
-    case cannotRemovePreviousResult(path: String, reason: String)
+    case cannotPromoteResult(path: String, reason: String)
     case launchFailed(path: String, reason: String)
     case outputReadFailed(String)
     case userCancelled
@@ -24,8 +24,8 @@ public enum CfstRunnerError: Error, Equatable, LocalizedError, Sendable {
             "未找到 CFST 可执行文件：\(path)"
         case .executableNotExecutable(let path):
             "CFST 文件不可执行：\(path)"
-        case .cannotRemovePreviousResult(let path, let reason):
-            "无法删除旧测速结果 \(path)：\(reason)"
+        case .cannotPromoteResult(let path, let reason):
+            "无法保存测速结果 \(path)：\(reason)"
         case .launchFailed(let path, let reason):
             "无法启动 CFST \(path)：\(reason)"
         case .outputReadFailed(let reason):
@@ -96,9 +96,11 @@ public actor CfstRunner {
         guard activeRun == nil else { throw CfstRunnerError.alreadyRunning }
         guard !Task.isCancelled else { throw CfstRunnerError.userCancelled }
 
-        let arguments = try parameters.commandLineArguments(resultURL: resultURL)
+        let temporaryResultURL = makeTemporaryResultURL()
+        defer { try? FileManager.default.removeItem(at: temporaryResultURL) }
+
+        let arguments = try parameters.commandLineArguments(resultURL: temporaryResultURL)
         try validateExecutable()
-        try removePreviousResult()
         guard !Task.isCancelled else { throw CfstRunnerError.userCancelled }
 
         let process: SupervisedProcess
@@ -162,7 +164,12 @@ public actor CfstRunner {
                 )
             }
 
-            return try loadNewResults()
+            let results = try loadNewResults(from: temporaryResultURL)
+            guard activeRun?.userCancelled != true, !Task.isCancelled else {
+                throw CfstRunnerError.userCancelled
+            }
+            try promoteResult(from: temporaryResultURL)
+            return results
         } onCancel: {
             Task { await self.cancel(runID: runID) }
         }
@@ -195,28 +202,21 @@ public actor CfstRunner {
         }
     }
 
-    private func removePreviousResult() throws {
-        let path = resultURL.path
-        guard FileManager.default.fileExists(atPath: path) else { return }
-        do {
-            try FileManager.default.removeItem(at: resultURL)
-        } catch {
-            throw CfstRunnerError.cannotRemovePreviousResult(
-                path: path,
-                reason: error.localizedDescription
-            )
-        }
+    private func makeTemporaryResultURL() -> URL {
+        resultURL.deletingLastPathComponent().appendingPathComponent(
+            ".\(resultURL.lastPathComponent).\(UUID().uuidString).tmp"
+        )
     }
 
-    private func loadNewResults() throws -> [SpeedTestResult] {
+    private func loadNewResults(from temporaryResultURL: URL) throws -> [SpeedTestResult] {
         let path = resultURL.path
-        guard FileManager.default.fileExists(atPath: path) else {
+        guard FileManager.default.fileExists(atPath: temporaryResultURL.path) else {
             throw CfstRunnerError.resultFileMissing(path)
         }
 
         let data: Data
         do {
-            data = try Data(contentsOf: resultURL)
+            data = try Data(contentsOf: temporaryResultURL)
         } catch {
             throw CfstRunnerError.resultReadFailed(path: path, reason: error.localizedDescription)
         }
@@ -229,6 +229,20 @@ public actor CfstRunner {
         }
         guard !results.isEmpty else { throw CfstRunnerError.noResults }
         return results
+    }
+
+    private func promoteResult(from temporaryResultURL: URL) throws {
+        let status = temporaryResultURL.path.withCString { temporaryPath in
+            resultURL.path.withCString { resultPath in
+                Darwin.rename(temporaryPath, resultPath)
+            }
+        }
+        guard status == 0 else {
+            throw CfstRunnerError.cannotPromoteResult(
+                path: resultURL.path,
+                reason: String(cString: strerror(errno))
+            )
+        }
     }
 
     private nonisolated static func readOutput(

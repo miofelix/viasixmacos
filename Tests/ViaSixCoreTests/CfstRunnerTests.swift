@@ -16,9 +16,12 @@ final class CfstRunnerTests: XCTestCase {
                 printf 'starting\n'
                 printf '1 / 2 [==\r' >&2
                 printf '\nfinished\n'
+                printf '%s\n' "$output" > output-path.txt
                 printf 'IP,Sent,Recv,Loss,Latency,Speed,Region\n2606:4700::1,4,4,0.00,18.5,12.3,SJC\n' > "$output"
                 """#)
         defer { fixture.remove() }
+
+        try fixture.writeCanonicalResult(ip: "old-ip")
 
         let recorder = CfstEventRecorder()
         let runner = CfstRunner(executableURL: fixture.executableURL)
@@ -37,19 +40,60 @@ final class CfstRunnerTests: XCTestCase {
                 if case .heartbeat(let bytes) = event { return bytes > 0 }
                 return false
             })
+        XCTAssertEqual(try fixture.canonicalResultIPs(), ["2606:4700::1"])
+        let outputPath = try String(contentsOf: fixture.outputPathURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertNotEqual(outputPath, fixture.resultURL.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputPath))
         let isRunning = await runner.isRunning
         XCTAssertFalse(isRunning)
+    }
+
+    func testEachRunUsesAUniqueTemporaryResultPath() async throws {
+        let fixture = try CfstRunnerFixture(
+            script: #"""
+                #!/bin/sh
+                output=""
+                while [ "$#" -gt 0 ]; do
+                  if [ "$1" = "-o" ]; then output="$2"; shift 2; else shift; fi
+                done
+                printf '%s\n' "$output" >> output-paths.txt
+                printf 'IP,Sent,Recv,Loss,Latency,Speed,Region\nnew-ip,4,4,0,1,1,NEW\n' > "$output"
+                """#)
+        defer { fixture.remove() }
+
+        let runner = CfstRunner(executableURL: fixture.executableURL)
+        _ = try await runner.run(parameters: .init(ipRange: "2606:4700::/32"))
+        _ = try await runner.run(parameters: .init(ipRange: "2606:4700::/32"))
+
+        let paths = try String(
+            contentsOf: fixture.directoryURL.appendingPathComponent("output-paths.txt"),
+            encoding: .utf8
+        ).split(whereSeparator: \.isNewline).map(String.init)
+        XCTAssertEqual(paths.count, 2)
+        XCTAssertEqual(Set(paths).count, 2)
+        XCTAssertTrue(paths.allSatisfy { $0 != fixture.resultURL.path })
+        XCTAssertTrue(paths.allSatisfy { !FileManager.default.fileExists(atPath: $0) })
+        XCTAssertTrue(fixture.temporaryResultURLs.isEmpty)
     }
 
     func testNonZeroExitIncludesMergedDiagnosticOutput() async throws {
         let fixture = try CfstRunnerFixture(
             script: #"""
                 #!/bin/sh
+                output=""
+                while [ "$#" -gt 0 ]; do
+                  if [ "$1" = "-o" ]; then output="$2"; shift 2; else shift; fi
+                done
                 printf 'stdout detail\n'
                 printf 'stderr detail\n' >&2
+                printf '%s\n' "$output" > output-path.txt
+                printf 'IP,Sent,Recv,Loss,Latency,Speed,Region\nnew-ip,4,4,0,1,1,NEW\n' > "$output"
                 exit 7
                 """#)
         defer { fixture.remove() }
+
+        try fixture.writeCanonicalResult(ip: "old-ip")
 
         let runner = CfstRunner(executableURL: fixture.executableURL)
         do {
@@ -63,12 +107,20 @@ final class CfstRunnerTests: XCTestCase {
             XCTAssertTrue(output.contains("stdout detail"))
             XCTAssertTrue(output.contains("stderr detail"))
         }
+        XCTAssertEqual(try fixture.canonicalResultIPs(), ["old-ip"])
+        try fixture.assertTemporaryResultWasRemoved()
     }
 
     func testCancelKillsProcessGroupAndMapsToUserCancelled() async throws {
         let fixture = try CfstRunnerFixture(
             script: #"""
                 #!/bin/sh
+                output=""
+                while [ "$#" -gt 0 ]; do
+                  if [ "$1" = "-o" ]; then output="$2"; shift 2; else shift; fi
+                done
+                printf '%s\n' "$output" > output-path.txt
+                printf 'IP,Sent,Recv,Loss,Latency,Speed,Region\nnew-ip,4,4,0,1,1,NEW\n' > "$output"
                 sleep 30 &
                 child=$!
                 printf '%s %s\n' "$$" "$child" > pids.txt
@@ -76,6 +128,8 @@ final class CfstRunnerTests: XCTestCase {
                 wait "$child"
                 """#)
         defer { fixture.remove() }
+
+        try fixture.writeCanonicalResult(ip: "old-ip")
 
         let recorder = CfstEventRecorder()
         let runner = CfstRunner(executableURL: fixture.executableURL)
@@ -103,6 +157,8 @@ final class CfstRunnerTests: XCTestCase {
         for pid in pids {
             try await waitUntilProcessIsGone(pid)
         }
+        XCTAssertEqual(try fixture.canonicalResultIPs(), ["old-ip"])
+        try fixture.assertTemporaryResultWasRemoved()
         let isRunning = await runner.isRunning
         XCTAssertFalse(isRunning)
     }
@@ -185,7 +241,7 @@ final class CfstRunnerTests: XCTestCase {
         try await waitUntilProcessIsGone(childPID)
     }
 
-    func testOldResultIsDeletedAndNeverReused() async throws {
+    func testMissingNewResultPreservesLastSuccessfulResult() async throws {
         let fixture = try CfstRunnerFixture(
             script: #"""
                 #!/bin/sh
@@ -194,8 +250,7 @@ final class CfstRunnerTests: XCTestCase {
                 """#)
         defer { fixture.remove() }
 
-        let staleCSV = "IP,Sent,Recv,Loss,Latency,Speed,Region\nold-ip,4,4,0,1,99,OLD\n"
-        try staleCSV.write(to: fixture.resultURL, atomically: true, encoding: .utf8)
+        try fixture.writeCanonicalResult(ip: "old-ip")
 
         let runner = CfstRunner(executableURL: fixture.executableURL)
         do {
@@ -204,10 +259,11 @@ final class CfstRunnerTests: XCTestCase {
         } catch let error as CfstRunnerError {
             XCTAssertEqual(error, .resultFileMissing(fixture.resultURL.path))
         }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.resultURL.path))
+        XCTAssertEqual(try fixture.canonicalResultIPs(), ["old-ip"])
+        XCTAssertTrue(fixture.temporaryResultURLs.isEmpty)
     }
 
-    func testHeaderOnlyCSVReportsNoResults() async throws {
+    func testHeaderOnlyCSVPreservesLastSuccessfulResult() async throws {
         let fixture = try CfstRunnerFixture(
             script: #"""
                 #!/bin/sh
@@ -219,6 +275,8 @@ final class CfstRunnerTests: XCTestCase {
                 """#)
         defer { fixture.remove() }
 
+        try fixture.writeCanonicalResult(ip: "old-ip")
+
         let runner = CfstRunner(executableURL: fixture.executableURL)
         do {
             _ = try await runner.run(parameters: .init(ipRange: "2606:4700::/32"))
@@ -226,6 +284,64 @@ final class CfstRunnerTests: XCTestCase {
         } catch let error as CfstRunnerError {
             XCTAssertEqual(error, .noResults)
         }
+        XCTAssertEqual(try fixture.canonicalResultIPs(), ["old-ip"])
+        XCTAssertTrue(fixture.temporaryResultURLs.isEmpty)
+    }
+
+    func testMalformedCSVPreservesLastSuccessfulResult() async throws {
+        let fixture = try CfstRunnerFixture(
+            script: #"""
+                #!/bin/sh
+                output=""
+                while [ "$#" -gt 0 ]; do
+                  if [ "$1" = "-o" ]; then output="$2"; shift 2; else shift; fi
+                done
+                printf '"unterminated\n' > "$output"
+                """#)
+        defer { fixture.remove() }
+
+        try fixture.writeCanonicalResult(ip: "old-ip")
+
+        let runner = CfstRunner(executableURL: fixture.executableURL)
+        do {
+            _ = try await runner.run(parameters: .init(ipRange: "2606:4700::/32"))
+            XCTFail("Expected result-read error")
+        } catch let error as CfstRunnerError {
+            guard case .resultReadFailed(let path, _) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(path, fixture.resultURL.path)
+        }
+        XCTAssertEqual(try fixture.canonicalResultIPs(), ["old-ip"])
+        XCTAssertTrue(fixture.temporaryResultURLs.isEmpty)
+    }
+
+    func testUnreadableNewResultPreservesLastSuccessfulResult() async throws {
+        let fixture = try CfstRunnerFixture(
+            script: #"""
+                #!/bin/sh
+                output=""
+                while [ "$#" -gt 0 ]; do
+                  if [ "$1" = "-o" ]; then output="$2"; shift 2; else shift; fi
+                done
+                mkdir "$output"
+                """#)
+        defer { fixture.remove() }
+
+        try fixture.writeCanonicalResult(ip: "old-ip")
+
+        let runner = CfstRunner(executableURL: fixture.executableURL)
+        do {
+            _ = try await runner.run(parameters: .init(ipRange: "2606:4700::/32"))
+            XCTFail("Expected result-read error")
+        } catch let error as CfstRunnerError {
+            guard case .resultReadFailed(let path, _) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(path, fixture.resultURL.path)
+        }
+        XCTAssertEqual(try fixture.canonicalResultIPs(), ["old-ip"])
+        XCTAssertTrue(fixture.temporaryResultURLs.isEmpty)
     }
 
     private func waitUntilFileExists(_ url: URL) async throws {
@@ -290,6 +406,7 @@ private final class CfstRunnerFixture: @unchecked Sendable {
     let executableURL: URL
     let resultURL: URL
     let processIDsURL: URL
+    let outputPathURL: URL
 
     init(script: String) throws {
         directoryURL = FileManager.default.temporaryDirectory
@@ -297,6 +414,7 @@ private final class CfstRunnerFixture: @unchecked Sendable {
         executableURL = directoryURL.appendingPathComponent("cfst")
         resultURL = directoryURL.appendingPathComponent("result.csv")
         processIDsURL = directoryURL.appendingPathComponent("pids.txt")
+        outputPathURL = directoryURL.appendingPathComponent("output-path.txt")
 
         try FileManager.default.createDirectory(
             at: directoryURL,
@@ -311,5 +429,34 @@ private final class CfstRunnerFixture: @unchecked Sendable {
 
     func remove() {
         try? FileManager.default.removeItem(at: directoryURL)
+    }
+
+    var temporaryResultURLs: [URL] {
+        (try? FileManager.default.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: nil
+        ))?.filter {
+            $0.lastPathComponent.hasPrefix(".result.csv.")
+                && $0.pathExtension == "tmp"
+        } ?? []
+    }
+
+    func writeCanonicalResult(ip: String) throws {
+        let csv = "IP,Sent,Recv,Loss,Latency,Speed,Region\n\(ip),4,4,0,1,99,OLD\n"
+        try csv.write(to: resultURL, atomically: true, encoding: .utf8)
+    }
+
+    func canonicalResultIPs() throws -> [String] {
+        try SpeedTestResultParser.parse(data: Data(contentsOf: resultURL)).map(\.ip)
+    }
+
+    func assertTemporaryResultWasRemoved(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let outputPath = try String(contentsOf: outputPathURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputPath), file: file, line: line)
+        XCTAssertTrue(temporaryResultURLs.isEmpty, file: file, line: line)
     }
 }
