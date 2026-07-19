@@ -5,6 +5,7 @@ public enum ConfigTemplateError: LocalizedError, Equatable, Sendable {
     case missingOutbounds
     case missingProxyOutbound
     case missingVnext
+    case invalidLocalInbound
     case connectionNotConfigured
 
     public var errorDescription: String? {
@@ -13,6 +14,8 @@ public enum ConfigTemplateError: LocalizedError, Equatable, Sendable {
         case .missingOutbounds: "Xray 模板缺少 outbounds"
         case .missingProxyOutbound: "Xray 模板缺少 tag 为 proxy 的出站配置"
         case .missingVnext: "proxy 出站缺少 settings.vnext"
+        case .invalidLocalInbound:
+            "Xray 模板必须仅监听本机回环地址，并包含 127.0.0.1:11451 的 mixed 入站"
         case .connectionNotConfigured: "代理连接尚未配置，请在“设置”中导入或编辑你自己的 Xray 模板"
         }
     }
@@ -45,11 +48,13 @@ public enum ConfigTemplate {
     }
 
     public static func validateTemplate(_ template: Data) throws {
+        try validateLocalInbounds(in: configurationObject(in: template))
         _ = try replacingAddress(in: template, with: "2001:db8::1")
     }
 
     public static func validateForLaunch(_ config: Data) throws {
         let object = try configurationObject(in: config)
+        try validateLocalInbounds(in: object)
         let outbounds = try outboundList(in: object)
         guard let proxy = outbounds.first(where: { $0["tag"] as? String == "proxy" }) else {
             throw ConfigTemplateError.missingProxyOutbound
@@ -104,6 +109,36 @@ public enum ConfigTemplate {
             throw ConfigTemplateError.missingOutbounds
         }
         return outbounds
+    }
+
+    private static func validateLocalInbounds(in config: [String: Any]) throws {
+        guard let inbounds = config["inbounds"] as? [[String: Any]], !inbounds.isEmpty else {
+            throw ConfigTemplateError.invalidLocalInbound
+        }
+
+        let allowedLoopbackAddresses = Set(["127.0.0.1", "::1", "localhost"])
+        guard inbounds.allSatisfy({ inbound in
+            guard let listen = inbound["listen"] as? String else { return false }
+            return allowedLoopbackAddresses.contains(
+                listen.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            )
+        }) else {
+            throw ConfigTemplateError.invalidLocalInbound
+        }
+
+        let hasManagedInbound = inbounds.contains { inbound in
+            let listen = (inbound["listen"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let protocolName = (inbound["protocol"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let port = (inbound["port"] as? NSNumber)?.intValue
+            return listen == "127.0.0.1" && protocolName == "mixed" && port == 11_451
+        }
+        guard hasManagedInbound else {
+            throw ConfigTemplateError.invalidLocalInbound
+        }
     }
 
     private static func containsPlaceholder(in value: Any) -> Bool {

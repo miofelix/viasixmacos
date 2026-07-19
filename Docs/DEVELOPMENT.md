@@ -195,6 +195,8 @@ Sources/ViaSixCore/Runtime/RuntimeManifest.swift
 默认模板和导入模板必须满足：
 
 - 根对象是有效 JSON。
+- 所有 `inbounds` 都显式绑定本机回环地址。
+- 存在监听 `127.0.0.1:11451` 的 `mixed` 入站。
 - 包含非空 `outbounds`。
 - 存在 `tag == "proxy"` 的出站。
 - `proxy.settings.vnext` 非空。

@@ -74,9 +74,37 @@ final class CSVAndConfigTests: XCTestCase {
         XCTAssertNil(ConfigTemplate.address(in: template))
     }
 
+    func testConfigValidationRejectsNonLoopbackOrMissingManagedInbound() throws {
+        let nonLoopback = try TestConfigFixtures.connectionTemplate(
+            userID: "ad41c72c-3f38-440e-a84d-37056d5ac649",
+            serverName: "proxy.example.net",
+            path: "/viasix"
+        )
+        var nonLoopbackObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: nonLoopback) as? [String: Any]
+        )
+        var inbounds = try XCTUnwrap(nonLoopbackObject["inbounds"] as? [[String: Any]])
+        inbounds[0]["listen"] = "0.0.0.0"
+        nonLoopbackObject["inbounds"] = inbounds
+        let unsafeTemplate = try JSONSerialization.data(withJSONObject: nonLoopbackObject)
+
+        XCTAssertThrowsError(try ConfigTemplate.validateTemplate(unsafeTemplate)) { error in
+            XCTAssertEqual(error as? ConfigTemplateError, .invalidLocalInbound)
+        }
+
+        inbounds[0]["listen"] = "127.0.0.1"
+        inbounds[0]["port"] = 10_080
+        nonLoopbackObject["inbounds"] = inbounds
+        let wrongPortTemplate = try JSONSerialization.data(withJSONObject: nonLoopbackObject)
+
+        XCTAssertThrowsError(try ConfigTemplate.validateForLaunch(wrongPortTemplate)) { error in
+            XCTAssertEqual(error as? ConfigTemplateError, .invalidLocalInbound)
+        }
+    }
+
     private func connectionTemplate(userID: String, serverName: String, path: String) -> Data {
         Data(
-            #"{"outbounds":[{"tag":"proxy","settings":{"vnext":[{"address":"2606::5","users":[{"id":"\#(userID)"}]}]},"streamSettings":{"tlsSettings":{"serverName":"\#(serverName)"},"wsSettings":{"host":"\#(serverName)","path":"\#(path)"}}}]}"#.utf8
+            #"{"inbounds":[{"listen":"127.0.0.1","port":11451,"protocol":"mixed"}],"outbounds":[{"tag":"proxy","settings":{"vnext":[{"address":"2606::5","users":[{"id":"\#(userID)"}]}]},"streamSettings":{"tlsSettings":{"serverName":"\#(serverName)"},"wsSettings":{"host":"\#(serverName)","path":"\#(path)"}}}]}"#.utf8
         )
     }
 }

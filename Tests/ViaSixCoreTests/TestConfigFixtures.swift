@@ -8,6 +8,15 @@ enum TestConfigFixtures {
         path: String
     ) throws -> Data {
         let object: [String: Any] = [
+            "inbounds": [
+                [
+                    "tag": "mixed-in",
+                    "listen": "127.0.0.1",
+                    "port": 11_451,
+                    "protocol": "mixed",
+                    "settings": ["auth": "noauth", "udp": true]
+                ]
+            ],
             "outbounds": [
                 [
                     "tag": "proxy",
