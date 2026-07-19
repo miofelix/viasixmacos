@@ -6,6 +6,7 @@ import ViaSixCore
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var showsCustomExecutables = false
+    @State private var showsTemplateEditor = false
 
     var body: some View {
         ScrollView {
@@ -132,7 +133,7 @@ struct SettingsView: View {
                 .disabled(proxyImportDisabled)
 
                 Button("编辑当前配置", systemImage: "doc.text") {
-                    NSWorkspace.shared.open(model.paths.templateConfig)
+                    showsTemplateEditor = true
                 }
                 .disabled(
                     proxyImportDisabled
@@ -153,6 +154,10 @@ struct SettingsView: View {
         .padding(22)
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle()
+        .sheet(isPresented: $showsTemplateEditor) {
+            XrayTemplateEditorView()
+                .environment(model)
+        }
     }
 
     private var dataCard: some View {

@@ -192,6 +192,37 @@ final class AppModel {
         }
     }
 
+    func saveXrayTemplate(_ data: Data) {
+        guard templateTask == nil else {
+            showNotice("代理配置正在保存，请稍候", style: .error)
+            return
+        }
+        switch state.xrayPhase {
+        case .validating, .starting, .running, .stopping:
+            showNotice("请先停止本地代理再保存连接配置", style: .error)
+            return
+        case .stopped, .failed:
+            break
+        }
+
+        let selectedIP = state.preferences.selectedIP
+        templateTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                state.proxyEndpoint = try await bootstrapper.replaceTemplate(
+                    with: data,
+                    selectedIP: selectedIP
+                )
+                appendLog(source: .app, level: .success, message: "已保存代理连接模板")
+                showNotice("代理配置已保存", style: .success)
+            } catch {
+                appendLog(source: .app, level: .error, message: "保存代理配置失败：\(error.localizedDescription)")
+                showNotice("保存失败：\(error.localizedDescription)", style: .error)
+            }
+            templateTask = nil
+        }
+    }
+
     func selectIPSource(_ mode: IPSourceMode) {
         state.preferences.ipSourceMode = mode
         switch mode {

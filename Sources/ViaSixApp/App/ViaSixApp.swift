@@ -76,6 +76,8 @@ enum AppDocument {
     case userGuide
     case thirdPartyNotices
 
+    var id: Self { self }
+
     var resourceName: String {
         switch self {
         case .userGuide: "USER_GUIDE"
@@ -100,22 +102,36 @@ enum AppDocument {
 
 @MainActor
 enum AppDocumentOpener {
-    static func open(_ document: AppDocument) {
-        let fileManager = FileManager.default
-        let candidates = bundledCandidates(for: document) + developmentCandidates(for: document)
+    private static var windows: [AppDocument: NSWindow] = [:]
 
-        if let url = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }),
-            NSWorkspace.shared.open(url)
-        {
+    static func open(_ document: AppDocument) {
+        if let window = windows[document] {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "无法打开\(document.displayName)"
-        alert.informativeText = "应用包和项目目录中都没有找到对应文档。"
-        alert.addButton(withTitle: "好")
-        alert.runModal()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 860, height: 680),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = document.displayName
+        window.contentViewController = NSHostingController(
+            rootView: AppDocumentViewer(document: document)
+        )
+        window.isReleasedWhenClosed = false
+        window.center()
+        windows[document] = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    static func documentURL(for document: AppDocument) -> URL? {
+        let fileManager = FileManager.default
+        let candidates = bundledCandidates(for: document) + developmentCandidates(for: document)
+        return candidates.first(where: { fileManager.fileExists(atPath: $0.path) })
     }
 
     private static func bundledCandidates(for document: AppDocument) -> [URL] {
