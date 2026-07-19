@@ -9,29 +9,36 @@ extension NodesView {
     var parametersCard: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("测速参数")
-                        .font(.headline)
-
-                    Text(parameterSummary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) {
                         showsParameters.toggle()
                     }
                 } label: {
-                    Image(systemName: showsParameters ? "chevron.up" : "chevron.down")
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("测速参数")
+                                .font(.headline)
+
+                            Text(parameterSummary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+
+                        Spacer(minLength: 12)
+
+                        Image(systemName: showsParameters ? "chevron.up" : "chevron.down")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .buttonStyle(.borderless)
-                .iconButtonHitTarget()
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, minHeight: VisualStyle.controlHeight, alignment: .leading)
+                .contentShape(Rectangle())
                 .help(showsParameters ? "收起测速设置" : "展开测速设置")
                 .accessibilityLabel(showsParameters ? "收起测速设置" : "展开测速设置")
+                .accessibilityValue(showsParameters ? "已展开" : "已收起")
 
                 Button {
                     showsResetConfirmation = true

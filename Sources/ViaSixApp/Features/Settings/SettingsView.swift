@@ -81,27 +81,48 @@ struct SettingsView: View {
 
             Divider()
 
-            DisclosureGroup(isExpanded: $showsCustomExecutables) {
-                VStack(alignment: .leading, spacing: 14) {
-                    executablePicker(
-                        title: "CFST 路径",
-                        value: model.state.preferences.cfstPath,
-                        component: .cfst
-                    )
-                    executablePicker(
-                        title: "Xray 路径",
-                        value: model.state.preferences.xrayPath,
-                        component: .xray
-                    )
-
-                    Text("留空时使用 ViaSix 管理的组件，也会检查 Homebrew 与 PATH。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 0) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        showsCustomExecutables.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Text("自定义可执行文件")
+                            .font(.subheadline.weight(.medium))
+                        Spacer(minLength: 12)
+                        Image(systemName: showsCustomExecutables ? "chevron.up" : "chevron.down")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .padding(.top, 12)
-            } label: {
-                Text("自定义可执行文件")
-                    .font(.subheadline.weight(.medium))
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, minHeight: VisualStyle.controlHeight, alignment: .leading)
+                .contentShape(Rectangle())
+                .help(showsCustomExecutables ? "收起自定义可执行文件" : "展开自定义可执行文件")
+                .accessibilityLabel(showsCustomExecutables ? "收起自定义可执行文件" : "展开自定义可执行文件")
+                .accessibilityValue(showsCustomExecutables ? "已展开" : "已收起")
+
+                if showsCustomExecutables {
+                    VStack(alignment: .leading, spacing: 14) {
+                        executablePicker(
+                            title: "CFST 路径",
+                            value: model.state.preferences.cfstPath,
+                            component: .cfst
+                        )
+                        executablePicker(
+                            title: "Xray 路径",
+                            value: model.state.preferences.xrayPath,
+                            component: .xray
+                        )
+
+                        Text("留空时使用 ViaSix 管理的组件，也会检查 Homebrew 与 PATH。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 12)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
         }
         .padding(22)

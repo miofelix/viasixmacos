@@ -30,31 +30,52 @@ struct ParameterDisclosure<Content: View>: View {
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            content
-                .padding(.top, 12)
-        } label: {
-            HStack(spacing: 11) {
-                Image(systemName: systemImage)
-                    .foregroundStyle(VisualStyle.accent)
-                    .frame(width: 20)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isExpanded.toggle()
                 }
+            } label: {
+                HStack(spacing: 11) {
+                    Image(systemName: systemImage)
+                        .foregroundStyle(VisualStyle.accent)
+                        .frame(width: 20)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, minHeight: VisualStyle.controlHeight, alignment: .leading)
+            .contentShape(Rectangle())
+            .accessibilityLabel(title)
+            .accessibilityValue(isExpanded ? "已展开，(subtitle)" : "已收起，(subtitle)")
+
+            if isExpanded {
+                content
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .tint(VisualStyle.accent)
         .padding(.horizontal, 18)
-        .padding(.vertical, 15)
+        .padding(.vertical, 10)
         .overlay(alignment: .bottom) {
             Divider()
         }
