@@ -1,138 +1,106 @@
 # ViaSix for macOS
 
-ViaSix 是参考 `ipv6-plan` 业务流程重写的原生 macOS 客户端。它把 CloudflareSpeedTest（CFST）节点优选、Xray 配置切换、代理进程控制、出口 IP 检测和运行日志集中到一个简洁的 SwiftUI 界面中。
+ViaSix 是一款原生 macOS 网络工具，用于测试 IPv4 / IPv6 边缘节点、比较延迟与下载速度，并把选中的节点应用到你自己的 Xray 连接配置。节点测速、本地代理、出口 IP 检测和运行记录都集中在一个简洁的界面中，也可以通过菜单栏快速控制。
 
-项目不会把第三方可执行文件提交到仓库。应用可从上游官方 GitHub Releases 下载固定版本并校验 SHA-256，也可以使用用户指定的本机组件。
+> [!IMPORTANT]
+> ViaSix 不提供代理账号、订阅、服务器或网络接入服务。使用本地代理前，你需要准备一份自己有权使用的兼容 Xray JSON 配置。
 
-## 功能对照
+## 主要功能
 
-| `ipv6-plan` 能力 | ViaSix macOS 实现 |
-| --- | --- |
-| IPv6 / IPv4 地址列表测速 | 内置两类地址列表，也支持自定义文件和 CIDR / IP 段 |
-| CFST 参数配置 | 覆盖参考 Dashboard 的 17 项参数并持久化 |
-| 测速进度与停止 | 实时解析进度、输出和心跳，可安全停止整个自有进程组 |
-| 测速结果 | 解析新生成的 CSV，展示 Top 3 与完整七列表格 |
-| 节点切换 | 点击结果即可原子更新 Xray 配置；代理运行中会自动重启 |
-| Xray 控制 | 启动前校验配置，支持启动、停止、重启、端口就绪和异常退出检测 |
-| 出口信息 | 可通过直连或当前本地代理检测出口 IP 与地区 |
-| 日志 | 集中显示应用、CFST 和 Xray 的本次会话日志，最多保留 500 条 |
-| 托盘操作 | macOS 菜单栏可显示主窗口、控制测速和 Xray，并安全退出 |
-| 运行组件 | 支持官方组件下载、固定哈希校验、本地导入和自定义路径 |
+- 使用内置 IPv4 / IPv6 地址列表进行节点测速
+- 支持自定义地址文件、单个 IP 和 CIDR 网段
+- 按延迟、丢包率、下载速度和地区筛选候选节点
+- 展示前三名节点与完整测速结果
+- 一键应用节点；本地代理运行时可自动重新连接
+- 启动、停止和重启本地 HTTP / SOCKS 代理
+- 检测直连或代理状态下的出口 IP
+- 通过菜单栏控制常用操作
+- 在本机保存设置、地址列表和代理配置，不收集遥测
 
-相较参考实现，ViaSix 只终止自己启动的子进程，不会按进程名全局结束 Xray；测速前会移除旧 CSV，避免失败后误读历史结果；配置更新采用原子替换。
+ViaSix 使用 CloudflareSpeedTest 完成节点测速，使用 Xray-core 提供本地代理能力。第三方组件在首次使用时按需安装，也可以从本机导入。
 
 ## 系统要求
 
 - macOS 14 Sonoma 或更高版本
 - Apple Silicon（arm64）或 Intel（x86_64）Mac
-- 从源码构建需要 Xcode 16.3 或更高版本以及 Swift 6.1
-- 使用在线安装组件、测速和出口检测时需要网络连接
+- 安装组件、节点测速和出口检测时需要网络连接
 
-## 首次使用
+## 安装
 
-1. 打开 ViaSix，在“设置”中选择“安装官方组件”。应用会下载当前架构对应的 CFST `v2.3.5` 与 Xray-core `v26.3.27`，校验固定 SHA-256 后安装。
-2. 在“节点优选”中选择 IPv6、IPv4、自定义文件或 IP 段，按需调整参数并开始测速。
-3. 在 Top 3 卡片或结果表中选择节点。ViaSix 会把该地址写入 Xray 模板生成的配置。
-4. 回到“概览”启动 Xray。默认 mixed HTTP/SOCKS 入站为 `127.0.0.1:11451`。
-5. 在需要代理的应用中手动填写上述地址，或按该应用支持的方式设置代理。ViaSix **不会修改 macOS 系统代理**。
+1. 获取适合当前 Mac 的 `ViaSix.app`。
+2. 将应用拖入“应用程序”文件夹。
+3. 打开 ViaSix。
 
-命令行程序可按需使用：
+如果 macOS 提示无法验证本地构建，请先确认应用来源可信，再在 Finder 中按住 Control 点击应用并选择“打开”。不要为了运行 ViaSix 关闭 Gatekeeper 或系统完整性保护。
 
-```bash
-export HTTP_PROXY=http://127.0.0.1:11451
-export HTTPS_PROXY=http://127.0.0.1:11451
-export ALL_PROXY=socks5h://127.0.0.1:11451
-```
+## 快速开始
 
-运行组件的查找顺序为：设置中的自定义路径、ViaSix 管理的副本、Homebrew 常用路径、当前进程的 `PATH`。本地导入时可以选择可执行文件、解压后的目录或多个相关文件；ViaSix 会识别 `cfst`、`xray`、`geoip.dat` 和 `geosite.dat`。
+1. 打开“设置”，安装官方测速与代理组件。
+2. 在“代理配置”中导入你自己的兼容 Xray JSON 文件。
+3. 进入“节点优选”，选择 IPv6、IPv4、自定义文件或 IP / CIDR。
+4. 点击“开始测速”，完成后选择一个候选节点。
+5. 回到“总览”启动本地代理。
+6. 在需要使用代理的应用中填写 `127.0.0.1:11451`。
 
-## 应用数据
+ViaSix 提供 mixed 入站，同一个端口可作为 HTTP 或 SOCKS5 代理使用。ViaSix 不会自动修改 macOS 系统代理。
 
-应用包视为只读，所有可变数据都位于：
+更完整的配置格式、参数说明、备份方法和排错步骤见 [用户指南](Docs/USER_GUIDE.md)。
+
+## 数据与隐私
+
+ViaSix 的可变数据默认保存在：
 
 ```text
 ~/Library/Application Support/ViaSix/
-  Data/
-    preferences.json   参数、自定义组件路径与当前节点
-    ip.txt             默认 IPv4 地址列表
-    ipv6.txt           默认 IPv6 地址列表
-    template.json      可编辑的 Xray 配置模板
-    config.json        当前节点生成的 Xray 配置
-    result.csv         最新测速结果；开始新测速前会清除
-  Runtime/
-    cfst
-    xray
-    geoip.dat
-    geosite.dat
-  Logs/                预留的持久化日志目录
 ```
 
-默认列表和模板会在首次启动时复制。升级时仅会把 ViaSix 1.0 早期版本原封不动的旧 IPv4 默认列表迁移为完整列表；任何用户改动过的列表和模板都不会被覆盖。界面中的运行日志当前仅保存在内存中，退出应用后清空。
+- 设置、测速地址列表和代理配置只保存在本机。
+- ViaSix 不收集遥测，也不要求创建 ViaSix 账号。
+- 安装组件时会连接 CloudflareSpeedTest 与 Xray-core 的官方发布地址。
+- 节点测速会访问测速组件的默认地址，或你填写的自定义测速 URL。
+- 出口 IP 检测使用 `https://api.myip.la/cn?json`。
+- 本地代理只监听回环地址 `127.0.0.1:11451`，不会主动向局域网开放端口。
 
-> [!IMPORTANT]
-> `template.json` 沿用参考项目的 VLESS 连接资料。公开分发、共享构建产物或投入生产使用前，请确认这些连接资料的授权、安全性和有效性，并按实际部署替换 UUID、主机名及传输参数。
+第三方组件及网络服务受各自许可证、隐私政策和可用性约束。
 
-## 本地开发
+## 安全说明
 
-```bash
-make build
-make test
-swift run ViaSix
-```
+- 代理配置可能包含 UUID、域名、密钥或其他敏感资料，请勿上传、公开或发送给不受信任的人。
+- ViaSix 不会把第三方可执行文件直接存放在源码仓库中；在线安装会从组件官方发布页下载并校验文件完整性。
+- ViaSix 只管理自己启动的测速和代理进程，不会按进程名结束其他应用。
+- 关闭主窗口不会退出 ViaSix；应用会继续驻留菜单栏。需要停止所有自有进程时，请从菜单栏选择“退出 ViaSix”。
+- ViaSix 不会安装系统扩展或网络扩展，也不需要管理员权限。
 
-生成可双击运行的应用并验证 bundle：
+## 常见问题
 
-```bash
-make app
-make verify-app
-open dist/ViaSix.app
-```
+### ViaSix 是否自带代理服务？
 
-`make clean` 只清理仓库中的 SwiftPM 和 `dist` 构建产物，不会删除 `~/Library/Application Support/ViaSix`。
+不自带。ViaSix 负责节点测速和本地代理进程管理，但不提供服务器、账号或订阅。你必须使用自己有权访问的 Xray 配置。
 
-## 签名与分发
+### 为什么首次启动本地代理时提示连接尚未配置？
 
-`make app` 默认对 `dist/ViaSix.app` 使用 ad-hoc 签名，适合当前 Mac 的开发和冒烟测试。ad-hoc 签名不具备开发者身份，也没有经过 Apple 公证，不应作为面向其他用户的正式发布包。
+应用内置的是不含真实账号的安全示例模板。请在“设置”中导入自己的 Xray JSON，或打开代理配置并填写自己的连接参数。
 
-配置 Developer ID Application 证书后，可让打包脚本启用 Hardened Runtime、时间戳和指定身份签名：
+### ViaSix 会修改系统代理吗？
 
-```bash
-VIASIX_CODESIGN_IDENTITY="Developer ID Application: Example Corp (TEAMID)" make app
-```
+不会。请在浏览器、下载工具、终端或其他目标应用中单独设置 `127.0.0.1:11451`。
 
-正式分发还应使用 `notarytool` 提交公证并装订 ticket，例如：
+### 关闭窗口后为什么菜单栏仍有 ViaSix？
 
-```bash
-ditto -c -k --keepParent dist/ViaSix.app dist/ViaSix.zip
-xcrun notarytool submit dist/ViaSix.zip --keychain-profile "notary-profile" --wait
-xcrun stapler staple dist/ViaSix.app
-spctl --assess --type execute --verbose=4 dist/ViaSix.app
-```
+这是正常行为。ViaSix 可以在菜单栏继续测速或维持本地代理。选择菜单栏中的“退出 ViaSix”才会完整退出。
 
-ViaSix 需要启动外部网络工具并在 Application Support 中维护它们，因此当前分发模型是 Developer ID + 公证，而不是 Mac App Store 沙盒。应用不需要管理员权限，也不会安装系统扩展或网络扩展。首次运行未公证的本地构建时，macOS Gatekeeper 仍可能要求用户确认。
+### 测速结果是否代表实际代理速度？
 
-## 网络与隐私边界
+不一定。测速结果反映候选边缘 IP 在当前网络中的表现；最终体验还会受到你的代理服务器、传输配置、网络拥塞和目标站点影响。
 
-- 组件安装连接 CFST 与 Xray-core 的官方 GitHub Releases。
-- CFST 会连接其默认测速地址，或用户在参数中填写的自定义 URL。
-- 出口 IP 检测连接 `https://api.myip.la/cn?json`；Xray 运行时会通过本地代理请求。
-- ViaSix 仅监听回环地址 `127.0.0.1:11451`，不会主动开放局域网端口。
-- ViaSix 不收集遥测；第三方组件和网络服务受各自许可与隐私政策约束。
+### 如何备份或迁移设置？
 
-## 工程结构
+完全退出 ViaSix 后，备份 `~/Library/Application Support/ViaSix/`。详细的文件用途和恢复步骤见 [用户指南](Docs/USER_GUIDE.md)。
 
-```text
-Sources/
-  ViaSixCore/       模型、解析、配置、下载、进程与持久化
-  ViaSixApp/        SwiftUI 界面、菜单栏与应用生命周期
-Tests/
-  ViaSixCoreTests/  核心逻辑及进程行为测试
-  ViaSixAppTests/   应用状态编排与配置一致性测试
-Packaging/          App bundle 元数据
-Scripts/            构建、打包与 bundle 验证脚本
-Docs/               架构说明
-```
+## 文档
 
-完整测试会验证参数到 CLI 的映射、CSV 与流式输出解析、偏好兼容、配置原子更新、AppModel 状态一致性、运行组件校验安装，以及 CFST / Xray 的进程生命周期。打包验证会检查 Info.plist、主程序、内置资源、第三方声明和代码签名。
-
-架构和进程边界见 [Docs/ARCHITECTURE.md](Docs/ARCHITECTURE.md)，第三方版本与许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+- [用户指南](Docs/USER_GUIDE.md)：配置、测速、代理使用、备份与排错
+- [开发说明](Docs/DEVELOPMENT.md)：构建、测试、目录结构与开发约定
+- [架构说明](Docs/ARCHITECTURE.md)：模块、数据和进程边界
+- [发布指南](Docs/RELEASING.md)：签名、公证与发布检查
+- [第三方声明](THIRD_PARTY_NOTICES.md)：组件版本与许可证

@@ -1,5 +1,7 @@
 # Architecture
 
+> Developer documentation. End users should start with the [README](../README.md) or [ViaSix User Guide](USER_GUIDE.md).
+
 ViaSix is split into a UI executable and an importable core library.
 
 ```text
