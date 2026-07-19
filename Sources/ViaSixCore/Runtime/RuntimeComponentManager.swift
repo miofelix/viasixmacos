@@ -78,7 +78,7 @@ public struct RuntimeDownloadedFile: Equatable, Sendable {
 }
 
 public typealias RuntimeDownloadHandler = @Sendable (URL) async throws -> RuntimeDownloadedFile
-public typealias RuntimeArchiveExtractor = @Sendable (URL, URL) throws -> Void
+public typealias RuntimeArchiveExtractor = @Sendable (URL, URL) async throws -> Void
 
 public enum RuntimeComponentError: LocalizedError, Equatable, Sendable {
     case missingManifestAsset(RuntimeComponent, RuntimeArchitecture)
@@ -94,6 +94,7 @@ public enum RuntimeComponentError: LocalizedError, Equatable, Sendable {
     case httpStatus(Int, URL)
     case checksumMismatch(archiveName: String, expected: String, actual: String)
     case extractionFailed(archiveName: String, status: Int32, output: String)
+    case extractionTimedOut(archiveName: String)
     case invalidRuntimeDirectory(URL)
 
     public var errorDescription: String? {
@@ -125,6 +126,8 @@ public enum RuntimeComponentError: LocalizedError, Equatable, Sendable {
             return "\(archiveName) 的 SHA256 校验失败，预期 \(expected)，实际 \(actual)。"
         case .extractionFailed(let archiveName, let status, let output):
             return "解压 \(archiveName) 失败（退出码 \(status)）：\(output)"
+        case .extractionTimedOut(let archiveName):
+            return "解压 \(archiveName) 超时，已停止解压进程。"
         case .invalidRuntimeDirectory(let url):
             return "Runtime 路径已存在，但不是目录：\(url.path)"
         }
@@ -132,6 +135,8 @@ public enum RuntimeComponentError: LocalizedError, Equatable, Sendable {
 }
 
 public actor RuntimeComponentManager {
+    private static let extractionTimeout: Duration = .seconds(120)
+
     public let runtimeDirectory: URL
     public let manifest: RuntimeManifest
 
@@ -217,8 +222,10 @@ public actor RuntimeComponentManager {
 
     @discardableResult
     public func install(from sourcePaths: [URL]) throws -> RuntimeInstallationStatus {
+        try Task.checkCancellation()
         let normalizedPaths = sourcePaths.map(\.standardizedFileURL)
         let files = try Self.discoverFiles(in: normalizedPaths, using: FileManager.default)
+        try Task.checkCancellation()
         guard !files.isEmpty else {
             throw RuntimeComponentError.noPayloadFiles(normalizedPaths)
         }
@@ -229,12 +236,14 @@ public actor RuntimeComponentManager {
     public func downloadAndInstall(
         architecture: RuntimeArchitecture = .current
     ) async throws -> RuntimeInstallationStatus {
+        try Task.checkCancellation()
         let assets: [RuntimeAsset]
         if let releaseResolver {
             assets = try await releaseResolver.latestAssets(for: architecture)
         } else {
             assets = try assetsForInstallation(architecture: architecture)
         }
+        try Task.checkCancellation()
         let fileManager = FileManager.default
         let workspace = transactionDirectory(prefix: "download")
         let downloadsDirectory = workspace.appendingPathComponent("Downloads", isDirectory: true)
@@ -246,12 +255,15 @@ public actor RuntimeComponentManager {
 
         var payloadFiles: [RuntimePayloadFile: URL] = [:]
         for asset in assets {
+            try Task.checkCancellation()
             let archiveURL = try await download(asset, to: downloadsDirectory)
+            try Task.checkCancellation()
             let componentDirectory =
                 extractedDirectory
                 .appendingPathComponent(asset.component.rawValue, isDirectory: true)
             try fileManager.createDirectory(at: componentDirectory, withIntermediateDirectories: true)
-            try archiveExtractor(archiveURL, componentDirectory)
+            try await archiveExtractor(archiveURL, componentDirectory)
+            try Task.checkCancellation()
 
             let discovered = try Self.discoverFiles(
                 in: [componentDirectory],
@@ -267,33 +279,44 @@ public actor RuntimeComponentManager {
             }
         }
 
+        try Task.checkCancellation()
         return try atomicallyInstall(payloadFiles)
     }
 
     public func download(_ asset: RuntimeAsset, to destinationDirectory: URL) async throws -> URL {
+        try Task.checkCancellation()
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
 
         let downloaded = try await downloadHandler(asset.downloadURL)
+        try Task.checkCancellation()
         guard (200...299).contains(downloaded.statusCode) else {
             throw RuntimeComponentError.httpStatus(downloaded.statusCode, asset.downloadURL)
         }
 
         let archiveURL = destinationDirectory.appendingPathComponent(asset.archiveName)
+        var shouldRemoveArchive = true
+        defer {
+            if shouldRemoveArchive {
+                try? fileManager.removeItem(at: archiveURL)
+            }
+        }
         if fileManager.fileExists(atPath: archiveURL.path) {
             try fileManager.removeItem(at: archiveURL)
         }
         try fileManager.copyItem(at: downloaded.fileURL, to: archiveURL)
+        try Task.checkCancellation()
 
         let digest = try RuntimeSHA256.hexDigest(ofFileAt: archiveURL)
+        try Task.checkCancellation()
         guard digest == asset.sha256.lowercased() else {
-            try? fileManager.removeItem(at: archiveURL)
             throw RuntimeComponentError.checksumMismatch(
                 archiveName: asset.archiveName,
                 expected: asset.sha256.lowercased(),
                 actual: digest
             )
         }
+        shouldRemoveArchive = false
         return archiveURL
     }
 
@@ -311,6 +334,7 @@ public actor RuntimeComponentManager {
     private func atomicallyInstall(
         _ sourceFiles: [RuntimePayloadFile: URL]
     ) throws -> RuntimeInstallationStatus {
+        try Task.checkCancellation()
         let fileManager = FileManager.default
         let parentDirectory = runtimeDirectory.deletingLastPathComponent()
         try fileManager.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
@@ -336,6 +360,7 @@ public actor RuntimeComponentManager {
         }
 
         for (payload, sourceURL) in sourceFiles {
+            try Task.checkCancellation()
             let destinationURL = candidateDirectory.appendingPathComponent(payload.rawValue)
             if fileManager.fileExists(atPath: destinationURL.path) {
                 try fileManager.removeItem(at: destinationURL)
@@ -344,6 +369,7 @@ public actor RuntimeComponentManager {
         }
 
         for payload in RuntimePayloadFile.allCases where payload.requiresExecutablePermission {
+            try Task.checkCancellation()
             let executableURL = candidateDirectory.appendingPathComponent(payload.rawValue)
             guard fileManager.fileExists(atPath: executableURL.path) else { continue }
             try fileManager.setAttributes(
@@ -352,6 +378,10 @@ public actor RuntimeComponentManager {
             )
         }
 
+        // This is the commit point. Cancellation is honored before the atomic
+        // replacement; once replacement starts it must run to completion so a
+        // partially installed Runtime directory is never exposed.
+        try Task.checkCancellation()
         if runtimeExists {
             let backupName = ".\(runtimeDirectory.lastPathComponent)-backup-\(UUID().uuidString)"
             _ = try fileManager.replaceItemAt(
@@ -388,6 +418,7 @@ public actor RuntimeComponentManager {
         ]
 
         for sourcePath in sourcePaths {
+            try Task.checkCancellation()
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: sourcePath.path, isDirectory: &isDirectory) else {
                 throw RuntimeComponentError.sourceNotFound(sourcePath)
@@ -404,6 +435,7 @@ public actor RuntimeComponentManager {
                     throw RuntimeComponentError.sourceIsNotFileOrDirectory(sourcePath)
                 }
                 for case let fileURL as URL in enumerator {
+                    try Task.checkCancellation()
                     try addCandidate(
                         fileURL,
                         resourceKeys: resourceKeys,
@@ -454,23 +486,39 @@ public actor RuntimeComponentManager {
         return RuntimeDownloadedFile(fileURL: fileURL, statusCode: response.statusCode)
     }
 
-    private static func extractUsingDitto(_ archiveURL: URL, _ destinationURL: URL) throws {
-        let process = Process()
-        let outputPipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        process.arguments = ["-x", "-k", archiveURL.path, destinationURL.path]
-        process.standardOutput = outputPipe
-        process.standardError = outputPipe
-
-        try process.run()
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
+    private static func extractUsingDitto(_ archiveURL: URL, _ destinationURL: URL) async throws {
+        let result: SupervisedCommandResult
+        do {
+            result = try await SupervisedCommand.run(
+                executableURL: URL(fileURLWithPath: "/usr/bin/ditto"),
+                arguments: ["-x", "-k", archiveURL.path, destinationURL.path],
+                workingDirectoryURL: destinationURL,
+                timeout: extractionTimeout
+            )
+        } catch SupervisedCommandError.timedOut {
+            throw RuntimeComponentError.extractionTimedOut(archiveName: archiveURL.lastPathComponent)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
             throw RuntimeComponentError.extractionFailed(
                 archiveName: archiveURL.lastPathComponent,
-                status: process.terminationStatus,
-                output: String(decoding: outputData, as: UTF8.self)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                status: -1,
+                output: error.localizedDescription
+            )
+        }
+
+        if let readError = result.outputReadError {
+            throw RuntimeComponentError.extractionFailed(
+                archiveName: archiveURL.lastPathComponent,
+                status: result.status,
+                output: "读取解压输出失败：\(readError)"
+            )
+        }
+        guard result.status == 0 else {
+            throw RuntimeComponentError.extractionFailed(
+                archiveName: archiveURL.lastPathComponent,
+                status: result.status,
+                output: result.output.trimmingCharacters(in: .whitespacesAndNewlines)
             )
         }
     }
