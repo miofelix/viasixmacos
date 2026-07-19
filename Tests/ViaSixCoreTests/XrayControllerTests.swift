@@ -177,7 +177,7 @@ final class XrayControllerTests: XCTestCase {
     func testClosingParentLifetimePipeStopsRuntimeGroupAndClosesOutput() async throws {
         let fixture = try XrayControllerFixture(behavior: "normal")
         defer { fixture.remove() }
-        let spawned = try SpawnedXrayProcess.start(
+        let spawned = try SupervisedProcess.start(
             executableURL: fixture.executableURL,
             arguments: ["run", "-config", fixture.configURL.path],
             workingDirectoryURL: fixture.directoryURL,
@@ -258,6 +258,25 @@ final class XrayControllerTests: XCTestCase {
         XCTAssertTrue(lines[0].contains("run -test -config"))
     }
 
+    func testDefaultPortProbeSupportsIPv4AndLocalhost() throws {
+        let listener = try LoopbackTCPListener(family: AF_INET)
+
+        XCTAssertTrue(
+            XrayController.probeTCPPort(host: "127.0.0.1", port: listener.port)
+        )
+        XCTAssertTrue(
+            XrayController.probeTCPPort(host: "localhost", port: listener.port)
+        )
+    }
+
+    func testDefaultPortProbeSupportsIPv6() throws {
+        let listener = try LoopbackTCPListener(family: AF_INET6)
+
+        XCTAssertTrue(
+            XrayController.probeTCPPort(host: "::1", port: listener.port)
+        )
+    }
+
     private func makeController(
         fixture: XrayControllerFixture,
         stopTimeout: Duration = .milliseconds(250),
@@ -321,6 +340,106 @@ final class XrayControllerTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Output pipe remained open after the supervised group exited")
+    }
+}
+
+private final class LoopbackTCPListener {
+    let port: UInt16
+
+    private let fileDescriptor: Int32
+
+    init(family: Int32) throws {
+        let descriptor = Darwin.socket(family, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { throw Self.lastPOSIXError() }
+
+        do {
+            let port = try Self.bindLoopback(descriptor, family: family)
+            guard Darwin.listen(descriptor, 4) == 0 else {
+                throw Self.lastPOSIXError()
+            }
+            self.fileDescriptor = descriptor
+            self.port = port
+        } catch {
+            Darwin.close(descriptor)
+            throw error
+        }
+    }
+
+    deinit {
+        Darwin.close(fileDescriptor)
+    }
+
+    private static func bindLoopback(_ descriptor: Int32, family: Int32) throws -> UInt16 {
+        switch family {
+        case AF_INET:
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            guard
+                "127.0.0.1".withCString({
+                    inet_pton(AF_INET, $0, &address.sin_addr)
+                }) == 1
+            else {
+                throw lastPOSIXError()
+            }
+            let bindStatus = withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.bind(
+                        descriptor,
+                        $0,
+                        socklen_t(MemoryLayout<sockaddr_in>.size)
+                    )
+                }
+            }
+            guard bindStatus == 0 else { throw lastPOSIXError() }
+
+            var addressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let nameStatus = withUnsafeMutablePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.getsockname(descriptor, $0, &addressLength)
+                }
+            }
+            guard nameStatus == 0 else { throw lastPOSIXError() }
+            return UInt16(bigEndian: address.sin_port)
+
+        case AF_INET6:
+            var address = sockaddr_in6()
+            address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+            address.sin6_family = sa_family_t(AF_INET6)
+            guard
+                "::1".withCString({
+                    inet_pton(AF_INET6, $0, &address.sin6_addr)
+                }) == 1
+            else {
+                throw lastPOSIXError()
+            }
+            let bindStatus = withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.bind(
+                        descriptor,
+                        $0,
+                        socklen_t(MemoryLayout<sockaddr_in6>.size)
+                    )
+                }
+            }
+            guard bindStatus == 0 else { throw lastPOSIXError() }
+
+            var addressLength = socklen_t(MemoryLayout<sockaddr_in6>.size)
+            let nameStatus = withUnsafeMutablePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.getsockname(descriptor, $0, &addressLength)
+                }
+            }
+            guard nameStatus == 0 else { throw lastPOSIXError() }
+            return UInt16(bigEndian: address.sin6_port)
+
+        default:
+            throw POSIXError(.EAFNOSUPPORT)
+        }
+    }
+
+    private static func lastPOSIXError() -> POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
 }
 

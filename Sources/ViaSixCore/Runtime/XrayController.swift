@@ -96,7 +96,7 @@ public actor XrayController {
     private var cancellationRequested = false
     private var eventHandler: XrayEventHandler?
     private var activeProcess: ManagedXrayProcess?
-    private var terminationTask: (pid: pid_t, task: Task<XrayProcessTermination, Never>)?
+    private var terminationTask: (pid: pid_t, task: Task<SupervisedProcessTermination, Never>)?
 
     public init(
         executableURL: URL,
@@ -187,7 +187,7 @@ public actor XrayController {
         activeProcess = validation
 
         let validationTermination = await validation.waitTask.value
-        Self.killRemainingGroupIfNeeded(validation.processGroup)
+        SupervisedProcessControl.killRemainingGroupIfNeeded(validation.processGroup)
         let validationOutput = await validation.outputTask.value
         try ensureActiveOperation(id)
         activeProcess = nil
@@ -223,7 +223,7 @@ public actor XrayController {
             try ensureActiveOperation(id)
 
             if let termination = runtime.terminationBox.value {
-                Self.killRemainingGroupIfNeeded(runtime.processGroup)
+                SupervisedProcessControl.killRemainingGroupIfNeeded(runtime.processGroup)
                 let output = await runtime.outputTask.value
                 try ensureActiveOperation(id)
                 activeProcess = nil
@@ -239,7 +239,7 @@ public actor XrayController {
             if await portProbe(host, port) {
                 try ensureActiveOperation(id)
                 if let termination = runtime.terminationBox.value {
-                    Self.killRemainingGroupIfNeeded(runtime.processGroup)
+                    SupervisedProcessControl.killRemainingGroupIfNeeded(runtime.processGroup)
                     let output = await runtime.outputTask.value
                     try ensureActiveOperation(id)
                     activeProcess = nil
@@ -291,9 +291,9 @@ public actor XrayController {
         arguments: [String],
         onEvent: @escaping XrayEventHandler
     ) throws -> ManagedXrayProcess {
-        let spawned: SpawnedXrayProcess
+        let spawned: SupervisedProcess
         do {
-            spawned = try SpawnedXrayProcess.start(
+            spawned = try SupervisedProcess.start(
                 executableURL: executableURL,
                 arguments: arguments,
                 workingDirectoryURL: workingDirectoryURL,
@@ -308,7 +308,7 @@ public actor XrayController {
 
         let terminationBox = XrayTerminationBox()
         let waitTask = Task.detached {
-            let termination = Self.waitForProcess(spawned.pid)
+            let termination = SupervisedProcessControl.waitForProcess(spawned.pid)
             // Once the supervisor has exited there is no reason to keep its
             // watchdog waiting on the parent pipe. Closing the write end also
             // makes the watchdog reap any descendants left by a runtime that
@@ -358,7 +358,7 @@ public actor XrayController {
         }
 
         if let process = activeProcess {
-            let task: Task<XrayProcessTermination, Never>
+            let task: Task<SupervisedProcessTermination, Never>
             if let existing = terminationTask, existing.pid == process.pid {
                 task = existing.task
             } else {
@@ -399,7 +399,7 @@ public actor XrayController {
 
     private func handleUnexpectedExit(
         process: ManagedXrayProcess,
-        termination: XrayProcessTermination,
+        termination: SupervisedProcessTermination,
         operationID id: UUID,
         handler: XrayEventHandler
     ) async {
@@ -411,7 +411,7 @@ public actor XrayController {
             return
         }
 
-        Self.killRemainingGroupIfNeeded(process.processGroup)
+        SupervisedProcessControl.killRemainingGroupIfNeeded(process.processGroup)
         let output = await process.outputTask.value
 
         guard operationID == id,
@@ -437,18 +437,20 @@ public actor XrayController {
     private nonisolated static func terminate(
         _ process: ManagedXrayProcess,
         gracePeriod: Duration
-    ) async -> XrayProcessTermination {
+    ) async -> SupervisedProcessTermination {
         // Closing this pipe is also what the kernel does if the parent app
         // crashes or is force-quit. The supervisor owns graceful group
         // termination so the same path is used for normal and abnormal exits.
         process.lifetime.close()
-        if processGroupExists(process.processGroup) {
+        if SupervisedProcessControl.processGroupExists(process.processGroup) {
             _ = Darwin.kill(-process.processGroup, SIGTERM)
         }
 
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: gracePeriod)
-        while processGroupExists(process.processGroup), clock.now < deadline {
+        while SupervisedProcessControl.processGroupExists(process.processGroup),
+            clock.now < deadline
+        {
             do {
                 try await Task.sleep(for: .milliseconds(20))
             } catch {
@@ -456,39 +458,14 @@ public actor XrayController {
             }
         }
 
-        if processGroupExists(process.processGroup) {
+        if SupervisedProcessControl.processGroupExists(process.processGroup) {
             _ = Darwin.kill(-process.processGroup, SIGKILL)
         }
         return await process.waitTask.value
     }
 
-    private nonisolated static func killRemainingGroupIfNeeded(_ processGroup: pid_t) {
-        if processGroupExists(processGroup) {
-            _ = Darwin.kill(-processGroup, SIGKILL)
-        }
-    }
-
-    private nonisolated static func processGroupExists(_ processGroup: pid_t) -> Bool {
-        if Darwin.kill(-processGroup, 0) == 0 { return true }
-        return errno == EPERM
-    }
-
-    private nonisolated static func waitForProcess(_ pid: pid_t) -> XrayProcessTermination {
-        var waitStatus: Int32 = 0
-        while Darwin.waitpid(pid, &waitStatus, 0) == -1 {
-            if errno == EINTR { continue }
-            return XrayProcessTermination(status: -1)
-        }
-
-        let signal = waitStatus & 0x7f
-        if signal == 0 {
-            return XrayProcessTermination(status: (waitStatus >> 8) & 0xff)
-        }
-        return XrayProcessTermination(status: 128 + signal)
-    }
-
     private nonisolated static func readOutput(
-        from output: XrayProcessOutput,
+        from output: SupervisedProcessOutput,
         onEvent: XrayEventHandler
     ) async -> XrayOutputCapture {
         defer { Darwin.close(output.fileDescriptor) }
@@ -537,58 +514,70 @@ public actor XrayController {
         )
     }
 
-    private nonisolated static func probeTCPPort(host: String, port: UInt16) -> Bool {
-        let socketDescriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-        guard socketDescriptor >= 0 else { return false }
-        defer { Darwin.close(socketDescriptor) }
-
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = port.bigEndian
-        guard host.withCString({ inet_pton(AF_INET, $0, &address.sin_addr) }) == 1 else {
-            return false
-        }
-
-        let flags = fcntl(socketDescriptor, F_GETFL, 0)
-        guard flags >= 0, fcntl(socketDescriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
-            return false
-        }
-
-        let result = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(
-                    socketDescriptor,
-                    $0,
-                    socklen_t(MemoryLayout<sockaddr_in>.size)
-                )
+    nonisolated static func probeTCPPort(host: String, port: UInt16) -> Bool {
+        var hints = addrinfo(
+            ai_flags: AI_NUMERICSERV,
+            ai_family: AF_UNSPEC,
+            ai_socktype: SOCK_STREAM,
+            ai_protocol: IPPROTO_TCP,
+            ai_addrlen: 0,
+            ai_canonname: nil,
+            ai_addr: nil,
+            ai_next: nil
+        )
+        var addresses: UnsafeMutablePointer<addrinfo>?
+        let service = String(port)
+        let resolutionStatus = host.withCString { hostPointer in
+            service.withCString { servicePointer in
+                getaddrinfo(hostPointer, servicePointer, &hints, &addresses)
             }
         }
-        if result == 0 { return true }
-        guard errno == EINPROGRESS else { return false }
+        guard resolutionStatus == 0, let addresses else { return false }
+        defer { freeaddrinfo(addresses) }
 
-        var descriptor = pollfd(fd: socketDescriptor, events: Int16(POLLOUT), revents: 0)
-        guard Darwin.poll(&descriptor, 1, 100) > 0 else { return false }
+        var current: UnsafeMutablePointer<addrinfo>? = addresses
+        while let addressInfo = current?.pointee {
+            defer { current = addressInfo.ai_next }
+            guard let address = addressInfo.ai_addr else { continue }
 
-        var socketError: Int32 = 0
-        var optionLength = socklen_t(MemoryLayout<Int32>.size)
-        guard
-            getsockopt(
-                socketDescriptor,
-                SOL_SOCKET,
-                SO_ERROR,
-                &socketError,
-                &optionLength
-            ) == 0
-        else {
-            return false
+            let socketDescriptor = Darwin.socket(
+                addressInfo.ai_family,
+                addressInfo.ai_socktype,
+                addressInfo.ai_protocol
+            )
+            guard socketDescriptor >= 0 else { continue }
+            defer { Darwin.close(socketDescriptor) }
+
+            let flags = fcntl(socketDescriptor, F_GETFL, 0)
+            guard flags >= 0, fcntl(socketDescriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
+                continue
+            }
+
+            let result = Darwin.connect(socketDescriptor, address, addressInfo.ai_addrlen)
+            if result == 0 { return true }
+            guard errno == EINPROGRESS else { continue }
+
+            var descriptor = pollfd(fd: socketDescriptor, events: Int16(POLLOUT), revents: 0)
+            guard Darwin.poll(&descriptor, 1, 100) > 0 else { continue }
+
+            var socketError: Int32 = 0
+            var optionLength = socklen_t(MemoryLayout<Int32>.size)
+            guard
+                getsockopt(
+                    socketDescriptor,
+                    SOL_SOCKET,
+                    SO_ERROR,
+                    &socketError,
+                    &optionLength
+                ) == 0,
+                socketError == 0
+            else {
+                continue
+            }
+            return true
         }
-        return socketError == 0
+        return false
     }
-}
-
-private struct XrayProcessTermination: Sendable {
-    let status: Int32
 }
 
 private struct XrayOutputCapture: Sendable {
@@ -598,15 +587,15 @@ private struct XrayOutputCapture: Sendable {
 
 private final class XrayTerminationBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var storedValue: XrayProcessTermination?
+    private var storedValue: SupervisedProcessTermination?
 
-    var value: XrayProcessTermination? {
+    var value: SupervisedProcessTermination? {
         lock.lock()
         defer { lock.unlock() }
         return storedValue
     }
 
-    func store(_ value: XrayProcessTermination) {
+    func store(_ value: SupervisedProcessTermination) {
         lock.lock()
         storedValue = value
         lock.unlock()
@@ -616,240 +605,8 @@ private final class XrayTerminationBox: @unchecked Sendable {
 private struct ManagedXrayProcess: Sendable {
     let pid: pid_t
     let processGroup: pid_t
-    let lifetime: XrayProcessLifetime
+    let lifetime: ProcessLifetime
     let terminationBox: XrayTerminationBox
-    let waitTask: Task<XrayProcessTermination, Never>
+    let waitTask: Task<SupervisedProcessTermination, Never>
     let outputTask: Task<XrayOutputCapture, Never>
-}
-
-final class XrayProcessOutput: @unchecked Sendable {
-    let fileDescriptor: Int32
-
-    init(fileDescriptor: Int32) {
-        self.fileDescriptor = fileDescriptor
-    }
-}
-
-/// A write descriptor held only by the parent application. The child-side
-/// supervisor observes EOF when this descriptor is closed, including when the
-/// operating system closes it after an abrupt application exit.
-final class XrayProcessLifetime: @unchecked Sendable {
-    private let lock = NSLock()
-    private var fileDescriptor: Int32?
-
-    init(fileDescriptor: Int32) {
-        self.fileDescriptor = fileDescriptor
-    }
-
-    func close() {
-        lock.lock()
-        let descriptor = fileDescriptor
-        fileDescriptor = nil
-        defer { lock.unlock() }
-        if let descriptor {
-            Darwin.close(descriptor)
-        }
-    }
-
-    deinit {
-        close()
-    }
-}
-
-struct SpawnedXrayProcess: Sendable {
-    let pid: pid_t
-    let processGroup: pid_t
-    let output: XrayProcessOutput
-    let lifetime: XrayProcessLifetime
-
-    static func start(
-        executableURL: URL,
-        arguments: [String],
-        workingDirectoryURL: URL,
-        environmentOverrides: [String: String]
-    ) throws -> Self {
-        var outputDescriptors: [Int32] = [-1, -1]
-        guard Darwin.pipe(&outputDescriptors) == 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-
-        var lifetimeDescriptors: [Int32] = [-1, -1]
-        var shouldCloseOutputReadDescriptor = true
-        var shouldCloseLifetimeWriteDescriptor = true
-        defer {
-            if shouldCloseOutputReadDescriptor {
-                Self.closeIfValid(outputDescriptors[0])
-            }
-            Self.closeIfValid(outputDescriptors[1])
-            Self.closeIfValid(lifetimeDescriptors[0])
-            if shouldCloseLifetimeWriteDescriptor {
-                Self.closeIfValid(lifetimeDescriptors[1])
-            }
-        }
-
-        guard Darwin.pipe(&lifetimeDescriptors) == 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-
-        try Self.moveOutOfStandardDescriptorRange(&outputDescriptors)
-        try Self.moveOutOfStandardDescriptorRange(&lifetimeDescriptors)
-        try (outputDescriptors + lifetimeDescriptors).forEach(Self.setCloseOnExec)
-
-        var fileActions: posix_spawn_file_actions_t?
-        var spawnAttributes: posix_spawnattr_t?
-        guard posix_spawn_file_actions_init(&fileActions) == 0 else {
-            throw POSIXError(.EIO)
-        }
-        defer { posix_spawn_file_actions_destroy(&fileActions) }
-
-        guard posix_spawnattr_init(&spawnAttributes) == 0 else {
-            throw POSIXError(.EIO)
-        }
-        defer { posix_spawnattr_destroy(&spawnAttributes) }
-
-        try check(
-            posix_spawn_file_actions_adddup2(
-                &fileActions,
-                outputDescriptors[1],
-                STDOUT_FILENO
-            ))
-        try check(
-            posix_spawn_file_actions_adddup2(
-                &fileActions,
-                outputDescriptors[1],
-                STDERR_FILENO
-            ))
-        try check(
-            posix_spawn_file_actions_adddup2(
-                &fileActions,
-                lifetimeDescriptors[0],
-                STDIN_FILENO
-            ))
-        try check(posix_spawn_file_actions_addclose(&fileActions, outputDescriptors[0]))
-        try check(posix_spawn_file_actions_addclose(&fileActions, outputDescriptors[1]))
-        try check(posix_spawn_file_actions_addclose(&fileActions, lifetimeDescriptors[0]))
-        try check(posix_spawn_file_actions_addclose(&fileActions, lifetimeDescriptors[1]))
-        try workingDirectoryURL.path.withCString { path in
-            try check(posix_spawn_file_actions_addchdir_np(&fileActions, path))
-        }
-
-        try check(posix_spawnattr_setflags(&spawnAttributes, Int16(POSIX_SPAWN_SETPGROUP)))
-        try check(posix_spawnattr_setpgroup(&spawnAttributes, 0))
-
-        let supervisorURL = URL(fileURLWithPath: "/bin/sh")
-        let argumentStrings =
-            [
-                supervisorURL.path,
-                "-c",
-                supervisorScript,
-                "viasix-xray-supervisor",
-                executableURL.path,
-            ] + arguments
-        var argv = argumentStrings.map { strdup($0) }
-        defer { argv.forEach { free($0) } }
-        argv.append(nil)
-
-        let environment = ProcessInfo.processInfo.environment.merging(
-            environmentOverrides,
-            uniquingKeysWith: { _, override in override }
-        )
-        let environmentStrings =
-            environment
-            .map { "\($0.key)=\($0.value)" }
-            .sorted()
-        var envp = environmentStrings.map { strdup($0) }
-        defer { envp.forEach { free($0) } }
-        envp.append(nil)
-
-        var pid: pid_t = 0
-        let spawnResult = supervisorURL.path.withCString { executablePath in
-            posix_spawn(
-                &pid,
-                executablePath,
-                &fileActions,
-                &spawnAttributes,
-                &argv,
-                &envp
-            )
-        }
-        try check(spawnResult)
-
-        shouldCloseOutputReadDescriptor = false
-        shouldCloseLifetimeWriteDescriptor = false
-        return Self(
-            pid: pid,
-            processGroup: pid,
-            output: XrayProcessOutput(fileDescriptor: outputDescriptors[0]),
-            lifetime: XrayProcessLifetime(fileDescriptor: lifetimeDescriptors[1])
-        )
-    }
-
-    /// The runtime and the watchdog intentionally share the supervisor's
-    /// process group. The watchdog does not inherit the output pipe, so it
-    /// cannot prevent log collection from reaching EOF during cleanup.
-    private static let supervisorScript = #"""
-        runtime=$1
-        shift
-
-        exec 3<&0
-        exec 0<&-
-        "$runtime" "$@" 3<&- </dev/null &
-        runtime_pid=$!
-
-        # Install this only after launching the runtime so Xray keeps the
-        # default SIGTERM disposition. The supervisor stays alive to reap it.
-        trap '' TERM
-
-        (
-          trap '' TERM
-          while IFS= read -r _ <&3; do :; done
-
-          kill -TERM 0 2>/dev/null || true
-
-          attempts=0
-          while kill -0 "$runtime_pid" 2>/dev/null && [ "$attempts" -lt 40 ]; do
-            attempts=$((attempts + 1))
-            sleep 0.05
-          done
-
-          kill -KILL 0 2>/dev/null || true
-        ) >/dev/null 2>&1 &
-
-        exec 3<&-
-        wait "$runtime_pid"
-        status=$?
-
-        exit "$status"
-        """#
-
-    private static func moveOutOfStandardDescriptorRange(
-        _ descriptors: inout [Int32]
-    ) throws {
-        for index in descriptors.indices where descriptors[index] <= STDERR_FILENO {
-            let duplicate = Darwin.fcntl(descriptors[index], F_DUPFD_CLOEXEC, 3)
-            guard duplicate != -1 else {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            }
-            Darwin.close(descriptors[index])
-            descriptors[index] = duplicate
-        }
-    }
-
-    private static func setCloseOnExec(_ descriptor: Int32) throws {
-        let flags = Darwin.fcntl(descriptor, F_GETFD)
-        guard flags != -1, Darwin.fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) != -1 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-    }
-
-    private static func closeIfValid(_ descriptor: Int32) {
-        if descriptor >= 0 {
-            Darwin.close(descriptor)
-        }
-    }
-
-    private static func check(_ status: Int32) throws {
-        guard status != 0 else { return }
-        throw POSIXError(POSIXErrorCode(rawValue: status) ?? .EIO)
-    }
 }

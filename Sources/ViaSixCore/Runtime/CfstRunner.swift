@@ -48,9 +48,10 @@ public enum CfstRunnerError: Error, Equatable, LocalizedError, Sendable {
 
 /// Runs one CloudflareSpeedTest process at a time and owns its complete lifetime.
 ///
-/// The executable is placed in its own process group so cancellation also stops
-/// any subprocesses it may have created. Standard output and standard error are
-/// merged and parsed incrementally in their original pipe order.
+/// The executable is supervised in an owned process group so cancellation and
+/// an abrupt parent-app exit also stop any subprocesses it may have created.
+/// Standard output and standard error are merged and parsed incrementally in
+/// their original pipe order.
 public actor CfstRunner {
     public let executableURL: URL
     public let resultURL: URL
@@ -59,6 +60,7 @@ public actor CfstRunner {
     private struct ActiveRun {
         let id: UUID
         let processGroup: pid_t
+        let lifetime: ProcessLifetime
         var userCancelled = false
     }
 
@@ -99,9 +101,9 @@ public actor CfstRunner {
         try removePreviousResult()
         guard !Task.isCancelled else { throw CfstRunnerError.userCancelled }
 
-        let process: SpawnedCfstProcess
+        let process: SupervisedProcess
         do {
-            process = try SpawnedCfstProcess.start(
+            process = try SupervisedProcess.start(
                 executableURL: executableURL,
                 arguments: arguments,
                 workingDirectoryURL: workingDirectoryURL
@@ -114,19 +116,25 @@ public actor CfstRunner {
         }
 
         let runID = UUID()
-        activeRun = ActiveRun(id: runID, processGroup: process.processGroup)
+        activeRun = ActiveRun(
+            id: runID,
+            processGroup: process.processGroup,
+            lifetime: process.lifetime
+        )
         defer { activeRun = nil }
 
         let outputTask = Task.detached(priority: nil) {
             try await Self.readOutput(from: process.output, onEvent: onEvent)
         }
         let waitTask = Task.detached(priority: nil) {
-            Self.waitForProcess(process.pid)
+            let termination = SupervisedProcessControl.waitForProcess(process.pid)
+            process.lifetime.close()
+            return termination
         }
 
         return try await withTaskCancellationHandler {
             let termination = await waitTask.value
-            Self.killRemainingGroupIfNeeded(process.processGroup)
+            SupervisedProcessControl.killRemainingGroupIfNeeded(process.processGroup)
             let outputResult: Result<String, Error>
             do {
                 outputResult = .success(try await outputTask.value)
@@ -171,20 +179,10 @@ public actor CfstRunner {
         run.userCancelled = true
         activeRun = run
 
-        // The child is its process-group leader. A negative PID signals the
-        // whole group, preventing helper subprocesses from being orphaned.
+        // The supervisor is the process-group leader. A negative PID signals
+        // the whole group, preventing helper subprocesses from being orphaned.
+        run.lifetime.close()
         _ = Darwin.kill(-run.processGroup, SIGKILL)
-    }
-
-    private nonisolated static func killRemainingGroupIfNeeded(_ processGroup: pid_t) {
-        if processGroupExists(processGroup) {
-            _ = Darwin.kill(-processGroup, SIGKILL)
-        }
-    }
-
-    private nonisolated static func processGroupExists(_ processGroup: pid_t) -> Bool {
-        if Darwin.kill(-processGroup, 0) == 0 { return true }
-        return errno == EPERM
     }
 
     private func validateExecutable() throws {
@@ -234,129 +232,43 @@ public actor CfstRunner {
     }
 
     private nonisolated static func readOutput(
-        from output: CfstProcessOutput,
+        from output: SupervisedProcessOutput,
         onEvent: CfstEventHandler
     ) async throws -> String {
-        defer { try? output.fileHandle.close() }
+        defer { Darwin.close(output.fileDescriptor) }
 
         var parser = CfstOutputParser()
         var diagnosticOutput = Data()
         let diagnosticLimit = 64 * 1_024
+        var buffer = [UInt8](repeating: 0, count: 4_096)
 
-        while let data = try output.fileHandle.read(upToCount: 4_096), !data.isEmpty {
-            if diagnosticOutput.count < diagnosticLimit {
-                diagnosticOutput.append(data.prefix(diagnosticLimit - diagnosticOutput.count))
+        while true {
+            let byteCount = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(output.fileDescriptor, bytes.baseAddress, bytes.count)
             }
-            for event in parser.consume(data) {
-                await onEvent(event)
+            if byteCount > 0 {
+                let data = Data(buffer.prefix(byteCount))
+                if diagnosticOutput.count < diagnosticLimit {
+                    diagnosticOutput.append(data.prefix(diagnosticLimit - diagnosticOutput.count))
+                }
+                for event in parser.consume(data) {
+                    await onEvent(event)
+                }
+                continue
             }
+            if byteCount == -1, errno == EINTR {
+                continue
+            }
+            if byteCount == -1 {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            break
         }
+
         for event in parser.finish() {
             await onEvent(event)
         }
 
         return String(decoding: diagnosticOutput, as: UTF8.self)
-    }
-
-    private nonisolated static func waitForProcess(_ pid: pid_t) -> CfstProcessTermination {
-        var waitStatus: Int32 = 0
-        while Darwin.waitpid(pid, &waitStatus, 0) == -1 {
-            if errno == EINTR { continue }
-            return CfstProcessTermination(status: -1)
-        }
-
-        let signal = waitStatus & 0x7f
-        if signal == 0 {
-            return CfstProcessTermination(status: (waitStatus >> 8) & 0xff)
-        }
-        return CfstProcessTermination(status: 128 + signal)
-    }
-}
-
-private struct CfstProcessTermination: Sendable {
-    let status: Int32
-}
-
-private final class CfstProcessOutput: @unchecked Sendable {
-    let fileHandle: FileHandle
-
-    init(fileDescriptor: Int32) {
-        fileHandle = FileHandle(fileDescriptor: fileDescriptor, closeOnDealloc: true)
-    }
-}
-
-private struct SpawnedCfstProcess: Sendable {
-    let pid: pid_t
-    let processGroup: pid_t
-    let output: CfstProcessOutput
-
-    static func start(
-        executableURL: URL,
-        arguments: [String],
-        workingDirectoryURL: URL
-    ) throws -> Self {
-        var descriptors: [Int32] = [0, 0]
-        guard Darwin.pipe(&descriptors) == 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-
-        var shouldCloseReadDescriptor = true
-        defer {
-            if shouldCloseReadDescriptor { Darwin.close(descriptors[0]) }
-            Darwin.close(descriptors[1])
-        }
-
-        var fileActions: posix_spawn_file_actions_t?
-        var spawnAttributes: posix_spawnattr_t?
-        guard posix_spawn_file_actions_init(&fileActions) == 0 else {
-            throw POSIXError(.EIO)
-        }
-        defer { posix_spawn_file_actions_destroy(&fileActions) }
-
-        guard posix_spawnattr_init(&spawnAttributes) == 0 else {
-            throw POSIXError(.EIO)
-        }
-        defer { posix_spawnattr_destroy(&spawnAttributes) }
-
-        try check(posix_spawn_file_actions_adddup2(&fileActions, descriptors[1], STDOUT_FILENO))
-        try check(posix_spawn_file_actions_adddup2(&fileActions, descriptors[1], STDERR_FILENO))
-        try check(posix_spawn_file_actions_addclose(&fileActions, descriptors[0]))
-        try check(posix_spawn_file_actions_addclose(&fileActions, descriptors[1]))
-        try workingDirectoryURL.path.withCString { path in
-            try check(posix_spawn_file_actions_addchdir_np(&fileActions, path))
-        }
-
-        try check(posix_spawnattr_setflags(&spawnAttributes, Int16(POSIX_SPAWN_SETPGROUP)))
-        try check(posix_spawnattr_setpgroup(&spawnAttributes, 0))
-
-        let strings = [executableURL.path] + arguments
-        var argv = strings.map { strdup($0) }
-        defer { argv.forEach { free($0) } }
-        argv.append(nil)
-
-        var pid: pid_t = 0
-        let spawnResult = executableURL.path.withCString { executablePath in
-            posix_spawn(
-                &pid,
-                executablePath,
-                &fileActions,
-                &spawnAttributes,
-                &argv,
-                environ
-            )
-        }
-        try check(spawnResult)
-
-        shouldCloseReadDescriptor = false
-        return Self(
-            pid: pid,
-            processGroup: pid,
-            output: CfstProcessOutput(fileDescriptor: descriptors[0])
-        )
-    }
-
-    private static func check(_ status: Int32) throws {
-        guard status != 0 else { return }
-        throw POSIXError(POSIXErrorCode(rawValue: status) ?? .EIO)
     }
 }

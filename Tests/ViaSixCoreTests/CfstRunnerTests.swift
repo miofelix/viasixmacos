@@ -107,6 +107,49 @@ final class CfstRunnerTests: XCTestCase {
         XCTAssertFalse(isRunning)
     }
 
+    func testClosingParentLifetimePipeStopsCFSTGroupAndClosesOutput() async throws {
+        let fixture = try CfstRunnerFixture(
+            script: #"""
+                #!/bin/sh
+                sleep 30 &
+                child=$!
+                printf '%s %s\n' "$$" "$child" > pids.txt
+                printf 'running\n'
+                wait "$child"
+                """#
+        )
+        defer { fixture.remove() }
+
+        let spawned = try SupervisedProcess.start(
+            executableURL: fixture.executableURL,
+            arguments: [],
+            workingDirectoryURL: fixture.directoryURL
+        )
+        defer {
+            spawned.lifetime.close()
+            _ = Darwin.kill(-spawned.processGroup, SIGKILL)
+            var waitStatus: Int32 = 0
+            while Darwin.waitpid(spawned.pid, &waitStatus, 0) == -1, errno == EINTR {}
+            Darwin.close(spawned.output.fileDescriptor)
+        }
+
+        try await waitUntilFileExists(fixture.processIDsURL)
+        let processIDs = try String(contentsOf: fixture.processIDsURL, encoding: .utf8)
+            .split(whereSeparator: \.isWhitespace)
+            .compactMap { pid_t($0) }
+        XCTAssertEqual(processIDs.count, 2)
+
+        // Closing the parent-owned descriptor models a crash/force-quit. The
+        // test deliberately sends no signal to the supervised process group.
+        spawned.lifetime.close()
+        try await waitUntilProcessIsReaped(spawned.pid)
+
+        for processID in processIDs {
+            try await waitUntilProcessIsGone(processID)
+        }
+        try await waitUntilOutputPipeCloses(spawned.output.fileDescriptor)
+    }
+
     func testLeaderExitCleansUpBackgroundChildrenBeforeReadingEOF() async throws {
         let fixture = try CfstRunnerFixture(
             script: #"""
@@ -200,6 +243,38 @@ final class CfstRunnerTests: XCTestCase {
         }
         XCTFail("PID \(pid) still exists after cancellation")
     }
+
+    private func waitUntilProcessIsReaped(_ pid: pid_t) async throws {
+        for _ in 0..<400 {
+            var waitStatus: Int32 = 0
+            let result = Darwin.waitpid(pid, &waitStatus, WNOHANG)
+            if result == pid { return }
+            if result == -1 {
+                if errno == EINTR { continue }
+                if errno == ECHILD { return }
+                return XCTFail("waitpid failed for PID \(pid): \(String(cString: strerror(errno)))")
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("Timed out waiting to reap PID \(pid)")
+    }
+
+    private func waitUntilOutputPipeCloses(_ fileDescriptor: Int32) async throws {
+        for _ in 0..<200 {
+            var descriptor = pollfd(
+                fd: fileDescriptor,
+                events: Int16(POLLIN | POLLHUP),
+                revents: 0
+            )
+            if Darwin.poll(&descriptor, 1, 10) > 0,
+                descriptor.revents & Int16(POLLHUP) != 0
+            {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("Output pipe remained open after the supervised group exited")
+    }
 }
 
 private actor CfstEventRecorder {
@@ -214,12 +289,14 @@ private final class CfstRunnerFixture: @unchecked Sendable {
     let directoryURL: URL
     let executableURL: URL
     let resultURL: URL
+    let processIDsURL: URL
 
     init(script: String) throws {
         directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ViaSix-CfstRunnerTests-\(UUID().uuidString)", isDirectory: true)
         executableURL = directoryURL.appendingPathComponent("cfst")
         resultURL = directoryURL.appendingPathComponent("result.csv")
+        processIDsURL = directoryURL.appendingPathComponent("pids.txt")
 
         try FileManager.default.createDirectory(
             at: directoryURL,
