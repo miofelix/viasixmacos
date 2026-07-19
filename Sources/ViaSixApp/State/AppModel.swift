@@ -133,6 +133,7 @@ final class AppModel {
     @ObservationIgnored private var selectionTask: Task<Void, Never>?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var detectTask: Task<Void, Never>?
+    @ObservationIgnored private var exitIPEnrichmentTask: Task<Void, Never>?
     @ObservationIgnored private var activeExitDetectionID: UUID?
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
     @ObservationIgnored private var xrayStartTask: Task<Void, Never>?
@@ -735,6 +736,7 @@ final class AppModel {
 
     func detectExitIP() {
         guard !isShuttingDown, detectTask == nil else { return }
+        cancelExitIPDetection()
         let detectionID = UUID()
         let context = currentExitIPDetectionContext
         let proxy: ProxyEndpoint? =
@@ -753,9 +755,12 @@ final class AppModel {
         state.exit.errorMessage = nil
         detectTask = Task { [weak self] in
             guard let self else { return }
+            var shouldKeepDetectionGeneration = false
             defer {
                 if activeExitDetectionID == detectionID {
-                    activeExitDetectionID = nil
+                    if !shouldKeepDetectionGeneration {
+                        activeExitDetectionID = nil
+                    }
                     state.exit.isDetecting = false
                     detectTask = nil
                 }
@@ -770,10 +775,17 @@ final class AppModel {
                 state.exit.info = info
                 state.exit.detectedAt = Date()
                 state.exit.context = context
+                shouldKeepDetectionGeneration = true
                 appendLog(
                     source: .app,
                     level: .success,
                     message: "出口 IP：\(info.ip)（\(exitIPRouteDescription ?? "未知路径")）"
+                )
+                startExitIPEnrichment(
+                    for: info,
+                    proxy: proxy,
+                    context: context,
+                    detectionID: detectionID
                 )
             } catch is CancellationError {
                 return
@@ -808,6 +820,7 @@ final class AppModel {
             selectionTask,
             saveTask,
             detectTask,
+            exitIPEnrichmentTask,
             noticeTask,
             xrayStartTask,
             xrayStopTask,
@@ -1101,8 +1114,45 @@ final class AppModel {
     private func cancelExitIPDetection() {
         activeExitDetectionID = nil
         detectTask?.cancel()
+        exitIPEnrichmentTask?.cancel()
         detectTask = nil
+        exitIPEnrichmentTask = nil
         state.exit.isDetecting = false
+    }
+
+    private func startExitIPEnrichment(
+        for info: ExitIPInfo,
+        proxy: ProxyEndpoint?,
+        context: AppState.ExitState.DetectionContext,
+        detectionID: UUID
+    ) {
+        exitIPEnrichmentTask?.cancel()
+        exitIPEnrichmentTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if activeExitDetectionID == detectionID {
+                    activeExitDetectionID = nil
+                    exitIPEnrichmentTask = nil
+                }
+            }
+
+            do {
+                let enrichedInfo = try await exitDetector.enrich(info, proxy: proxy)
+                guard
+                    activeExitDetectionID == detectionID,
+                    !Task.isCancelled,
+                    enrichedInfo.ip == info.ip,
+                    state.exit.info?.ip == info.ip,
+                    state.exit.context == context
+                else { return }
+                state.exit.info = enrichedInfo
+            } catch is CancellationError {
+                return
+            } catch {
+                // Geolocation is best-effort; the primary exit IP remains valid.
+                return
+            }
+        }
     }
 
     private func refreshExitIPAfterNetworkChangeIfNeeded() {

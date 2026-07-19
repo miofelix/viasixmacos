@@ -125,4 +125,237 @@ final class ExitIPResponseParserTests: XCTestCase {
             XCTAssertEqual(error as? ExitIPDetectionError, .invalidEndpoint)
         }
     }
+
+    func testDetectorPublishesPrimaryResultWithoutRequestingGeolocation() async throws {
+        let primaryURL = URL(string: "https://primary.example.test/ip")!
+        let geolocationURL = URL(string: "https://api.ip.sb/geoip")!
+        let recorder = ExitIPRequestRecorder()
+        let detector = ExitIPDetector(
+            endpoint: primaryURL,
+            geolocationEndpoint: geolocationURL,
+            requestLoader: { request, _ in
+                await recorder.record(request)
+                return ExitIPDetector.LoadedResponse(
+                    data: Data("1.1.1.1\n".utf8),
+                    statusCode: 200
+                )
+            }
+        )
+
+        let info = try await detector.detect(expectedFamily: .ipv4)
+
+        XCTAssertEqual(info, ExitIPInfo(ip: "1.1.1.1"))
+        let requestedURLs = await recorder.requestedURLs()
+        XCTAssertEqual(requestedURLs, [primaryURL])
+    }
+
+    func testDetectorAcceptsForcedIPv4AndIPv6ResultsWithoutGeolocationRequests() async throws {
+        let ipv4URL = URL(string: AppMetadata.ipv4ExitIPEndpoint)!
+        let ipv6URL = URL(string: AppMetadata.ipv6ExitIPEndpoint)!
+        let recorder = ExitIPRequestRecorder()
+        let detector = ExitIPDetector(
+            endpoint: URL(string: "https://primary.example.test/ip")!,
+            geolocationEndpoint: URL(string: "https://api.ip.sb/geoip")!,
+            requestLoader: { request, _ in
+                await recorder.record(request)
+                let response = request.url == ipv4URL ? "1.1.1.1" : "2606::1"
+                return ExitIPDetector.LoadedResponse(
+                    data: Data(response.utf8),
+                    statusCode: 200
+                )
+            }
+        )
+
+        let ipv4 = try await detector.detect(endpoint: ipv4URL, expectedFamily: .ipv4)
+        let ipv6 = try await detector.detect(endpoint: ipv6URL, expectedFamily: .ipv6)
+        let requestedURLs = await recorder.requestedURLs()
+
+        XCTAssertEqual(ipv4.addressFamily, .ipv4)
+        XCTAssertEqual(ipv6.addressFamily, .ipv6)
+        XCTAssertEqual(requestedURLs, [ipv4URL, ipv6URL])
+    }
+
+    func testEnrichmentUsesBaseGeolocationHostForIPv4AndIPv6() async throws {
+        let primaryURL = URL(string: "https://primary.example.test/ip")!
+        let geolocationURL = URL(string: "https://api.ip.sb/geoip")!
+        let recorder = ExitIPRequestRecorder()
+        let detector = ExitIPDetector(
+            endpoint: primaryURL,
+            geolocationEndpoint: geolocationURL,
+            requestLoader: { request, _ in
+                await recorder.record(request)
+                let responseData: Data
+                switch request.url?.path {
+                case "/geoip/1.1.1.1":
+                    responseData = Data(#"{"ip":"1.1.1.1","country":"澳大利亚"}"#.utf8)
+                case "/geoip/2606::1":
+                    responseData = Data(#"{"ip":"2606::1","country":"美国"}"#.utf8)
+                default:
+                    responseData = Data("unexpected-request".utf8)
+                }
+                return ExitIPDetector.LoadedResponse(data: responseData, statusCode: 200)
+            }
+        )
+
+        let ipv4 = try await detector.enrich(ExitIPInfo(ip: "1.1.1.1"))
+        let ipv6 = try await detector.enrich(ExitIPInfo(ip: "2606::1"))
+
+        XCTAssertEqual(ipv4.location, "澳大利亚")
+        XCTAssertEqual(ipv6.location, "美国")
+        let requestedURLs = await recorder.requestedURLs().map(\.absoluteString)
+        XCTAssertEqual(
+            requestedURLs,
+            [
+                "https://api.ip.sb/geoip/1.1.1.1",
+                "https://api.ip.sb/geoip/2606::1",
+            ]
+        )
+    }
+
+    func testEnrichmentMergesDetailedGeolocationIntoPrimaryResult() async throws {
+        let recorder = ExitIPRequestRecorder()
+        let detector = makeDetector { request, _ in
+            await recorder.record(request)
+            return ExitIPDetector.LoadedResponse(
+                data: Data(
+                    #"{"ip":"1.1.1.1","country":"澳大利亚","region":"昆士兰州","city":"布里斯班","organization":"Cloudflare","asn":13335,"timezone":"Australia/Brisbane"}"#
+                        .utf8
+                ),
+                statusCode: 200
+            )
+        }
+        let primary = ExitIPInfo(
+            ip: "1.1.1.1",
+            location: "澳大利亚",
+            details: "原始网络信息"
+        )
+
+        let enriched = try await detector.enrich(primary)
+        let requestedURLs = await recorder.requestedURLs()
+
+        XCTAssertEqual(requestedURLs.map(\.absoluteString), ["https://api.ip.sb/geoip/1.1.1.1"])
+        XCTAssertEqual(
+            enriched,
+            ExitIPInfo(
+                ip: "1.1.1.1",
+                location: "澳大利亚 · 昆士兰州 · 布里斯班",
+                details: "Cloudflare · AS13335 · Australia/Brisbane"
+            )
+        )
+    }
+
+    func testEnrichmentKeepsPrimaryResultWhenGeolocationIPDoesNotMatch() async throws {
+        let primary = ExitIPInfo(
+            ip: "1.1.1.1",
+            location: "已有位置",
+            details: "已有网络信息"
+        )
+        let detector = makeDetector { _, _ in
+            ExitIPDetector.LoadedResponse(
+                data: Data(#"{"ip":"1.0.0.1","country":"错误位置"}"#.utf8),
+                statusCode: 200
+            )
+        }
+
+        let enriched = try await detector.enrich(primary)
+        XCTAssertEqual(enriched, primary)
+    }
+
+    func testEnrichmentKeepsPrimaryResultWhenGeolocationRequestFails() async throws {
+        let primary = ExitIPInfo(
+            ip: "1.1.1.1",
+            location: "已有位置",
+            details: "已有网络信息"
+        )
+        let detector = makeDetector { _, _ in
+            ExitIPDetector.LoadedResponse(
+                data: Data("forbidden".utf8),
+                statusCode: 403
+            )
+        }
+
+        let enriched = try await detector.enrich(primary)
+        XCTAssertEqual(enriched, primary)
+    }
+
+    func testSlowEnrichmentPropagatesCancellationWithoutChangingPrimaryResult() async throws {
+        let primaryURL = URL(string: "https://primary.example.test/ip")!
+        let geolocationURL = URL(string: "https://api.ip.sb/geoip")!
+        let recorder = ExitIPRequestRecorder()
+        let detector = ExitIPDetector(
+            endpoint: primaryURL,
+            geolocationEndpoint: geolocationURL,
+            requestLoader: { request, _ in
+                await recorder.record(request)
+                if request.url == primaryURL {
+                    return ExitIPDetector.LoadedResponse(
+                        data: Data("1.1.1.1".utf8),
+                        statusCode: 200
+                    )
+                }
+                try await Task.sleep(for: .seconds(30))
+                return ExitIPDetector.LoadedResponse(
+                    data: Data(#"{"ip":"1.1.1.1","country":"澳大利亚"}"#.utf8),
+                    statusCode: 200
+                )
+            }
+        )
+        let primary = try await detector.detect(expectedFamily: .ipv4)
+        let enrichmentTask = Task {
+            try await detector.enrich(primary)
+        }
+
+        try await waitForRequestCount(2, in: recorder)
+        enrichmentTask.cancel()
+
+        do {
+            _ = try await enrichmentTask.value
+            XCTFail("Expected slow geolocation enrichment to be cancelled")
+        } catch {
+            XCTAssertTrue(
+                error is CancellationError || (error as? URLError)?.code == .cancelled,
+                "Unexpected cancellation error: \(error)"
+            )
+        }
+        XCTAssertEqual(primary, ExitIPInfo(ip: "1.1.1.1"))
+    }
+
+    private func makeDetector(
+        requestLoader: @escaping ExitIPDetector.RequestLoader
+    ) -> ExitIPDetector {
+        ExitIPDetector(
+            endpoint: URL(string: "https://primary.example.test/ip")!,
+            geolocationEndpoint: URL(string: "https://api.ip.sb/geoip")!,
+            requestLoader: requestLoader
+        )
+    }
+
+    private func waitForRequestCount(
+        _ expectedCount: Int,
+        in recorder: ExitIPRequestRecorder
+    ) async throws {
+        for _ in 0..<100 {
+            if await recorder.requestCount() >= expectedCount {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("Timed out waiting for \(expectedCount) exit IP requests")
+    }
+}
+
+private actor ExitIPRequestRecorder {
+    private var requests: [URLRequest] = []
+
+    func record(_ request: URLRequest) {
+        requests.append(request)
+    }
+
+    func requestedURLs() -> [URL] {
+        requests.compactMap(\.url)
+    }
+
+    func requestCount() -> Int {
+        requests.count
+    }
 }

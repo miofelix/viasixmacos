@@ -598,6 +598,121 @@ final class AppModelTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testExitIPDetectionPublishesPrimaryResultBeforeEnrichment() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let primaryInfo = ExitIPInfo(ip: "203.0.113.50")
+        let enrichedInfo = ExitIPInfo(
+            ip: primaryInfo.ip,
+            location: "东京 日本",
+            details: "Example ISP · AS64500"
+        )
+        let detector = ControlledTwoPhaseExitDetector(primaryResults: [primaryInfo])
+        let model = makeModel(paths: paths, exitDetector: detector)
+
+        model.detectExitIP()
+        try await waitForEnrichmentRequestCount(detector, 1)
+
+        XCTAssertEqual(model.state.exit.info, primaryInfo)
+        XCTAssertFalse(model.state.exit.isDetecting)
+        XCTAssertNil(model.state.exit.errorMessage)
+        let detectedAt = try XCTUnwrap(model.state.exit.detectedAt)
+
+        let pendingRequestID = await detector.enrichmentRequestID(at: 0)
+        let requestID = try XCTUnwrap(pendingRequestID)
+        await detector.resolveEnrichment(requestID, with: .success(enrichedInfo))
+        try await waitUntil { model.state.exit.info == enrichedInfo }
+
+        XCTAssertEqual(model.state.exit.detectedAt, detectedAt)
+        await model.shutdown()
+    }
+
+    func testExitIPEnrichmentFailurePreservesPrimaryResult() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let primaryInfo = ExitIPInfo(ip: "198.51.100.60")
+        let detector = ControlledTwoPhaseExitDetector(primaryResults: [primaryInfo])
+        let model = makeModel(paths: paths, exitDetector: detector)
+
+        model.detectExitIP()
+        try await waitForEnrichmentRequestCount(detector, 1)
+        let detectedAt = try XCTUnwrap(model.state.exit.detectedAt)
+        let pendingRequestID = await detector.enrichmentRequestID(at: 0)
+        let requestID = try XCTUnwrap(pendingRequestID)
+        await detector.resolveEnrichment(requestID, with: .failure(.unavailable))
+        try await Task.sleep(for: .milliseconds(40))
+
+        XCTAssertEqual(model.state.exit.info, primaryInfo)
+        XCTAssertEqual(model.state.exit.detectedAt, detectedAt)
+        XCTAssertNil(model.state.exit.errorMessage)
+        await model.shutdown()
+    }
+
+    func testExitIPDetectionDropsEnrichmentFromPreviousGeneration() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let firstPrimaryInfo = ExitIPInfo(ip: "192.0.2.70")
+        let secondPrimaryInfo = ExitIPInfo(ip: "198.51.100.71")
+        let secondEnrichedInfo = ExitIPInfo(
+            ip: secondPrimaryInfo.ip,
+            location: "新加坡",
+            details: "Current ISP"
+        )
+        let detector = ControlledTwoPhaseExitDetector(
+            primaryResults: [firstPrimaryInfo, secondPrimaryInfo]
+        )
+        let model = makeModel(paths: paths, exitDetector: detector)
+
+        model.detectExitIP()
+        try await waitForEnrichmentRequestCount(detector, 1)
+        let pendingFirstRequestID = await detector.enrichmentRequestID(at: 0)
+        let firstRequestID = try XCTUnwrap(pendingFirstRequestID)
+
+        model.exitIPDetectionMode = .ipv4
+        model.detectExitIP()
+        try await waitForEnrichmentRequestCount(detector, 2)
+        XCTAssertEqual(model.state.exit.info, secondPrimaryInfo)
+        XCTAssertEqual(model.state.exit.context?.mode, .ipv4)
+
+        let pendingSecondRequestID = await detector.enrichmentRequestID(at: 1)
+        let secondRequestID = try XCTUnwrap(pendingSecondRequestID)
+        await detector.resolveEnrichment(secondRequestID, with: .success(secondEnrichedInfo))
+        try await waitUntil { model.state.exit.info == secondEnrichedInfo }
+
+        await detector.resolveEnrichment(
+            firstRequestID,
+            with: .success(
+                ExitIPInfo(
+                    ip: firstPrimaryInfo.ip,
+                    location: "旧位置",
+                    details: "Stale ISP"
+                )
+            )
+        )
+        try await Task.sleep(for: .milliseconds(40))
+
+        XCTAssertEqual(model.state.exit.info, secondEnrichedInfo)
+        XCTAssertEqual(model.state.exit.context?.mode, .ipv4)
+        await model.shutdown()
+    }
+
+    func testShutdownCancelsAndWaitsForExitIPEnrichment() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let detector = CancellationObservingExitDetector(
+            primaryInfo: ExitIPInfo(ip: "203.0.113.80")
+        )
+        let model = makeModel(paths: paths, exitDetector: detector)
+
+        model.detectExitIP()
+        try await waitForEnrichmentStart(detector)
+
+        await model.shutdown()
+
+        let enrichmentWasCancelled = await detector.enrichmentWasCancelled
+        XCTAssertTrue(enrichmentWasCancelled)
+    }
+
     private func waitUntilReady(_ model: AppModel) async throws {
         for _ in 0..<100 {
             if model.state.launchPhase == .ready { return }
@@ -627,6 +742,27 @@ final class AppModelTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTFail("Timed out waiting for \(count) exit IP requests")
+    }
+
+    private func waitForEnrichmentRequestCount(
+        _ detector: ControlledTwoPhaseExitDetector,
+        _ count: Int
+    ) async throws {
+        for _ in 0..<100 {
+            if await detector.enrichmentRequestCount >= count { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTFail("Timed out waiting for \(count) exit IP enrichment requests")
+    }
+
+    private func waitForEnrichmentStart(
+        _ detector: CancellationObservingExitDetector
+    ) async throws {
+        for _ in 0..<100 {
+            if await detector.enrichmentStarted { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTFail("Timed out waiting for exit IP enrichment to start")
     }
 
     private func waitForTemplateRequest(_ replacer: SuspendedTemplateReplacer) async throws {
@@ -785,6 +921,105 @@ private actor ControlledExitDetector: ExitIPDetecting {
             continuation.resume(returning: info)
         case .failure(let error):
             continuation.resume(throwing: error)
+        }
+    }
+}
+
+private actor ControlledTwoPhaseExitDetector: ExitIPDetecting {
+    enum Resolution: Sendable {
+        case success(ExitIPInfo)
+        case failure(StubError)
+    }
+
+    enum StubError: Error, LocalizedError, Sendable {
+        case unavailable
+
+        var errorDescription: String? {
+            "位置服务暂不可用"
+        }
+    }
+
+    private struct EnrichmentRequest: Sendable {
+        let id: UUID
+        let info: ExitIPInfo
+    }
+
+    private var primaryResults: [ExitIPInfo]
+    private var enrichmentRequests: [EnrichmentRequest] = []
+    private var enrichmentContinuations: [
+        UUID: CheckedContinuation<ExitIPInfo, any Error>
+    ] = [:]
+
+    init(primaryResults: [ExitIPInfo]) {
+        self.primaryResults = primaryResults
+    }
+
+    var enrichmentRequestCount: Int { enrichmentRequests.count }
+
+    func enrichmentRequestID(at index: Int) -> UUID? {
+        guard enrichmentRequests.indices.contains(index) else { return nil }
+        return enrichmentRequests[index].id
+    }
+
+    func detect(
+        proxy _: ProxyEndpoint?,
+        endpoint _: URL?,
+        expectedFamily _: IPAddressFamily?
+    ) async throws -> ExitIPInfo {
+        guard !primaryResults.isEmpty else { throw StubError.unavailable }
+        return primaryResults.removeFirst()
+    }
+
+    func enrich(
+        _ info: ExitIPInfo,
+        proxy _: ProxyEndpoint?
+    ) async throws -> ExitIPInfo {
+        let id = UUID()
+        enrichmentRequests.append(EnrichmentRequest(id: id, info: info))
+        return try await withCheckedThrowingContinuation { continuation in
+            enrichmentContinuations[id] = continuation
+        }
+    }
+
+    func resolveEnrichment(_ id: UUID, with resolution: Resolution) {
+        guard let continuation = enrichmentContinuations.removeValue(forKey: id) else { return }
+        switch resolution {
+        case .success(let info):
+            continuation.resume(returning: info)
+        case .failure(let error):
+            continuation.resume(throwing: error)
+        }
+    }
+}
+
+private actor CancellationObservingExitDetector: ExitIPDetecting {
+    private let primaryInfo: ExitIPInfo
+    private(set) var enrichmentStarted = false
+    private(set) var enrichmentWasCancelled = false
+
+    init(primaryInfo: ExitIPInfo) {
+        self.primaryInfo = primaryInfo
+    }
+
+    func detect(
+        proxy _: ProxyEndpoint?,
+        endpoint _: URL?,
+        expectedFamily _: IPAddressFamily?
+    ) async throws -> ExitIPInfo {
+        primaryInfo
+    }
+
+    func enrich(
+        _ info: ExitIPInfo,
+        proxy _: ProxyEndpoint?
+    ) async throws -> ExitIPInfo {
+        enrichmentStarted = true
+        do {
+            try await Task.sleep(for: .seconds(30))
+            return info
+        } catch is CancellationError {
+            enrichmentWasCancelled = true
+            throw CancellationError()
         }
     }
 }

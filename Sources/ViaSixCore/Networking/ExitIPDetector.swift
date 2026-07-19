@@ -81,13 +81,43 @@ public protocol ExitIPDetecting: Sendable {
         endpoint: URL?,
         expectedFamily: IPAddressFamily?
     ) async throws -> ExitIPInfo
+
+    func enrich(
+        _ info: ExitIPInfo,
+        proxy: ProxyEndpoint?
+    ) async throws -> ExitIPInfo
+}
+
+public extension ExitIPDetecting {
+    func enrich(
+        _ info: ExitIPInfo,
+        proxy _: ProxyEndpoint?
+    ) async throws -> ExitIPInfo {
+        info
+    }
 }
 
 public actor ExitIPDetector: ExitIPDetecting {
+    struct LoadedResponse: Sendable {
+        let data: Data
+        let statusCode: Int
+    }
+
+    typealias RequestLoader = @Sendable (URLRequest, URLSession) async throws -> LoadedResponse
+
     private static let userAgent = "ViaSix/1.0"
+    private static let liveRequestLoader: RequestLoader = { request, session in
+        let (data, response) = try await session.data(for: request)
+        guard let response = response as? HTTPURLResponse else {
+            throw ExitIPDetectionError.invalidResponse
+        }
+        return LoadedResponse(data: data, statusCode: response.statusCode)
+    }
 
     private let endpoint: URL
     private let timeout: TimeInterval
+    private let geolocationEndpoint: URL
+    private let requestLoader: RequestLoader
 
     public init(
         endpoint: URL = URL(string: AppMetadata.defaultExitIPEndpoint)!,
@@ -95,6 +125,20 @@ public actor ExitIPDetector: ExitIPDetecting {
     ) {
         self.endpoint = endpoint
         self.timeout = timeout
+        self.geolocationEndpoint = URL(string: AppMetadata.exitIPGeolocationEndpoint)!
+        self.requestLoader = Self.liveRequestLoader
+    }
+
+    init(
+        endpoint: URL,
+        timeout: TimeInterval = 15,
+        geolocationEndpoint: URL,
+        requestLoader: @escaping RequestLoader
+    ) {
+        self.endpoint = endpoint
+        self.timeout = timeout
+        self.geolocationEndpoint = geolocationEndpoint
+        self.requestLoader = requestLoader
     }
 
     public func detect(
@@ -124,22 +168,57 @@ public actor ExitIPDetector: ExitIPDetecting {
 
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
-        let data = try await load(endpoint, using: session)
+        let requestLoader = self.requestLoader
+
+        let data = try await Self.load(
+            endpoint,
+            using: session,
+            requestLoader: requestLoader
+        )
         let info = try ExitIPResponseParser.parse(data)
         if let expectedFamily, info.addressFamily != expectedFamily {
             throw ExitIPDetectionError.addressFamilyMismatch(expectedFamily)
         }
+        return info
+    }
 
+    public func enrich(
+        _ info: ExitIPInfo,
+        proxy: ProxyEndpoint? = nil
+    ) async throws -> ExitIPInfo {
+        guard let geolocationURL = geolocationURL(for: info.ip) else {
+            return info
+        }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout
+        if let proxy {
+            configuration.connectionProxyDictionary = [
+                "HTTPEnable": true,
+                "HTTPProxy": proxy.host,
+                "HTTPPort": proxy.port,
+                "HTTPSEnable": true,
+                "HTTPSProxy": proxy.host,
+                "HTTPSPort": proxy.port,
+            ]
+        }
+
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
         do {
-            try Task.checkCancellation()
-            guard let geolocationURL = AppMetadata.exitIPGeolocationURL(for: info.ip) else {
-                return info
-            }
-            let geolocationData = try await load(geolocationURL, using: session)
-            let geolocation = try ExitIPGeolocationResponseParser.parse(
-                geolocationData,
+            let data = try await Self.load(
+                geolocationURL,
+                using: session,
+                requestLoader: requestLoader
+            )
+            guard let geolocation = try? ExitIPGeolocationResponseParser.parse(
+                data,
                 expectedIP: info.ip
             )
+            else {
+                return info
+            }
             try Task.checkCancellation()
             return ExitIPInfo(
                 ip: info.ip,
@@ -155,17 +234,23 @@ public actor ExitIPDetector: ExitIPDetecting {
         }
     }
 
-    private func load(_ url: URL, using session: URLSession) async throws -> Data {
+    private func geolocationURL(for ip: String) -> URL? {
+        URLComponents(url: geolocationEndpoint, resolvingAgainstBaseURL: false)?.url?
+            .appendingPathComponent(ip)
+    }
+
+    private static func load(
+        _ url: URL,
+        using session: URLSession,
+        requestLoader: RequestLoader
+    ) async throws -> Data {
         var request = URLRequest(url: url)
         request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await session.data(for: request)
-        guard let response = response as? HTTPURLResponse else {
-            throw ExitIPDetectionError.invalidResponse
-        }
+        let response = try await requestLoader(request, session)
         guard (200...299).contains(response.statusCode) else {
             throw ExitIPDetectionError.httpStatus(response.statusCode)
         }
-        return data
+        return response.data
     }
 }
 
