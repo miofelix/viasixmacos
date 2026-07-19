@@ -28,11 +28,11 @@ final class AppModel {
         get { state.preferences.exitIPEndpoint }
         set {
             guard state.preferences.exitIPEndpoint != newValue else { return }
-            state.preferences.exitIPEndpoint = newValue
             if state.preferences.exitIPDetectionMode == .automatic {
-                state.exit.info = nil
-                state.exit.errorMessage = nil
+                cancelExitIPDetection()
             }
+            state.preferences.exitIPEndpoint = newValue
+            state.exit.errorMessage = nil
             schedulePreferencesSave()
         }
     }
@@ -41,10 +41,25 @@ final class AppModel {
         get { state.preferences.exitIPDetectionMode }
         set {
             guard state.preferences.exitIPDetectionMode != newValue else { return }
+            cancelExitIPDetection()
             state.preferences.exitIPDetectionMode = newValue
-            state.exit.info = nil
             state.exit.errorMessage = nil
             schedulePreferencesSave()
+        }
+    }
+
+    var exitIPResultIsStale: Bool {
+        guard let context = state.exit.context else { return false }
+        return context != currentExitIPDetectionContext
+    }
+
+    var exitIPRouteDescription: String? {
+        guard let route = state.exit.context?.route else { return nil }
+        switch route {
+        case .direct:
+            return "直连"
+        case .proxy(let endpoint, _):
+            return "本地代理 \(endpoint.displayAddress)"
         }
     }
 
@@ -75,7 +90,7 @@ final class AppModel {
     @ObservationIgnored private let preferencesStore: PreferencesStore
     @ObservationIgnored private let bootstrapper: AppBootstrapper
     @ObservationIgnored private let runtimeManager: RuntimeComponentManager
-    @ObservationIgnored private let exitDetector: ExitIPDetector
+    @ObservationIgnored private let exitDetector: any ExitIPDetecting
 
     @ObservationIgnored private var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored private var runtimeTask: Task<Void, Never>?
@@ -85,6 +100,7 @@ final class AppModel {
     @ObservationIgnored private var selectionTask: Task<Void, Never>?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var detectTask: Task<Void, Never>?
+    @ObservationIgnored private var activeExitDetectionID: UUID?
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
     @ObservationIgnored private var xrayStartTask: Task<Void, Never>?
     @ObservationIgnored private var xrayStopTask: Task<Void, Never>?
@@ -101,7 +117,7 @@ final class AppModel {
         preferencesStore: PreferencesStore,
         bootstrapper: AppBootstrapper,
         runtimeManager: RuntimeComponentManager,
-        exitDetector: ExitIPDetector
+        exitDetector: any ExitIPDetecting
     ) {
         self.paths = paths
         self.preferencesStore = preferencesStore
@@ -451,6 +467,9 @@ final class AppModel {
         }
 
         let shouldRestartXray = state.isXrayRunning
+        if shouldRestartXray {
+            cancelExitIPDetection()
+        }
         do {
             try Task.checkCancellation()
             try await applySelection(ip)
@@ -493,10 +512,12 @@ final class AppModel {
             return
         }
 
+        cancelExitIPDetection()
         xrayStopRequested = false
         state.xrayPhase = .validating
         xrayStartTask = Task { [weak self] in
             guard let self else { return }
+            defer { xrayStartTask = nil }
             do {
                 let selectedIP = state.preferences.selectedIP
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -537,6 +558,7 @@ final class AppModel {
                     message: "本地代理已启动，监听 \(proxyEndpoint.displayAddress)"
                 )
                 showNotice("本地代理已启动", style: .success)
+                refreshExitIPAfterNetworkChangeIfNeeded()
             } catch XrayControllerError.cancelled where xrayStopRequested {
                 state.xrayPhase = .stopped
             } catch {
@@ -546,7 +568,6 @@ final class AppModel {
                 activeXray = nil
                 activeXrayID = nil
             }
-            xrayStartTask = nil
         }
     }
 
@@ -556,6 +577,7 @@ final class AppModel {
         let startTask = xrayStartTask
         guard controller != nil || startTask != nil else { return }
 
+        cancelExitIPDetection()
         xrayStopRequested = true
         state.xrayPhase = .stopping
         xrayStopTask = Task { [weak self] in
@@ -573,6 +595,7 @@ final class AppModel {
             state.xrayPhase = .stopped
             appendLog(source: .xray, level: .warning, message: "本地代理已停止")
             showNotice("本地代理已停止")
+            refreshExitIPAfterNetworkChangeIfNeeded()
             xrayStopRequested = false
             xrayStopTask = nil
         }
@@ -584,47 +607,69 @@ final class AppModel {
             xrayStartTask == nil,
             xrayStopTask == nil
         else { return }
+        cancelExitIPDetection()
         state.xrayPhase = .stopping
         xrayStartTask = Task { [weak self] in
             guard let self else { return }
+            defer { xrayStartTask = nil }
             do {
                 try await restartActiveXray()
                 showNotice("本地代理已重新连接", style: .success)
             } catch {
                 showNotice("本地代理重新连接失败：\(error.localizedDescription)", style: .error)
             }
-            xrayStartTask = nil
         }
     }
 
     func detectExitIP() {
         guard detectTask == nil else { return }
+        let detectionID = UUID()
+        let context = currentExitIPDetectionContext
+        let proxy: ProxyEndpoint? =
+            switch context.route {
+            case .direct: nil
+            case .proxy(let endpoint, _): endpoint
+            }
+        guard let endpoint = URL(string: context.serviceEndpoint) else {
+            state.exit.errorMessage = ExitIPDetectionError.invalidEndpoint.localizedDescription
+            showNotice("检测失败：\(ExitIPDetectionError.invalidEndpoint.localizedDescription)", style: .error)
+            return
+        }
+
+        activeExitDetectionID = detectionID
         state.exit.isDetecting = true
         state.exit.errorMessage = nil
-        let mode = state.preferences.exitIPDetectionMode
-        let endpointString = AppMetadata.exitIPEndpoint(
-            for: mode,
-            automaticEndpoint: state.preferences.exitIPEndpoint
-        )
         detectTask = Task { [weak self] in
             guard let self else { return }
-            do {
-                let proxy = state.isXrayRunning ? state.proxyEndpoint : nil
-                guard let endpoint = URL(string: endpointString) else {
-                    throw ExitIPDetectionError.invalidEndpoint
+            defer {
+                if activeExitDetectionID == detectionID {
+                    activeExitDetectionID = nil
+                    state.exit.isDetecting = false
+                    detectTask = nil
                 }
-                state.exit.info = try await exitDetector.detect(
+            }
+            do {
+                let info = try await exitDetector.detect(
                     proxy: proxy,
                     endpoint: endpoint,
-                    expectedFamily: mode.expectedAddressFamily
+                    expectedFamily: context.mode.expectedAddressFamily
                 )
-                appendLog(source: .app, level: .success, message: "出口 IP：\(state.exit.info?.ip ?? "")")
+                guard activeExitDetectionID == detectionID, !Task.isCancelled else { return }
+                state.exit.info = info
+                state.exit.detectedAt = Date()
+                state.exit.context = context
+                appendLog(
+                    source: .app,
+                    level: .success,
+                    message: "出口 IP：\(info.ip)（\(exitIPRouteDescription ?? "未知路径")）"
+                )
+            } catch is CancellationError {
+                return
             } catch {
+                guard activeExitDetectionID == detectionID, !Task.isCancelled else { return }
                 state.exit.errorMessage = error.localizedDescription
                 showNotice("检测失败：\(error.localizedDescription)", style: .error)
             }
-            state.exit.isDetecting = false
-            detectTask = nil
         }
     }
 
@@ -799,19 +844,30 @@ final class AppModel {
     }
 
     private func restartActiveXray() async throws {
-        guard let controller = activeXray, let controllerID = activeXrayID else { return }
+        guard let controller = activeXray, let controllerID = activeXrayID else {
+            throw AppModelError.xrayNotActive
+        }
         appendLog(source: .xray, message: "节点已变更，正在重新连接本地代理")
         do {
             try await controller.restart { [weak self] event in
                 await self?.receiveXrayEvent(event, controllerID: controllerID)
             }
-            guard activeXrayID == controllerID else { return }
+            guard activeXrayID == controllerID else {
+                throw AppModelError.xrayExitedDuringRestart
+            }
             appendLog(source: .xray, level: .success, message: "本地代理已应用新节点")
+            refreshExitIPAfterNetworkChangeIfNeeded()
         } catch {
-            state.xrayPhase = .failed(error.localizedDescription)
-            appendLog(source: .xray, level: .error, message: "本地代理重新连接失败：\(error.localizedDescription)")
-            activeXray = nil
-            activeXrayID = nil
+            if activeXrayID == controllerID {
+                state.xrayPhase = .failed(error.localizedDescription)
+                appendLog(
+                    source: .xray,
+                    level: .error,
+                    message: "本地代理重新连接失败：\(error.localizedDescription)"
+                )
+                activeXray = nil
+                activeXrayID = nil
+            }
             throw error
         }
     }
@@ -839,6 +895,7 @@ final class AppModel {
                 appendLog(source: .xray, message: clean)
             }
         case .unexpectedExit(let status, let output):
+            cancelExitIPDetection()
             let detail = output.isEmpty ? "状态码 \(status)" : output
             state.xrayPhase = .failed("本地代理意外退出：\(detail)")
             appendLog(source: .xray, level: .error, message: "本地代理意外退出：\(detail)")
@@ -883,6 +940,36 @@ final class AppModel {
         activeRunner = nil
         activeConfigurationTestID = nil
         configurationTestTask = nil
+    }
+
+    private var currentExitIPDetectionContext: AppState.ExitState.DetectionContext {
+        let mode = state.preferences.exitIPDetectionMode
+        let endpoint = AppMetadata.exitIPEndpoint(
+            for: mode,
+            automaticEndpoint: state.preferences.exitIPEndpoint
+        )
+        let route: AppState.ExitState.DetectionContext.Route =
+            if state.isXrayRunning {
+                .proxy(
+                    endpoint: state.proxyEndpoint,
+                    selectedIP: state.preferences.selectedIP
+                )
+            } else {
+                .direct
+            }
+        return .init(route: route, mode: mode, serviceEndpoint: endpoint)
+    }
+
+    private func cancelExitIPDetection() {
+        activeExitDetectionID = nil
+        detectTask?.cancel()
+        detectTask = nil
+        state.exit.isDetecting = false
+    }
+
+    private func refreshExitIPAfterNetworkChangeIfNeeded() {
+        guard state.exit.info != nil, detectTask == nil, !isShuttingDown else { return }
+        detectExitIP()
     }
 
     private func schedulePreferencesSave() {
@@ -943,10 +1030,14 @@ final class AppModel {
 
 private enum AppModelError: LocalizedError {
     case missingSelectedIP
+    case xrayNotActive
+    case xrayExitedDuringRestart
 
     var errorDescription: String? {
         switch self {
         case .missingSelectedIP: "请先完成测速并选择一个节点"
+        case .xrayNotActive: "本地代理当前未运行"
+        case .xrayExitedDuringRestart: "本地代理在重新连接后立即退出"
         }
     }
 }

@@ -48,9 +48,22 @@ struct AppState: Equatable, Sendable {
     }
 
     struct ExitState: Equatable, Sendable {
+        struct DetectionContext: Equatable, Sendable {
+            enum Route: Equatable, Sendable {
+                case direct
+                case proxy(endpoint: ProxyEndpoint, selectedIP: String)
+            }
+
+            let route: Route
+            let mode: ExitIPDetectionMode
+            let serviceEndpoint: String
+        }
+
         var info: ExitIPInfo?
         var isDetecting = false
         var errorMessage: String?
+        var detectedAt: Date?
+        var context: DetectionContext?
     }
 
     struct ConfigurationTestState: Equatable, Sendable {

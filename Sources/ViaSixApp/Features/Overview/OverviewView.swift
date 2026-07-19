@@ -7,6 +7,7 @@ struct OverviewView: View {
     let onSelectNodes: () -> Void
 
     @State private var copiedEndpoint = false
+    @State private var copiedExitIP = false
 
     var body: some View {
         ScrollView {
@@ -114,68 +115,7 @@ struct OverviewView: View {
             detailRow(label: "协议", value: "HTTP / SOCKS")
             Divider()
 
-            HStack(alignment: .top, spacing: 12) {
-                Text("出口 IP")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .frame(width: 72, alignment: .leading)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(model.state.exit.info?.ip ?? "未检测")
-                            .font(.system(.callout, design: .monospaced).weight(.medium))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .layoutPriority(1)
-                        if let family = model.state.exit.info?.addressFamily {
-                            Text(family.displayName)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    if let location = model.state.exit.info?.location, !location.isEmpty {
-                        Text(location)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let details = model.state.exit.info?.details, !details.isEmpty {
-                        Text(details)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let error = model.state.exit.errorMessage {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Picker("地址族", selection: exitIPDetectionModeBinding) {
-                    Text("自动").tag(ExitIPDetectionMode.automatic)
-                    Text("IPv4").tag(ExitIPDetectionMode.ipv4)
-                    Text("IPv6").tag(ExitIPDetectionMode.ipv6)
-                }
-                .pickerStyle(.segmented)
-                .controlSize(.small)
-                .frame(width: 190)
-                .disabled(model.state.exit.isDetecting)
-                .accessibilityLabel("出口 IP 地址族")
-
-                Button(model.state.exit.isDetecting ? "检测中…" : "检测") {
-                    model.detectExitIP()
-                }
-                .disabled(model.state.exit.isDetecting || isXrayTransitioning)
-                .accessibilityHint(model.state.isXrayRunning ? "通过本地代理检测出口" : "直接检测本机出口")
-            }
-            .padding(.vertical, 11)
+            exitIPPanel
 
             Divider()
 
@@ -261,6 +201,168 @@ struct OverviewView: View {
             Spacer()
         }
         .padding(.vertical, 10)
+    }
+
+    private var exitIPPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Text("出口 IP")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(width: 72, alignment: .leading)
+
+                exitIPSummary
+            }
+
+            HStack(spacing: 9) {
+                Spacer()
+                    .frame(width: 84)
+
+                Picker("地址族", selection: exitIPDetectionModeBinding) {
+                    Text("自动").tag(ExitIPDetectionMode.automatic)
+                    Text("IPv4").tag(ExitIPDetectionMode.ipv4)
+                    Text("IPv6").tag(ExitIPDetectionMode.ipv6)
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .frame(width: 190)
+                .disabled(model.state.exit.isDetecting)
+                .accessibilityLabel("出口 IP 地址族")
+
+                Button {
+                    model.detectExitIP()
+                } label: {
+                    Label(
+                        model.state.exit.isDetecting ? "检测中…" : "检测",
+                        systemImage: model.state.exit.isDetecting ? "hourglass" : "arrow.clockwise"
+                    )
+                }
+                .disabled(model.state.exit.isDetecting || isXrayTransitioning)
+                .accessibilityHint(model.state.isXrayRunning ? "通过本地代理检测出口" : "直接检测本机出口")
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.vertical, 11)
+    }
+
+    private var exitIPSummary: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(model.state.exit.info?.ip ?? "未检测")
+                    .font(.system(.callout, design: .monospaced).weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(1)
+
+                if let family = model.state.exit.info?.addressFamily {
+                    Text(family.displayName)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+
+                if model.state.exit.info != nil {
+                    Button(action: copyExitIP) {
+                        Image(systemName: copiedExitIP ? "checkmark" : "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .iconButtonHitTarget()
+                    .help(copiedExitIP ? "已复制" : "复制出口 IP")
+                    .accessibilityLabel(copiedExitIP ? "已复制出口 IP" : "复制出口 IP")
+                }
+            }
+
+            if let info = model.state.exit.info {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "mappin.and.ellipse")
+                        .foregroundStyle(.secondary)
+                    Text(info.location.isEmpty ? "位置未返回" : info.location)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if !info.details.isEmpty {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "building.2")
+                            .foregroundStyle(.tertiary)
+                        Text(info.details)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                exitIPMetadata
+            }
+
+            if let error = model.state.exit.errorMessage {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var exitIPMetadata: some View {
+        if let route = model.exitIPRouteDescription {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: exitIPRouteIcon)
+                    .foregroundStyle(.tertiary)
+                Text(route)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+        }
+
+        if let detectedAt = model.state.exit.detectedAt {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "clock")
+                    .foregroundStyle(.tertiary)
+                Text("检测于 ")
+                Text(detectedAt, style: .relative)
+            }
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+            .help(detectedAt.formatted(date: .complete, time: .standard))
+        }
+
+        if model.exitIPResultIsStale {
+            Label("结果已过期，请重新检测", systemImage: "exclamationmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        } else if showingPreviousExitIPResult {
+            Label("上次成功结果", systemImage: "clock.arrow.circlepath")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var showingPreviousExitIPResult: Bool {
+        guard model.state.exit.info != nil else { return false }
+        return model.state.exit.isDetecting || model.state.exit.errorMessage != nil
+    }
+
+    private var exitIPRouteIcon: String {
+        guard let route = model.state.exit.context?.route else { return "arrow.left.arrow.right" }
+        switch route {
+        case .direct:
+            return "arrow.up.right"
+        case .proxy:
+            return "point.3.connected.trianglepath.dotted"
+        }
     }
 
     private var selectedResult: ViaSixCore.SpeedTestResult? {
@@ -357,6 +459,18 @@ struct OverviewView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.5))
             copiedEndpoint = false
+        }
+    }
+
+    private func copyExitIP() {
+        guard let ip = model.state.exit.info?.ip else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(ip, forType: .string)
+        copiedExitIP = true
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            copiedExitIP = false
         }
     }
 

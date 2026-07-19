@@ -75,7 +75,15 @@ public enum ExitIPDetectionError: LocalizedError, Equatable, Sendable {
     }
 }
 
-public actor ExitIPDetector {
+public protocol ExitIPDetecting: Sendable {
+    func detect(
+        proxy: ProxyEndpoint?,
+        endpoint: URL?,
+        expectedFamily: IPAddressFamily?
+    ) async throws -> ExitIPInfo
+}
+
+public actor ExitIPDetector: ExitIPDetecting {
     private static let userAgent = "ViaSix/1.0"
 
     private let endpoint: URL
