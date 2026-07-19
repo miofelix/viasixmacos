@@ -64,7 +64,7 @@ struct ParameterDisclosure<Content: View>: View {
             .frame(maxWidth: .infinity, minHeight: VisualStyle.controlHeight, alignment: .leading)
             .contentShape(Rectangle())
             .accessibilityLabel(title)
-            .accessibilityValue(isExpanded ? "已展开，(subtitle)" : "已收起，(subtitle)")
+            .accessibilityValue(isExpanded ? "已展开，\(subtitle)" : "已收起，\(subtitle)")
 
             if isExpanded {
                 content
