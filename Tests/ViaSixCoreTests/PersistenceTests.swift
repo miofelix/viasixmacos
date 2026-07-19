@@ -34,5 +34,17 @@ final class PersistenceTests: XCTestCase {
         let loaded = await store.load(defaults: defaults)
         XCTAssertEqual(loaded, changed)
     }
-}
 
+    func testPreferencesDecodeOlderPayloadWithNewFieldsMissing() throws {
+        let parameters = SpeedTestParameters(ipFile: "/tmp/ipv6.txt")
+        let encodedParameters = try JSONEncoder().encode(parameters)
+        let parametersObject = try XCTUnwrap(JSONSerialization.jsonObject(with: encodedParameters))
+        let legacy = try JSONSerialization.data(withJSONObject: ["parameters": parametersObject])
+
+        let decoded = try JSONDecoder().decode(UserPreferences.self, from: legacy)
+        XCTAssertEqual(decoded.ipSourceMode, .ipv6)
+        XCTAssertEqual(decoded.selectedIP, "")
+        XCTAssertEqual(decoded.cfstPath, "")
+        XCTAssertEqual(decoded.xrayPath, "")
+    }
+}
