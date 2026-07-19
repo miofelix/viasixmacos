@@ -347,6 +347,7 @@ struct SettingsView: View {
     private var runtimeActionsDisabled: Bool {
         guard model.state.launchPhase == .ready else { return true }
         if model.state.runtimePhase == .installing { return true }
+        if model.isCfstBusy { return true }
 
         switch model.state.speedTest.phase {
         case .running, .stopping:

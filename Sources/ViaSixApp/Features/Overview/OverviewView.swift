@@ -152,6 +152,15 @@ struct OverviewView: View {
             HStack(spacing: 9) {
                 Button("选择节点", systemImage: "network", action: onSelectNodes)
 
+                Button(configurationTestButtonTitle, systemImage: configurationTestButtonIcon) {
+                    if isConfigurationTestRunning {
+                        model.stopCurrentConfigurationTest()
+                    } else {
+                        model.startCurrentConfigurationTest()
+                    }
+                }
+                .disabled(configurationTestButtonDisabled)
+
                 if model.state.isXrayRunning {
                     Button("重新连接", systemImage: "arrow.clockwise", action: model.restartXray)
                 }
@@ -159,6 +168,14 @@ struct OverviewView: View {
                 Spacer()
             }
             .padding(.top, 14)
+
+            if case .failed(let message) = model.state.configurationTest.phase {
+                Text("当前节点测速失败：\(message)")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
+            }
 
             if !model.state.isXrayRunning {
                 Label(proxyReadinessHint, systemImage: "info.circle")
@@ -217,7 +234,10 @@ struct OverviewView: View {
     }
 
     private var selectedResult: ViaSixCore.SpeedTestResult? {
-        model.state.selectedResult
+        if let result = model.state.configurationTest.result, result.ip == selectedIP {
+            return result
+        }
+        return model.state.selectedResult
     }
 
     private var selectedIP: String {
@@ -305,6 +325,7 @@ struct OverviewView: View {
     private var runtimeInstallationDisabled: Bool {
         guard model.state.launchPhase == .ready else { return true }
         if model.state.runtimePhase == .installing { return true }
+        if model.isCfstBusy { return true }
 
         switch model.state.speedTest.phase {
         case .running, .stopping:
@@ -319,6 +340,35 @@ struct OverviewView: View {
         case .stopped, .failed:
             return false
         }
+    }
+
+    private var isConfigurationTestRunning: Bool {
+        switch model.state.configurationTest.phase {
+        case .running, .stopping: true
+        case .idle, .failed: false
+        }
+    }
+
+    private var configurationTestButtonTitle: String {
+        switch model.state.configurationTest.phase {
+        case .running: "停止测速"
+        case .stopping: "正在停止"
+        case .idle, .failed: "测试当前节点"
+        }
+    }
+
+    private var configurationTestButtonIcon: String {
+        switch model.state.configurationTest.phase {
+        case .running: "stop.fill"
+        case .stopping: "hourglass"
+        case .idle, .failed: "gauge.with.dots.needle.67percent"
+        }
+    }
+
+    private var configurationTestButtonDisabled: Bool {
+        if case .stopping = model.state.configurationTest.phase { return true }
+        if isConfigurationTestRunning { return false }
+        return selectedIP.isEmpty || !model.hasCfstExecutable || model.isCfstBusy
     }
 
     private var runtimeStatusTitle: String {

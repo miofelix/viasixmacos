@@ -75,6 +75,7 @@ struct MenuBarView: View {
                 model.state.launchPhase != .ready
                     || model.state.runtimePhase == .installing
                     || !model.hasCfstExecutable
+                    || model.isCfstBusy
                     || parameterValidationMessage != nil
             )
         case .running:

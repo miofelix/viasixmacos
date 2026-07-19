@@ -62,6 +62,10 @@ extension NodesView {
                 }
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
+            } else if isCfstBusyElsewhere {
+                Label("完成当前节点测速后，即可开始新的候选节点扫描。", systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } else {
                 HStack(spacing: 12) {
                     Label(sourceSummary, systemImage: "list.bullet.rectangle")

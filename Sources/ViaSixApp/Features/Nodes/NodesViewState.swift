@@ -37,10 +37,14 @@ extension NodesView {
     }
 
     var isTesting: Bool {
-        switch model.state.speedTest.phase {
+        return switch model.state.speedTest.phase {
         case .running, .stopping: true
         case .idle, .failed: false
         }
+    }
+
+    var isCfstBusyElsewhere: Bool {
+        model.isCfstBusy && !isTesting
     }
 
     var isStopping: Bool {
@@ -49,7 +53,10 @@ extension NodesView {
     }
 
     var speedTestStatusText: String {
-        switch model.state.speedTest.phase {
+        if isCfstBusyElsewhere {
+            return "连接页正在测试当前节点"
+        }
+        return switch model.state.speedTest.phase {
         case .idle:
             model.state.results.isEmpty ? "准备就绪" : "上次结果可用"
         case .running:
@@ -108,6 +115,7 @@ extension NodesView {
         model.state.launchPhase == .ready
             && model.state.runtimePhase != .installing
             && model.hasCfstExecutable
+            && !model.isCfstBusy
             && parameterValidationMessage == nil
     }
 
@@ -134,7 +142,7 @@ extension NodesView {
     var applySelectionDisabled: Bool {
         guard let candidateSelection else { return true }
         if candidateSelection == model.state.preferences.selectedIP { return true }
-        if model.switchingIP != nil || isTesting { return true }
+        if model.switchingIP != nil || model.isCfstBusy { return true }
 
         switch model.state.xrayPhase {
         case .validating, .starting, .stopping:

@@ -53,12 +53,18 @@ struct AppState: Equatable, Sendable {
         var errorMessage: String?
     }
 
+    struct ConfigurationTestState: Equatable, Sendable {
+        var phase: SpeedTestPhase = .idle
+        var result: SpeedTestResult?
+    }
+
     var launchPhase: LaunchPhase = .idle
     var preferences: UserPreferences
     var results: [SpeedTestResult] = []
     var runtimePhase: RuntimePhase = .checking
     var runtimeStatus: RuntimeInstallationStatus?
     var speedTest = SpeedTestState()
+    var configurationTest = ConfigurationTestState()
     var xrayPhase: XrayPhase = .stopped
     var proxyEndpoint = ProxyEndpoint()
     var exit = ExitState()

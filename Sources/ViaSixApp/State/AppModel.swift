@@ -20,6 +20,10 @@ final class AppModel {
         state.preferences.ipSourceMode
     }
 
+    var isCfstBusy: Bool {
+        activeRunner != nil
+    }
+
     var exitIPEndpoint: String {
         get { state.preferences.exitIPEndpoint }
         set {
@@ -61,6 +65,7 @@ final class AppModel {
     @ObservationIgnored private var runtimeTask: Task<Void, Never>?
     @ObservationIgnored private var templateTask: Task<Void, Never>?
     @ObservationIgnored private var speedTestTask: Task<Void, Never>?
+    @ObservationIgnored private var configurationTestTask: Task<Void, Never>?
     @ObservationIgnored private var selectionTask: Task<Void, Never>?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var detectTask: Task<Void, Never>?
@@ -69,6 +74,7 @@ final class AppModel {
     @ObservationIgnored private var xrayStopTask: Task<Void, Never>?
     @ObservationIgnored private var activeRunner: CfstRunner?
     @ObservationIgnored private var activeSpeedTestID: UUID?
+    @ObservationIgnored private var activeConfigurationTestID: UUID?
     @ObservationIgnored private var activeXray: XrayController?
     @ObservationIgnored private var activeXrayID: UUID?
     @ObservationIgnored private var xrayStopRequested = false
@@ -335,6 +341,83 @@ final class AppModel {
         Task { await runner.cancel() }
     }
 
+    func startCurrentConfigurationTest() {
+        guard activeRunner == nil else { return }
+        let selectedIP = state.preferences.selectedIP
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !selectedIP.isEmpty else {
+            showNotice("请先选择当前节点", style: .error)
+            return
+        }
+        guard
+            let executableURL = resolvedExecutable(
+                preferredPath: state.preferences.cfstPath,
+                managedURL: state.runtimeStatus?.cfstURL,
+                commandName: "cfst"
+            )
+        else {
+            showNotice("请先安装 CFST 运行组件", style: .error)
+            return
+        }
+
+        var parameters = state.preferences.parameters
+        parameters.ipFile = ""
+        parameters.ipRange = selectedIP
+        parameters.allIP = false
+        do {
+            _ = try parameters.validated()
+        } catch {
+            showNotice(error.localizedDescription, style: .error)
+            return
+        }
+
+        let runID = UUID()
+        let resultURL = paths.data.appendingPathComponent(".current-test-\(runID.uuidString).csv")
+        let runner = CfstRunner(
+            executableURL: executableURL,
+            resultURL: resultURL,
+            workingDirectoryURL: executableURL.deletingLastPathComponent()
+        )
+        activeRunner = runner
+        activeConfigurationTestID = runID
+        state.configurationTest.phase = .running
+        appendLog(source: .speedTest, message: "开始测试当前节点：\(selectedIP)")
+
+        configurationTestTask = Task { [weak self] in
+            guard let self else { return }
+            defer { try? FileManager.default.removeItem(at: resultURL) }
+            do {
+                let results = try await runner.run(parameters: parameters) { [weak self] event in
+                    await self?.receiveConfigurationTestEvent(event, runID: runID)
+                }
+                guard activeConfigurationTestID == runID else { return }
+                guard let result = results.first else {
+                    throw CfstRunnerError.noResults
+                }
+                state.configurationTest.result = result
+                appendLog(source: .speedTest, level: .success, message: "当前节点测速完成")
+                showNotice("当前节点测速完成", style: .success)
+                finishConfigurationTest(runID: runID, phase: .idle)
+            } catch CfstRunnerError.userCancelled {
+                guard activeConfigurationTestID == runID else { return }
+                appendLog(source: .speedTest, level: .warning, message: "当前节点测速已停止")
+                finishConfigurationTest(runID: runID, phase: .idle)
+            } catch {
+                guard activeConfigurationTestID == runID else { return }
+                appendLog(source: .speedTest, level: .error, message: error.localizedDescription)
+                showNotice("当前节点测速失败：\(error.localizedDescription)", style: .error)
+                finishConfigurationTest(runID: runID, phase: .failed(error.localizedDescription))
+            }
+        }
+    }
+
+    func stopCurrentConfigurationTest() {
+        guard activeConfigurationTestID != nil, let runner = activeRunner else { return }
+        state.configurationTest.phase = .stopping
+        configurationTestTask?.cancel()
+        Task { await runner.cancel() }
+    }
+
     func selectIP(_ ip: String) {
         guard selectionTask == nil, !isShuttingDown else { return }
         switchingIP = ip
@@ -539,6 +622,7 @@ final class AppModel {
             runtimeTask,
             templateTask,
             speedTestTask,
+            configurationTestTask,
             selectionTask,
             saveTask,
             detectTask,
@@ -680,6 +764,7 @@ final class AppModel {
         guard !normalized.isEmpty else { return }
         try await bootstrapper.writeConfig(ip: normalized)
         state.preferences.selectedIP = normalized
+        state.configurationTest.result = nil
         do {
             try await savePreferencesNow()
         } catch {
@@ -752,12 +837,27 @@ final class AppModel {
         }
     }
 
+    private func receiveConfigurationTestEvent(_ event: CfstOutputEvent, runID: UUID) {
+        guard activeConfigurationTestID == runID else { return }
+        if case .line(let line) = event {
+            appendLog(source: .speedTest, message: line)
+        }
+    }
+
     private func finishSpeedTest(runID: UUID, phase: AppState.SpeedTestPhase) {
         guard activeSpeedTestID == runID else { return }
         state.speedTest.phase = phase
         activeRunner = nil
         activeSpeedTestID = nil
         speedTestTask = nil
+    }
+
+    private func finishConfigurationTest(runID: UUID, phase: AppState.SpeedTestPhase) {
+        guard activeConfigurationTestID == runID else { return }
+        state.configurationTest.phase = phase
+        activeRunner = nil
+        activeConfigurationTestID = nil
+        configurationTestTask = nil
     }
 
     private func schedulePreferencesSave() {
