@@ -1,7 +1,7 @@
 import SwiftUI
 import ViaSixCore
 
-enum ParameterGroup: Hashable {
+enum ParameterGroup: String, CaseIterable, Hashable {
     case source
     case mode
     case filter

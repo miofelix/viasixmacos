@@ -53,7 +53,7 @@ struct OverviewView: View {
             OverviewMetric(
                 title: "平均延迟",
                 value: selectedResult.map { "\($0.latency) ms" } ?? "",
-                detail: model.parameters.httping ? "HTTPing" : "TCPing",
+                detail: speedTestProtocolLabel,
                 systemImage: "timer"
             )
             OverviewMetric(
@@ -496,6 +496,17 @@ struct OverviewView: View {
             return result
         }
         return model.state.selectedResult
+    }
+
+    private var speedTestProtocolLabel: String {
+        if let result = model.state.configurationTest.result, result.ip == selectedIP {
+            guard let parameters = model.state.configurationTest.parameters else {
+                return "当前节点测速"
+            }
+            return parameters.httping ? "HTTPing" : "TCPing"
+        }
+        guard model.state.speedTestResultsAreCurrent else { return "需重新测速" }
+        return model.parameters.httping ? "HTTPing" : "TCPing"
     }
 
     private var selectedIP: String {

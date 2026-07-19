@@ -29,6 +29,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     public var xrayPath: String
     public var exitIPEndpoint: String
     public var exitIPDetectionMode: ExitIPDetectionMode
+    public var lastSuccessfulSpeedTestParameters: SpeedTestParameters?
 
     public init(
         parameters: SpeedTestParameters,
@@ -37,7 +38,8 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         cfstPath: String = "",
         xrayPath: String = "",
         exitIPEndpoint: String = AppMetadata.defaultExitIPEndpoint,
-        exitIPDetectionMode: ExitIPDetectionMode = .automatic
+        exitIPDetectionMode: ExitIPDetectionMode = .automatic,
+        lastSuccessfulSpeedTestParameters: SpeedTestParameters? = nil
     ) {
         self.parameters = parameters
         self.ipSourceMode = ipSourceMode
@@ -46,11 +48,12 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         self.xrayPath = xrayPath
         self.exitIPEndpoint = exitIPEndpoint
         self.exitIPDetectionMode = exitIPDetectionMode
+        self.lastSuccessfulSpeedTestParameters = lastSuccessfulSpeedTestParameters
     }
 
     private enum CodingKeys: String, CodingKey {
         case parameters, ipSourceMode, selectedIP, cfstPath, xrayPath, exitIPEndpoint
-        case exitIPDetectionMode
+        case exitIPDetectionMode, lastSuccessfulSpeedTestParameters
     }
 
     public init(from decoder: Decoder) throws {
@@ -66,7 +69,11 @@ public struct UserPreferences: Codable, Equatable, Sendable {
             exitIPDetectionMode: try values.decodeIfPresent(
                 ExitIPDetectionMode.self,
                 forKey: .exitIPDetectionMode
-            ) ?? .automatic
+            ) ?? .automatic,
+            lastSuccessfulSpeedTestParameters: try values.decodeIfPresent(
+                SpeedTestParameters.self,
+                forKey: .lastSuccessfulSpeedTestParameters
+            )
         )
     }
 }

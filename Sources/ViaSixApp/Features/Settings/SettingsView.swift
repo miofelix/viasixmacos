@@ -7,6 +7,8 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var showsCustomExecutables = false
     @State private var showsTemplateEditor = false
+    @State private var exitIPEndpointDraft = ""
+    @State private var exitIPEndpointError: String?
 
     var body: some View {
         ScrollView {
@@ -26,6 +28,17 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollbarSafeContent()
+        .onAppear {
+            if exitIPEndpointDraft.isEmpty {
+                exitIPEndpointDraft = model.exitIPEndpoint
+            }
+        }
+        .onChange(of: model.exitIPEndpoint) { _, endpoint in
+            if endpoint != exitIPEndpointDraft {
+                exitIPEndpointDraft = endpoint
+                exitIPEndpointError = nil
+            }
+        }
     }
 
     private var runtimeCard: some View {
@@ -212,16 +225,36 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("出口 IP 检测服务")
                     .font(.caption.weight(.medium))
-                TextField(
-                    AppMetadata.defaultExitIPEndpoint,
-                    text: Binding(
-                        get: { model.exitIPEndpoint },
-                        set: { model.exitIPEndpoint = $0 }
+                HStack(spacing: 8) {
+                    TextField(
+                        AppMetadata.defaultExitIPEndpoint,
+                        text: $exitIPEndpointDraft
                     )
-                )
-                .textFieldStyle(.roundedBorder)
-                .accessibilityLabel("出口 IP 检测服务地址")
-                .accessibilityHint("使用 HTTP 或 HTTPS 地址")
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("出口 IP 检测服务地址")
+                    .accessibilityHint("使用 HTTP 或 HTTPS 地址")
+                    .onChange(of: exitIPEndpointDraft) { _, value in
+                        validateAndSaveExitIPEndpoint(value)
+                    }
+
+                    Button {
+                        exitIPEndpointDraft = AppMetadata.defaultExitIPEndpoint
+                        validateAndSaveExitIPEndpoint(exitIPEndpointDraft)
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .iconButtonHitTarget()
+                    .help("恢复默认检测服务")
+                    .accessibilityLabel("恢复默认检测服务")
+                    .disabled(exitIPEndpointDraft == AppMetadata.defaultExitIPEndpoint)
+                }
+                if let exitIPEndpointError {
+                    Text(exitIPEndpointError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Text("自动模式使用此 HTTP/HTTPS 服务；强制 IPv4 或 IPv6 时使用对应的专用检测服务。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -306,7 +339,8 @@ struct SettingsView: View {
         value: String,
         component: RuntimeComponent
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let editingDisabled = componentPathEditingDisabled(component)
+        return VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.caption.weight(.medium))
             HStack {
@@ -324,10 +358,12 @@ struct SettingsView: View {
                 )
                 .textFieldStyle(.roundedBorder)
                 .accessibilityLabel(title)
+                .disabled(editingDisabled)
 
                 Button("选择…") {
                     chooseExecutable(component)
                 }
+                .disabled(editingDisabled)
                 Button {
                     model.setCustomExecutable(component, url: nil)
                 } label: {
@@ -336,13 +372,32 @@ struct SettingsView: View {
                 .iconButtonHitTarget()
                 .help("清除自定义路径")
                 .accessibilityLabel("清除\(title)")
-                .disabled(value.isEmpty)
+                .disabled(value.isEmpty || editingDisabled)
+            }
+            if editingDisabled {
+                Text("组件运行中，停止后才能修改路径。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
 
     private func componentReady(_ component: RuntimeComponent) -> Bool {
         resolvedDisplayURL(for: component) != nil
+    }
+
+    private func componentPathEditingDisabled(_ component: RuntimeComponent) -> Bool {
+        switch component {
+        case .cfst:
+            model.isCfstBusy
+        case .xray:
+            switch model.state.xrayPhase {
+            case .validating, .starting, .running, .stopping:
+                true
+            case .stopped, .failed:
+                false
+            }
+        }
     }
 
     private func resolvedDisplayURL(for component: RuntimeComponent) -> URL? {
@@ -429,6 +484,24 @@ struct SettingsView: View {
         if panel.runModal() == .OK {
             model.setCustomExecutable(component, url: panel.url)
         }
+    }
+
+    private func validateAndSaveExitIPEndpoint(_ value: String) {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            exitIPEndpointError = "检测服务地址不能为空；可点击右侧按钮恢复默认地址。"
+            return
+        }
+        guard
+            let url = URL(string: normalized),
+            ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+            url.host != nil
+        else {
+            exitIPEndpointError = "请输入有效的 HTTP 或 HTTPS 地址。"
+            return
+        }
+        exitIPEndpointError = nil
+        model.exitIPEndpoint = normalized
     }
 
     private func importRuntime() {

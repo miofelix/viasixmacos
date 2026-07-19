@@ -33,6 +33,7 @@ final class PersistenceTests: XCTestCase {
         var changed = defaults
         changed.selectedIP = "2606::1"
         changed.parameters.threads = 64
+        changed.lastSuccessfulSpeedTestParameters = changed.parameters
         changed.exitIPEndpoint = "https://status.example.test/ip"
         changed.exitIPDetectionMode = .ipv4
 
@@ -72,6 +73,7 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.xrayPath, "")
         XCTAssertEqual(decoded.exitIPEndpoint, AppMetadata.defaultExitIPEndpoint)
         XCTAssertEqual(decoded.exitIPDetectionMode, .automatic)
+        XCTAssertNil(decoded.lastSuccessfulSpeedTestParameters)
     }
 
     private func permissions(of url: URL) throws -> Int {

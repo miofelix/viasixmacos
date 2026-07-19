@@ -135,12 +135,17 @@ extension NodesView {
         case .failed:
             return "本次测速未完成，当前显示上次成功结果"
         case .idle:
+            if !model.state.speedTestResultsAreCurrent {
+                return "测速参数已变更，旧结果仅供参考，请重新测速"
+            }
             return "选择候选节点后，再点击“应用节点”"
         }
     }
 
     var applySelectionDisabled: Bool {
         guard let candidateSelection else { return true }
+        guard model.state.speedTestResultsAreCurrent else { return true }
+        guard case .idle = model.state.speedTest.phase else { return true }
         if candidateSelection == model.state.preferences.selectedIP { return true }
         if model.switchingIP != nil || model.isCfstBusy { return true }
 
@@ -181,16 +186,29 @@ extension NodesView {
 
     func expansionBinding(for group: ParameterGroup) -> Binding<Bool> {
         Binding {
-            expandedGroups.contains(group)
+            expandedParameterGroups.contains(group)
         } set: { isExpanded in
             withAnimation(.easeInOut(duration: 0.18)) {
+                var groups = expandedParameterGroups
                 if isExpanded {
-                    expandedGroups.insert(group)
+                    groups.insert(group)
                 } else {
-                    expandedGroups.remove(group)
+                    groups.remove(group)
                 }
+                expandedParameterGroupIDs = ParameterGroup.allCases
+                    .filter(groups.contains)
+                    .map(\.rawValue)
+                    .joined(separator: ",")
             }
         }
+    }
+
+    private var expandedParameterGroups: Set<ParameterGroup> {
+        Set(
+            expandedParameterGroupIDs
+                .split(separator: ",")
+                .compactMap { ParameterGroup(rawValue: String($0)) }
+        )
     }
 
     func parameterBinding<Value>(

@@ -5,9 +5,9 @@ import ViaSixCore
 struct NodesView: View {
     @Environment(AppModel.self) var model
 
-    @State var expandedGroups: Set<ParameterGroup> = [.source]
-    @State var showsParameters = true
-    @State var candidateSelection: SpeedTestResult.ID?
+    @SceneStorage("nodes.expandedParameterGroups") var expandedParameterGroupIDs = ParameterGroup.source.rawValue
+    @SceneStorage("nodes.showsParameters") var showsParameters = true
+    @SceneStorage("nodes.candidateSelection") var candidateSelection: SpeedTestResult.ID?
     @State var copiedCandidateIP: String?
     @State var reconnectConfirmationIP: String?
     @State var showsResetConfirmation = false
@@ -26,9 +26,6 @@ struct NodesView: View {
         .scrollbarSafeContent()
         .onAppear {
             syncCandidateSelection()
-            if !model.state.results.isEmpty {
-                showsParameters = false
-            }
         }
         .onChange(of: model.state.results) {
             syncCandidateSelection()

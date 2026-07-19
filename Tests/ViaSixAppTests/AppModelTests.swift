@@ -289,6 +289,7 @@ final class AppModelTests: XCTestCase {
         try await waitUntil { model.state.configurationTest.result != nil }
         XCTAssertEqual(model.state.configurationTest.result?.ip, "2606::7")
         XCTAssertEqual(model.state.configurationTest.result?.latency, "18.5")
+        XCTAssertEqual(model.state.configurationTest.parameters?.httping, model.parameters.httping)
 
         model.selectIP("2606::8")
         try await waitUntil {
@@ -296,6 +297,38 @@ final class AppModelTests: XCTestCase {
         }
         XCTAssertNil(model.state.configurationTest.result)
         await model.shutdown()
+    }
+
+    func testBlankExitIPEndpointRestoresDefaultAndTrimsValidValues() async {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let model = makeModel(paths: paths)
+
+        model.exitIPEndpoint = "  https://status.example.test/ip  "
+        XCTAssertEqual(model.exitIPEndpoint, "https://status.example.test/ip")
+
+        model.exitIPEndpoint = "   "
+        XCTAssertEqual(model.exitIPEndpoint, AppMetadata.defaultExitIPEndpoint)
+        await model.shutdown()
+    }
+
+    func testShutdownRejectsNewBackgroundWork() async {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let detector = ControlledExitDetector()
+        let model = makeModel(paths: paths, exitDetector: detector)
+
+        await model.shutdown()
+        model.installRuntime()
+        model.startSpeedTest()
+        model.startCurrentConfigurationTest()
+        model.detectExitIP()
+
+        XCTAssertFalse(model.isCfstBusy)
+        XCTAssertFalse(model.state.exit.isDetecting)
+        XCTAssertEqual(model.state.runtimePhase, .checking)
+        let requestCount = await detector.requestCount
+        XCTAssertEqual(requestCount, 0)
     }
 
     func testStopSpeedTestDoesNotCancelCurrentConfigurationTest() async throws {
@@ -364,6 +397,47 @@ final class AppModelTests: XCTestCase {
         try await waitUntil { model.state.speedTest.phase == .idle }
         XCTAssertFalse(model.isCfstBusy)
         XCTAssertEqual(model.state.configurationTest.phase, .idle)
+        await model.shutdown()
+    }
+
+    func testSpeedTestRequiresExplicitSelectionAndTracksParameterSnapshot() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let model = try await makeSpeedTestModel(
+            paths: paths,
+            selectedIP: "",
+            script: #"""
+                #!/bin/sh
+                output=""
+                while [ "$#" -gt 0 ]; do
+                  if [ "$1" = "-o" ]; then output="$2"; shift 2; else shift; fi
+                done
+                printf 'IP,Sent,Recv,Loss,Latency,Speed,Region\n2606::11,4,4,0,10.5,28.0,SJC\n' > "$output"
+                """#
+        )
+        let testedParameters = model.parameters
+
+        model.startSpeedTest()
+        try await waitUntil {
+            model.state.results.count == 1 && model.state.speedTest.phase == .idle
+        }
+
+        XCTAssertEqual(model.state.preferences.selectedIP, "")
+        let generatedIP = try await AppBootstrapper(paths: paths).currentConfigIP()
+        XCTAssertNil(generatedIP)
+        XCTAssertEqual(
+            model.state.preferences.lastSuccessfulSpeedTestParameters,
+            testedParameters
+        )
+        XCTAssertTrue(model.state.speedTestResultsAreCurrent)
+
+        var changedParameters = model.parameters
+        changedParameters.httping.toggle()
+        model.parameters = changedParameters
+
+        XCTAssertEqual(model.state.results.map(\.ip), ["2606::11"])
+        XCTAssertFalse(model.state.speedTestResultsAreCurrent)
+        XCTAssertNil(model.state.selectedResult)
         await model.shutdown()
     }
 
@@ -529,7 +603,9 @@ final class AppModelTests: XCTestCase {
         let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await bootstrapper.writeConfig(ip: selectedIP)
+        if !selectedIP.isEmpty {
+            try await bootstrapper.writeConfig(ip: selectedIP)
+        }
 
         let executableURL = paths.root.appendingPathComponent("cfst-test")
         try script.write(to: executableURL, atomically: true, encoding: .utf8)

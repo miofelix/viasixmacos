@@ -75,6 +75,7 @@ struct AppState: Equatable, Sendable {
     struct ConfigurationTestState: Equatable, Sendable {
         var phase: SpeedTestPhase = .idle
         var result: SpeedTestResult?
+        var parameters: SpeedTestParameters?
     }
 
     var launchPhase: LaunchPhase = .idle
@@ -91,8 +92,16 @@ struct AppState: Equatable, Sendable {
     var logs: [AppLogEntry] = []
     var notice: AppNotice?
 
+    var speedTestResultsAreCurrent: Bool {
+        guard !results.isEmpty, let snapshot = preferences.lastSuccessfulSpeedTestParameters else {
+            return false
+        }
+        return snapshot == preferences.parameters
+    }
+
     var selectedResult: SpeedTestResult? {
-        results.first { $0.ip == preferences.selectedIP }
+        guard speedTestResultsAreCurrent else { return nil }
+        return results.first { $0.ip == preferences.selectedIP }
     }
 
     var isXrayRunning: Bool {

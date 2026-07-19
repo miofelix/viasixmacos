@@ -35,7 +35,10 @@ final class AppModel {
     var parameters: SpeedTestParameters {
         get { state.preferences.parameters }
         set {
+            guard !isShuttingDown else { return }
             state.preferences.parameters = newValue
+            state.configurationTest.result = nil
+            state.configurationTest.parameters = nil
             schedulePreferencesSave()
         }
     }
@@ -51,11 +54,14 @@ final class AppModel {
     var exitIPEndpoint: String {
         get { state.preferences.exitIPEndpoint }
         set {
-            guard state.preferences.exitIPEndpoint != newValue else { return }
+            guard !isShuttingDown else { return }
+            let normalized = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = normalized.isEmpty ? AppMetadata.defaultExitIPEndpoint : normalized
+            guard state.preferences.exitIPEndpoint != value else { return }
             if state.preferences.exitIPDetectionMode == .automatic {
                 cancelExitIPDetection()
             }
-            state.preferences.exitIPEndpoint = newValue
+            state.preferences.exitIPEndpoint = value
             state.exit.errorMessage = nil
             schedulePreferencesSave()
         }
@@ -64,6 +70,7 @@ final class AppModel {
     var exitIPDetectionMode: ExitIPDetectionMode {
         get { state.preferences.exitIPDetectionMode }
         set {
+            guard !isShuttingDown else { return }
             guard state.preferences.exitIPDetectionMode != newValue else { return }
             cancelExitIPDetection()
             state.preferences.exitIPDetectionMode = newValue
@@ -177,13 +184,20 @@ final class AppModel {
     }
 
     func retryBootstrap() {
-        guard case .failed = state.launchPhase, bootstrapTask == nil else { return }
+        guard !isShuttingDown, case .failed = state.launchPhase, bootstrapTask == nil else { return }
         state.launchPhase = .idle
         start()
     }
 
     func installRuntime() {
-        guard runtimeTask == nil else { return }
+        guard
+            !isShuttingDown,
+            runtimeTask == nil,
+            activeRunner == nil,
+            activeXray == nil,
+            xrayStartTask == nil,
+            xrayStopTask == nil
+        else { return }
         state.runtimePhase = .installing
         appendLog(source: .app, message: "正在下载并校验运行组件…")
 
@@ -205,7 +219,15 @@ final class AppModel {
     }
 
     func importRuntime(from urls: [URL]) {
-        guard runtimeTask == nil, !urls.isEmpty else { return }
+        guard
+            !isShuttingDown,
+            runtimeTask == nil,
+            activeRunner == nil,
+            activeXray == nil,
+            xrayStartTask == nil,
+            xrayStopTask == nil,
+            !urls.isEmpty
+        else { return }
         state.runtimePhase = .installing
         runtimeTask = Task { [weak self] in
             guard let self else { return }
@@ -226,6 +248,7 @@ final class AppModel {
 
     func importXrayTemplate(from url: URL) {
         guard
+            !isShuttingDown,
             templateImportTask == nil,
             templateSaveTask == nil,
             state.templateOperationPhase == .idle
@@ -327,6 +350,9 @@ final class AppModel {
     }
 
     func selectIPSource(_ mode: IPSourceMode) {
+        guard !isShuttingDown else { return }
+        state.configurationTest.result = nil
+        state.configurationTest.parameters = nil
         state.preferences.ipSourceMode = mode
         switch mode {
         case .ipv6:
@@ -344,6 +370,9 @@ final class AppModel {
     }
 
     func selectIPFile(_ url: URL) {
+        guard !isShuttingDown else { return }
+        state.configurationTest.result = nil
+        state.configurationTest.parameters = nil
         state.preferences.ipSourceMode = .file
         state.preferences.parameters.ipFile = url.path
         state.preferences.parameters.ipRange = ""
@@ -351,6 +380,9 @@ final class AppModel {
     }
 
     func resetParameters() {
+        guard !isShuttingDown else { return }
+        state.configurationTest.result = nil
+        state.configurationTest.parameters = nil
         state.preferences.ipSourceMode = .ipv6
         state.preferences.parameters = .defaults(ipv6File: paths.ipv6List)
         schedulePreferencesSave()
@@ -358,6 +390,17 @@ final class AppModel {
     }
 
     func setCustomExecutable(_ component: RuntimeComponent, url: URL?) {
+        guard !isShuttingDown else { return }
+        switch component {
+        case .cfst where activeRunner != nil:
+            showNotice("测速进行中，完成或停止后再修改 CFST 路径", style: .error)
+            return
+        case .xray where activeXray != nil || xrayStartTask != nil || xrayStopTask != nil:
+            showNotice("本地代理运行中，停止后再修改 Xray 路径", style: .error)
+            return
+        default:
+            break
+        }
         let path = url?.path ?? ""
         switch component {
         case .cfst:
@@ -370,7 +413,7 @@ final class AppModel {
     }
 
     func startSpeedTest() {
-        guard activeRunner == nil else { return }
+        guard !isShuttingDown, activeRunner == nil, state.templateOperationPhase == .idle else { return }
         do {
             _ = try state.preferences.parameters.validated()
         } catch {
@@ -408,13 +451,8 @@ final class AppModel {
                 }
                 guard activeSpeedTestID == runID else { return }
                 state.results = results
-                if state.preferences.selectedIP.isEmpty, let first = results.first {
-                    do {
-                        try await applySelection(first.ip)
-                    } catch {
-                        appendLog(source: .app, level: .error, message: "生成首选节点配置失败：\(error.localizedDescription)")
-                    }
-                }
+                state.preferences.lastSuccessfulSpeedTestParameters = snapshot
+                schedulePreferencesSave()
                 appendLog(source: .speedTest, level: .success, message: "测速完成，共 \(results.count) 个候选节点")
                 showNotice("测速完成：\(results.count) 个候选节点", style: .success)
                 finishSpeedTest(runID: runID, phase: .idle)
@@ -439,7 +477,7 @@ final class AppModel {
     }
 
     func startCurrentConfigurationTest() {
-        guard activeRunner == nil else { return }
+        guard !isShuttingDown, activeRunner == nil, state.templateOperationPhase == .idle else { return }
         let selectedIP = state.preferences.selectedIP
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !selectedIP.isEmpty else {
@@ -492,6 +530,7 @@ final class AppModel {
                     throw CfstRunnerError.noResults
                 }
                 state.configurationTest.result = result
+                state.configurationTest.parameters = parameters
                 appendLog(source: .speedTest, level: .success, message: "当前节点测速完成")
                 showNotice("当前节点测速完成", style: .success)
                 finishConfigurationTest(runID: runID, phase: .idle)
@@ -516,7 +555,7 @@ final class AppModel {
     }
 
     func selectIP(_ ip: String) {
-        guard selectionTask == nil, !isShuttingDown else { return }
+        guard selectionTask == nil, !isShuttingDown, state.templateOperationPhase == .idle else { return }
         switchingIP = ip
         selectionTask = Task { [weak self] in
             await self?.performIPSelection(ip)
@@ -563,7 +602,13 @@ final class AppModel {
     }
 
     func startXray() {
-        guard activeXray == nil, xrayStartTask == nil, xrayStopTask == nil else { return }
+        guard
+            !isShuttingDown,
+            state.templateOperationPhase == .idle,
+            activeXray == nil,
+            xrayStartTask == nil,
+            xrayStopTask == nil
+        else { return }
         guard
             let executableURL = resolvedExecutable(
                 preferredPath: state.preferences.xrayPath,
@@ -667,7 +712,9 @@ final class AppModel {
     }
 
     func restartXray() {
-        guard state.isXrayRunning,
+        guard !isShuttingDown,
+            state.templateOperationPhase == .idle,
+            state.isXrayRunning,
             activeXray != nil,
             xrayStartTask == nil,
             xrayStopTask == nil
@@ -687,7 +734,7 @@ final class AppModel {
     }
 
     func detectExitIP() {
-        guard detectTask == nil else { return }
+        guard !isShuttingDown, detectTask == nil else { return }
         let detectionID = UUID()
         let context = currentExitIPDetectionContext
         let proxy: ProxyEndpoint? =
@@ -794,6 +841,9 @@ final class AppModel {
             var preferences = await preferencesStore.load(defaults: defaults)
             let loadedPreferences = preferences
             normalizeBundledSourcePath(in: &preferences)
+            if preferences.exitIPEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                preferences.exitIPEndpoint = AppMetadata.defaultExitIPEndpoint
+            }
 
             async let installedStatus = runtimeManager.installedStatus()
             let loadedResults: [SpeedTestResult]
@@ -802,6 +852,9 @@ final class AppModel {
             } catch {
                 loadedResults = []
                 appendLog(source: .speedTest, level: .warning, message: "忽略了损坏的历史测速结果：\(error.localizedDescription)")
+            }
+            if loadedResults.isEmpty {
+                preferences.lastSuccessfulSpeedTestParameters = nil
             }
 
             var configurationWarning: String?
@@ -906,6 +959,7 @@ final class AppModel {
         try await bootstrapper.writeConfig(ip: normalized)
         state.preferences.selectedIP = normalized
         state.configurationTest.result = nil
+        state.configurationTest.parameters = nil
         do {
             try await savePreferencesNow()
         } catch {
@@ -1044,7 +1098,7 @@ final class AppModel {
     }
 
     private func schedulePreferencesSave() {
-        guard state.launchPhase == .ready else { return }
+        guard state.launchPhase == .ready, !isShuttingDown else { return }
         saveTask?.cancel()
         let snapshot = state.preferences
         saveTask = Task { [weak self] in
@@ -1078,6 +1132,7 @@ final class AppModel {
     }
 
     private func showNotice(_ message: String, style: AppNotice.Style = .info) {
+        guard !isShuttingDown else { return }
         noticeTask?.cancel()
         noticeTask = nil
         let notice = AppNotice(message: message, style: style)
