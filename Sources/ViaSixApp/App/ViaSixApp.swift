@@ -134,6 +134,44 @@ enum AppDocumentOpener {
         return candidates.first(where: { fileManager.fileExists(atPath: $0.path) })
     }
 
+    static func isTrustedDocumentURL(_ url: URL) -> Bool {
+        let candidate = url.standardizedFileURL.resolvingSymlinksInPath()
+        return documentRoots().contains { root in
+            let trustedRoot = root.standardizedFileURL.resolvingSymlinksInPath()
+            return candidate.path == trustedRoot.path
+                || candidate.path.hasPrefix(trustedRoot.path + "/")
+        }
+    }
+
+    private static func documentRoots() -> [URL] {
+        var roots: [URL] = []
+        if let resourceURL = Bundle.main.resourceURL {
+            roots.append(resourceURL)
+        }
+
+        let currentDirectory = URL(
+            fileURLWithPath: FileManager.default.currentDirectoryPath,
+            isDirectory: true
+        )
+        var directory = currentDirectory
+        for _ in 0..<5 {
+            let hasGuide = FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent("Docs/USER_GUIDE.md").path
+            )
+            let hasNotices = FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent("THIRD_PARTY_NOTICES.md").path
+            )
+            if hasGuide && hasNotices {
+                roots.append(directory)
+                break
+            }
+            let parent = directory.deletingLastPathComponent()
+            if parent.path == directory.path { break }
+            directory = parent
+        }
+        return roots
+    }
+
     private static func bundledCandidates(for document: AppDocument) -> [URL] {
         [
             Bundle.main.url(forResource: document.resourceName, withExtension: "md"),
