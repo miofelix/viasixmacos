@@ -117,7 +117,7 @@ Sources/
   ViaSixApp/
     App/              应用入口和生命周期
     DesignSystem/     视觉样式
-    Features/         总览、节点、日志、设置和菜单栏
+    Features/         连接、节点测速、活动、设置和菜单栏
     State/            AppModel 与应用状态
 Tests/
   ViaSixCoreTests/    核心逻辑与进程行为测试

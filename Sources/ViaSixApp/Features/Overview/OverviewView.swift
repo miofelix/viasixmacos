@@ -1,8 +1,12 @@
+import AppKit
 import SwiftUI
 import ViaSixCore
 
 struct OverviewView: View {
     @Environment(AppModel.self) private var model
+    let onSelectNodes: () -> Void
+
+    @State private var copiedEndpoint = false
 
     var body: some View {
         ScrollView {
@@ -22,9 +26,9 @@ struct OverviewView: View {
 
     private var pageHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("总览")
+            Text("连接")
                 .font(.title2.weight(.semibold))
-            Text("节点与本地代理状态")
+            Text("管理本地代理、当前节点与网络出口")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -75,12 +79,35 @@ struct OverviewView: View {
                 Text(xrayStatusText)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
+
+                Toggle("本地代理", isOn: proxyEnabledBinding)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(proxyToggleDisabled)
+                    .accessibilityLabel("本地代理")
+                    .accessibilityValue(xrayStatusText)
             }
             .padding(.bottom, 15)
 
             Divider()
 
-            detailRow(label: "代理地址", value: proxyEndpoint)
+            HStack(alignment: .center, spacing: 12) {
+                Text("代理地址")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 62, alignment: .leading)
+                Text(proxyEndpoint)
+                    .font(.system(.callout, design: .monospaced).weight(.medium))
+                    .textSelection(.enabled)
+                Spacer()
+                Button(action: copyProxyEndpoint) {
+                    Image(systemName: copiedEndpoint ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .help(copiedEndpoint ? "已复制" : "复制代理地址")
+                .accessibilityLabel(copiedEndpoint ? "已复制代理地址" : "复制代理地址")
+            }
+            .padding(.vertical, 10)
             Divider()
             detailRow(label: "协议", value: "HTTP / SOCKS")
             Divider()
@@ -122,10 +149,22 @@ struct OverviewView: View {
             Divider()
 
             HStack(spacing: 9) {
-                proxyActions
+                Button("选择节点", systemImage: "network", action: onSelectNodes)
+
+                if model.state.isXrayRunning {
+                    Button("重新连接", systemImage: "arrow.clockwise", action: model.restartXray)
+                }
+
                 Spacer()
             }
             .padding(.top, 14)
+
+            if !model.state.isXrayRunning {
+                Label(proxyReadinessHint, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 8)
+            }
 
             if case .failed(let message) = model.state.xrayPhase {
                 Text(message)
@@ -137,30 +176,6 @@ struct OverviewView: View {
         }
         .padding(18)
         .cardStyle()
-    }
-
-    @ViewBuilder
-    private var proxyActions: some View {
-        switch model.state.xrayPhase {
-        case .running:
-            Button("停止", systemImage: "stop.fill", action: model.stopXray)
-            Button("重启", systemImage: "arrow.clockwise", action: model.restartXray)
-
-        case .validating, .starting:
-            Button("取消启动", systemImage: "stop.fill", action: model.stopXray)
-
-        case .stopping:
-            Button("正在停止…", systemImage: "hourglass") {}
-                .disabled(true)
-
-        case .stopped, .failed:
-            Button("启动本地代理", systemImage: "play.fill", action: model.startXray)
-                .buttonStyle(.borderedProminent)
-                .disabled(
-                    model.state.launchPhase != .ready
-                        || model.state.runtimePhase == .installing
-                )
-        }
     }
 
     private var runtimePanel: some View {
@@ -212,6 +227,18 @@ struct OverviewView: View {
         "\(AppMetadata.proxyHost):\(AppMetadata.proxyPort)"
     }
 
+    private var proxyEnabledBinding: Binding<Bool> {
+        Binding {
+            model.state.isXrayRunning
+        } set: { enabled in
+            if enabled {
+                model.startXray()
+            } else {
+                model.stopXray()
+            }
+        }
+    }
+
     private var metricColumns: [GridItem] {
         [GridItem(.adaptive(minimum: 145), spacing: 22)]
     }
@@ -242,6 +269,35 @@ struct OverviewView: View {
             true
         case .stopped, .running, .failed:
             false
+        }
+    }
+
+    private var proxyToggleDisabled: Bool {
+        model.state.launchPhase != .ready
+            || model.state.runtimePhase == .installing
+            || isXrayTransitioning
+            || (!model.state.isXrayRunning
+                && (selectedIP.isEmpty || !model.hasXrayExecutable))
+    }
+
+    private var proxyReadinessHint: String {
+        if selectedIP.isEmpty {
+            return "先选择一个节点，才能启动本地代理。"
+        }
+        if !model.hasXrayExecutable {
+            return "尚未找到 Xray-core，请在设置中安装或指定路径。"
+        }
+        return "代理已停止，打开右侧开关即可启动。"
+    }
+
+    private func copyProxyEndpoint() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(proxyEndpoint, forType: .string)
+        copiedEndpoint = true
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            copiedEndpoint = false
         }
     }
 

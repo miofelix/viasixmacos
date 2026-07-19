@@ -20,6 +20,28 @@ final class AppModel {
         state.preferences.ipSourceMode
     }
 
+    /// CFST and Xray are independent capabilities. Keeping them separate lets
+    /// the UI offer node testing even when the proxy component is not installed.
+    var hasCfstExecutable: Bool {
+        resolvedExecutable(
+            preferredPath: state.preferences.cfstPath,
+            managedURL: state.runtimeStatus?.cfstURL,
+            commandName: "cfst"
+        ) != nil
+    }
+
+    var hasXrayExecutable: Bool {
+        let managedURL =
+            state.runtimeStatus?.xrayIsReady == true
+            ? state.runtimeStatus?.xrayURL
+            : nil
+        return resolvedExecutable(
+            preferredPath: state.preferences.xrayPath,
+            managedURL: managedURL,
+            commandName: "xray"
+        ) != nil
+    }
+
     let paths: AppPaths
 
     @ObservationIgnored private let preferencesStore: PreferencesStore
@@ -430,7 +452,6 @@ final class AppModel {
     func detectExitIP() {
         guard detectTask == nil else { return }
         state.exit.isDetecting = true
-        state.exit.info = nil
         state.exit.errorMessage = nil
         detectTask = Task { [weak self] in
             guard let self else { return }
@@ -720,8 +741,14 @@ final class AppModel {
 
     private func showNotice(_ message: String, style: AppNotice.Style = .info) {
         noticeTask?.cancel()
+        noticeTask = nil
         let notice = AppNotice(message: message, style: style)
         state.notice = notice
+
+        // Errors stay visible until dismissed so failures from the menu bar or
+        // a background task are not lost when the main window is closed.
+        guard style != .error else { return }
+
         noticeTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: .seconds(3))

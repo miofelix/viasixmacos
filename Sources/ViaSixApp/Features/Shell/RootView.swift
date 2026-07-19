@@ -16,17 +16,53 @@ struct RootView: View {
 
                 Divider()
 
-                HStack(spacing: 9) {
-                    Circle()
-                        .fill(sidebarStatusColor)
-                        .frame(width: 7, height: 7)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(sidebarStatusTitle)
-                            .font(.caption.weight(.medium))
+                VStack(spacing: 0) {
+                    Button(action: toggleProxy) {
+                        HStack(spacing: 9) {
+                            Circle()
+                                .fill(sidebarStatusColor)
+                                .frame(width: 7, height: 7)
+
+                            Text(sidebarStatusTitle)
+                                .font(.caption.weight(.medium))
+                                .lineLimit(1)
+
+                            Spacer()
+
+                            if sidebarProxyIsTransitioning {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: sidebarActionIcon)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .contentShape(Rectangle())
                     }
-                    Spacer()
+                    .buttonStyle(.plain)
+                    .disabled(sidebarProxyControlDisabled)
+                    .help(sidebarActionHelp)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+
+                    SettingsLink {
+                        HStack(spacing: 9) {
+                            Image(systemName: "gearshape")
+                                .frame(width: 12)
+                            Text("设置…")
+                                .font(.caption.weight(.medium))
+                            Spacer()
+                            Text("⌘,")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
                 }
-                .padding(12)
             }
             .navigationTitle(AppMetadata.name)
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
@@ -90,13 +126,24 @@ struct RootView: View {
     private func page(for section: AppSection) -> some View {
         switch section {
         case .overview:
-            OverviewView()
+            OverviewView {
+                selection = .nodes
+            }
         case .nodes:
             NodesView()
         case .logs:
             LogsView()
-        case .settings:
-            SettingsView()
+        }
+    }
+
+    private func toggleProxy() {
+        switch model.state.xrayPhase {
+        case .running, .validating, .starting:
+            model.stopXray()
+        case .stopped, .failed:
+            model.startXray()
+        case .stopping:
+            break
         }
     }
 
@@ -117,6 +164,51 @@ struct RootView: View {
         case .stopping: "正在停止"
         case .failed: "本地代理异常"
         case .stopped: "本地代理已停止"
+        }
+    }
+
+    private var sidebarProxyIsTransitioning: Bool {
+        switch model.state.xrayPhase {
+        case .validating, .starting, .stopping:
+            true
+        case .running, .failed, .stopped:
+            false
+        }
+    }
+
+    private var sidebarProxyControlDisabled: Bool {
+        guard model.state.launchPhase == .ready, !sidebarProxyIsTransitioning else { return true }
+        switch model.state.xrayPhase {
+        case .running:
+            return false
+        case .stopped, .failed:
+            return !model.hasXrayExecutable || model.state.preferences.selectedIP.isEmpty
+        case .validating, .starting, .stopping:
+            return true
+        }
+    }
+
+    private var sidebarActionIcon: String {
+        switch model.state.xrayPhase {
+        case .running, .validating, .starting:
+            "stop.fill"
+        case .stopped, .failed, .stopping:
+            "play.fill"
+        }
+    }
+
+    private var sidebarActionHelp: String {
+        switch model.state.xrayPhase {
+        case .running, .validating, .starting:
+            "停止本地代理"
+        case .stopped, .failed, .stopping:
+            if !model.hasXrayExecutable {
+                "请先在设置中安装 Xray-core"
+            } else if model.state.preferences.selectedIP.isEmpty {
+                "请先选择节点"
+            } else {
+                "启动本地代理"
+            }
         }
     }
 }
@@ -148,7 +240,6 @@ private struct NoticeView: View {
                 .stroke(VisualStyle.surfaceBorder)
         }
         .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
-        .onTapGesture(perform: dismiss)
     }
 
     private var color: Color {

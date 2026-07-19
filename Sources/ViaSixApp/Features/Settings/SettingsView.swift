@@ -50,7 +50,7 @@ struct SettingsView: View {
             )
 
             HStack {
-                Button("安装上游组件", systemImage: "arrow.down.circle") {
+                Button(runtimeInstallTitle, systemImage: "arrow.down.circle") {
                     model.installRuntime()
                 }
                 .disabled(runtimeActionsDisabled)
@@ -198,6 +198,15 @@ struct SettingsView: View {
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var runtimeInstallTitle: String {
+        if model.state.runtimePhase == .installing {
+            return "安装中…"
+        }
+        return model.hasCfstExecutable && model.hasXrayExecutable
+            ? "重新安装组件"
+            : "安装组件"
     }
 
     private func componentRow(

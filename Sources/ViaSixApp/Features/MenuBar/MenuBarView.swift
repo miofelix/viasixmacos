@@ -5,6 +5,7 @@ import ViaSixCore
 struct MenuBarView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
+    @State private var copyNotice: String?
 
     var body: some View {
         Button("打开 ViaSix", systemImage: "macwindow") {
@@ -12,16 +13,47 @@ struct MenuBarView: View {
         }
         .keyboardShortcut("o")
 
+        SettingsLink {
+            Label("打开设置", systemImage: "gearshape")
+        }
+
         Divider()
 
         Label(xrayStatusTitle, systemImage: xrayStatusIcon)
         if !model.state.preferences.selectedIP.isEmpty {
             Text("当前节点 IP：\(model.state.preferences.selectedIP)")
+            Button("复制当前节点 IP", systemImage: "doc.on.doc") {
+                copyToPasteboard(model.state.preferences.selectedIP, label: "节点 IP")
+            }
+        }
+        Button("复制代理地址", systemImage: "doc.on.doc") {
+            copyToPasteboard(proxyEndpoint, label: "代理地址")
+        }
+
+        if let copyNotice {
+            Label(copyNotice, systemImage: "checkmark.circle")
+                .foregroundStyle(.secondary)
+        }
+
+        if case .failed(let message) = model.state.xrayPhase {
+            Text(message)
+                .lineLimit(2)
+                .foregroundStyle(.secondary)
         }
 
         Divider()
 
+        if let speedTestUnavailableMessage {
+            Label(speedTestUnavailableMessage, systemImage: "info.circle")
+                .foregroundStyle(.secondary)
+        }
+        speedTestStatus
         speedTestAction
+
+        if let proxyUnavailableMessage {
+            Label(proxyUnavailableMessage, systemImage: "info.circle")
+                .foregroundStyle(.secondary)
+        }
         xrayActions
 
         Divider()
@@ -42,6 +74,8 @@ struct MenuBarView: View {
             .disabled(
                 model.state.launchPhase != .ready
                     || model.state.runtimePhase == .installing
+                    || !model.hasCfstExecutable
+                    || parameterValidationMessage != nil
             )
         case .running:
             Button("停止节点测速", systemImage: "stop.fill") {
@@ -50,6 +84,32 @@ struct MenuBarView: View {
         case .stopping:
             Button("正在停止测速…", systemImage: "hourglass") {}
                 .disabled(true)
+        }
+    }
+
+    @ViewBuilder
+    private var speedTestStatus: some View {
+        switch model.state.speedTest.phase {
+        case .running:
+            if model.state.speedTest.total > 0 {
+                Label(
+                    "测速进度：\(model.state.speedTest.current)/\(model.state.speedTest.total)",
+                    systemImage: "gauge.with.dots.needle.67percent"
+                )
+                .foregroundStyle(.secondary)
+            } else {
+                Label("测速正在准备输出…", systemImage: "gauge.with.dots.needle.67percent")
+                    .foregroundStyle(.secondary)
+            }
+        case .stopping:
+            Label("正在停止测速…", systemImage: "hourglass")
+                .foregroundStyle(.secondary)
+        case .failed(let message):
+            Text("测速失败：\(message)")
+                .lineLimit(2)
+                .foregroundStyle(.secondary)
+        case .idle:
+            EmptyView()
         }
     }
 
@@ -63,6 +123,8 @@ struct MenuBarView: View {
             .disabled(
                 model.state.launchPhase != .ready
                     || model.state.runtimePhase == .installing
+                    || !model.hasXrayExecutable
+                    || model.state.preferences.selectedIP.isEmpty
             )
         case .validating, .starting:
             Button("停止本地代理", systemImage: "stop.fill") {
@@ -99,6 +161,55 @@ struct MenuBarView: View {
         case .validating, .starting, .stopping: "clock.fill"
         case .failed: "exclamationmark.triangle.fill"
         case .stopped: "circle"
+        }
+    }
+
+    private var proxyEndpoint: String {
+        "\(AppMetadata.proxyHost):\(AppMetadata.proxyPort)"
+    }
+
+    private var parameterValidationMessage: String? {
+        do {
+            _ = try model.parameters.validated()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    private var speedTestUnavailableMessage: String? {
+        if let parameterValidationMessage {
+            return "测速设置需要检查：\(parameterValidationMessage)"
+        }
+        guard model.state.launchPhase == .ready, !model.hasCfstExecutable else { return nil }
+        return "请在设置中安装 CloudflareSpeedTest"
+    }
+
+    private var proxyUnavailableMessage: String? {
+        switch model.state.xrayPhase {
+        case .validating, .starting, .running, .stopping:
+            return nil
+        case .stopped, .failed:
+            break
+        }
+        if model.state.preferences.selectedIP.isEmpty {
+            return "请先打开 ViaSix 选择节点"
+        }
+        guard !model.hasXrayExecutable else { return nil }
+        return "请在设置中安装 Xray-core"
+    }
+
+    private func copyToPasteboard(_ value: String, label: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+
+        let notice = "已复制\(label)"
+        copyNotice = notice
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            if copyNotice == notice {
+                copyNotice = nil
+            }
         }
     }
 

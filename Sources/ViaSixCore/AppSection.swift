@@ -4,25 +4,22 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
     case overview
     case nodes
     case logs
-    case settings
 
     public var id: Self { self }
 
     public var title: String {
         switch self {
-        case .overview: "总览"
-        case .nodes: "节点优选"
-        case .logs: "运行记录"
-        case .settings: "设置"
+        case .overview: "连接"
+        case .nodes: "节点测速"
+        case .logs: "活动"
         }
     }
 
     public var systemImage: String {
         switch self {
-        case .overview: "rectangle.grid.2x2"
-        case .nodes: "network"
-        case .logs: "text.alignleft"
-        case .settings: "gearshape"
+        case .overview: "point.3.connected.trianglepath.dotted"
+        case .nodes: "gauge.with.dots.needle.67percent"
+        case .logs: "clock.arrow.circlepath"
         }
     }
 }

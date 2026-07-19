@@ -22,59 +22,77 @@ extension NodesView {
                 Spacer()
 
                 Button {
-                    model.resetParameters()
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        showsParameters.toggle()
+                    }
                 } label: {
-                    Label("重置", systemImage: "arrow.counterclockwise")
+                    Image(systemName: showsParameters ? "chevron.up" : "chevron.down")
+                }
+                .buttonStyle(.borderless)
+                .help(showsParameters ? "收起测速设置" : "展开测速设置")
+                .accessibilityLabel(showsParameters ? "收起测速设置" : "展开测速设置")
+
+                Button {
+                    showsResetConfirmation = true
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
+                .help("恢复默认测速设置")
+                .accessibilityLabel("恢复默认测速设置")
+                .disabled(isTesting)
             }
             .padding(16)
 
-            Divider()
+            if showsParameters {
+                Divider()
 
-            VStack(spacing: 0) {
-                ParameterDisclosure(
-                    title: "数据源",
-                    subtitle: sourceSummary,
-                    systemImage: "doc.text.magnifyingglass",
-                    isExpanded: expansionBinding(for: .source)
-                ) {
-                    sourceSettings
-                }
+                VStack(spacing: 0) {
+                    ParameterDisclosure(
+                        title: "数据源",
+                        subtitle: sourceSummary,
+                        systemImage: "doc.text.magnifyingglass",
+                        isExpanded: expansionBinding(for: .source)
+                    ) {
+                        sourceSettings
+                    }
 
-                ParameterDisclosure(
-                    title: "测速模式",
-                    subtitle: "\(model.parameters.httping ? "HTTPing" : "TCPing") · 端口 \(model.parameters.port)",
-                    systemImage: "waveform.path.ecg",
-                    isExpanded: expansionBinding(for: .mode)
-                ) {
-                    modeSettings
-                }
+                    ParameterDisclosure(
+                        title: "测速模式",
+                        subtitle: "\(model.parameters.httping ? "HTTPing" : "TCPing") · 端口 \(model.parameters.port)",
+                        systemImage: "waveform.path.ecg",
+                        isExpanded: expansionBinding(for: .mode)
+                    ) {
+                        modeSettings
+                    }
 
-                ParameterDisclosure(
-                    title: "筛选条件",
-                    subtitle:
-                        "延迟 \(model.parameters.latencyLowerBound)–\(model.parameters.latencyUpperBound) ms · 丢包 ≤ \(model.parameters.lossRateUpperBound.formatted(.number.precision(.fractionLength(0...2))))",
-                    systemImage: "line.3.horizontal.decrease.circle",
-                    isExpanded: expansionBinding(for: .filter)
-                ) {
-                    filterSettings
-                }
+                    ParameterDisclosure(
+                        title: "筛选条件",
+                        subtitle:
+                            "延迟 \(model.parameters.latencyLowerBound)–\(model.parameters.latencyUpperBound) ms · 丢包 ≤ \(model.parameters.lossRateUpperBound.formatted(.number.precision(.fractionLength(0...2))))",
+                        systemImage: "line.3.horizontal.decrease.circle",
+                        isExpanded: expansionBinding(for: .filter)
+                    ) {
+                        filterSettings
+                    }
 
-                ParameterDisclosure(
-                    title: "性能调优",
-                    subtitle:
-                        "\(model.parameters.threads) 线程 · Ping \(model.parameters.pingCount) 次 · 下载 \(model.parameters.downloadCount) 个",
-                    systemImage: "cpu",
-                    isExpanded: expansionBinding(for: .performance)
-                ) {
-                    performanceSettings
+                    ParameterDisclosure(
+                        title: "性能调优",
+                        subtitle:
+                            "\(model.parameters.threads) 线程 · Ping \(model.parameters.pingCount) 次 · 下载 \(model.parameters.downloadCount) 个",
+                        systemImage: "cpu",
+                        isExpanded: expansionBinding(for: .performance)
+                    ) {
+                        performanceSettings
+                    }
                 }
+                .padding(.vertical, 4)
+                .disabled(isTesting)
             }
-            .padding(.vertical, 4)
         }
         .cardStyle()
+        .animation(.easeInOut(duration: 0.18), value: showsParameters)
     }
 
     var sourceSettings: some View {
@@ -195,6 +213,8 @@ extension NodesView {
                     TextField("https://your-domain.com/url", text: parameterBinding(\.url))
                         .textFieldStyle(.roundedBorder)
                 }
+                .disabled(model.parameters.disableDownload)
+                .opacity(model.parameters.disableDownload ? 0.55 : 1)
 
                 ParameterField(
                     label: "区域过滤",
@@ -244,6 +264,8 @@ extension NodesView {
                 )
                 .textFieldStyle(.roundedBorder)
             }
+            .disabled(model.parameters.disableDownload)
+            .opacity(model.parameters.disableDownload ? 0.55 : 1)
         }
     }
 
@@ -268,6 +290,8 @@ extension NodesView {
                     )
                     .textFieldStyle(.roundedBorder)
                 }
+                .disabled(model.parameters.disableDownload)
+                .opacity(model.parameters.disableDownload ? 0.55 : 1)
 
                 ParameterField(label: "单 IP 下载时长", hint: "单位秒，范围 1–3600") {
                     TextField(
@@ -277,6 +301,8 @@ extension NodesView {
                     )
                     .textFieldStyle(.roundedBorder)
                 }
+                .disabled(model.parameters.disableDownload)
+                .opacity(model.parameters.disableDownload ? 0.55 : 1)
             }
 
             LazyVGrid(columns: fieldColumns, alignment: .leading, spacing: 12) {
@@ -288,7 +314,7 @@ extension NodesView {
 
                 ToggleSetting(
                     title: "调试模式",
-                    hint: "在运行记录中显示更多诊断信息。",
+                    hint: "在“活动”中显示更多诊断信息。",
                     isOn: parameterBinding(\.debug)
                 )
             }

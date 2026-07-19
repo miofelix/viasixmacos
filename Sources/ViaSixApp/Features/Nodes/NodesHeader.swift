@@ -6,9 +6,9 @@ extension NodesView {
     var pageHeader: some View {
         HStack(alignment: .center, spacing: 20) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("节点优选")
+                Text("节点测速")
                     .font(.title2.weight(.semibold))
-                Text("测试候选 IP，按延迟与速度选择节点")
+                Text("比较候选节点，确认后应用到本地代理")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

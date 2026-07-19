@@ -2,17 +2,53 @@ import SwiftUI
 
 struct LogsView: View {
     @Environment(AppModel.self) private var model
+    @State private var searchText = ""
+    @State private var sourceFilter: LogSourceFilter = .all
+    @State private var levelFilter: LogLevelFilter = .all
+    @State private var followsLatest = true
+    @State private var showsClearConfirmation = false
 
     var body: some View {
         VStack(spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("测速与代理运行记录")
-                    .font(.title2.weight(.semibold))
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("活动")
+                        .font(.title2.weight(.semibold))
+                    Text("查看和筛选测速与代理运行日志")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
 
                 Spacer()
 
-                Button(role: .destructive, action: model.clearLogs) {
-                    Label("清空", systemImage: "trash")
+                if isFiltering {
+                    Text("\(filteredLogs.count) / \(model.state.logs.count) 条")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                filterMenu
+
+                Button {
+                    followsLatest.toggle()
+                } label: {
+                    Label(
+                        followsLatest ? "暂停跟随" : "跟随最新",
+                        systemImage: followsLatest ? "pause" : "arrow.down.to.line"
+                    )
+                }
+                .buttonStyle(.borderless)
+                .help(
+                    followsLatest
+                        ? "暂停新日志到达时的自动滚动"
+                        : "滚动到最新日志并恢复自动跟随"
+                )
+                .disabled(model.state.logs.isEmpty)
+
+                Button(role: .destructive) {
+                    showsClearConfirmation = true
+                } label: {
+                    Label("清空…", systemImage: "trash")
                 }
                 .buttonStyle(.borderless)
                 .disabled(model.state.logs.isEmpty)
@@ -27,27 +63,194 @@ struct LogsView: View {
                     description: Text("开始节点测速或启动本地代理后，记录会显示在这里。")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if filteredLogs.isEmpty {
+                ContentUnavailableView {
+                    Label("没有匹配的运行记录", systemImage: "magnifyingglass")
+                } description: {
+                    Text("尝试更换关键词，或清除来源与级别筛选。")
+                } actions: {
+                    Button("清除筛选", action: resetFilters)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(model.state.logs) { entry in
+                            ForEach(filteredLogs) { entry in
                                 LogRow(entry: entry)
                                     .id(entry.id)
 
-                                if entry.id != model.state.logs.last?.id {
+                                if entry.id != filteredLogs.last?.id {
                                     Divider()
                                         .opacity(0.45)
                                 }
                             }
                         }
                     }
-                    .onChange(of: model.state.logs.last?.id) { _, id in
-                        guard let id else { return }
-                        proxy.scrollTo(id, anchor: .bottom)
+                    .onAppear {
+                        scrollToLatest(using: proxy)
+                    }
+                    .onChange(of: filteredLogs.last?.id) { _, _ in
+                        scrollToLatest(using: proxy)
+                    }
+                    .onChange(of: searchText) { _, _ in
+                        scrollToLatest(using: proxy)
+                    }
+                    .onChange(of: sourceFilter) { _, _ in
+                        scrollToLatest(using: proxy)
+                    }
+                    .onChange(of: levelFilter) { _, _ in
+                        scrollToLatest(using: proxy)
+                    }
+                    .onChange(of: followsLatest) { _, isFollowing in
+                        guard isFollowing else { return }
+                        scrollToLatest(using: proxy)
                     }
                 }
             }
+        }
+        .searchable(text: $searchText, placement: .toolbar, prompt: "搜索运行记录")
+        .confirmationDialog(
+            "清空所有运行记录？",
+            isPresented: $showsClearConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("清空 \(model.state.logs.count) 条记录", role: .destructive) {
+                model.clearLogs()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("此操作无法撤销，但不会删除测速结果或应用设置。")
+        }
+    }
+
+    private var filteredLogs: [AppLogEntry] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return model.state.logs.filter { entry in
+            guard sourceFilter.includes(entry.source), levelFilter.includes(entry.level) else {
+                return false
+            }
+            guard !query.isEmpty else { return true }
+            return entry.message.localizedCaseInsensitiveContains(query)
+                || entry.source.rawValue.localizedCaseInsensitiveContains(query)
+                || LogLevelFilter.title(for: entry.level).localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var isFiltering: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || sourceFilter != .all
+            || levelFilter != .all
+    }
+
+    private var filterMenu: some View {
+        Menu {
+            Picker("来源", selection: $sourceFilter) {
+                ForEach(LogSourceFilter.allCases) { filter in
+                    Text(filter.title).tag(filter)
+                }
+            }
+
+            Picker("级别", selection: $levelFilter) {
+                ForEach(LogLevelFilter.allCases) { filter in
+                    Text(filter.title).tag(filter)
+                }
+            }
+
+            if sourceFilter != .all || levelFilter != .all {
+                Divider()
+                Button("清除来源与级别筛选") {
+                    sourceFilter = .all
+                    levelFilter = .all
+                }
+            }
+        } label: {
+            Label(
+                "筛选",
+                systemImage: sourceFilter == .all && levelFilter == .all
+                    ? "line.3.horizontal.decrease.circle"
+                    : "line.3.horizontal.decrease.circle.fill"
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(model.state.logs.isEmpty)
+    }
+
+    private func resetFilters() {
+        searchText = ""
+        sourceFilter = .all
+        levelFilter = .all
+    }
+
+    private func scrollToLatest(using proxy: ScrollViewProxy) {
+        guard followsLatest, let id = filteredLogs.last?.id else { return }
+        proxy.scrollTo(id, anchor: .bottom)
+    }
+}
+
+private enum LogSourceFilter: String, CaseIterable, Identifiable, Hashable {
+    case all
+    case app
+    case speedTest
+    case xray
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .all: "全部来源"
+        case .app: "应用"
+        case .speedTest: "测速"
+        case .xray: "代理"
+        }
+    }
+
+    func includes(_ source: AppLogEntry.Source) -> Bool {
+        switch (self, source) {
+        case (.all, _), (.app, .app), (.speedTest, .speedTest), (.xray, .xray):
+            true
+        default:
+            false
+        }
+    }
+}
+
+private enum LogLevelFilter: String, CaseIterable, Identifiable, Hashable {
+    case all
+    case info
+    case success
+    case warning
+    case error
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .all: "全部级别"
+        case .info: "信息"
+        case .success: "成功"
+        case .warning: "警告"
+        case .error: "错误"
+        }
+    }
+
+    func includes(_ level: AppLogEntry.Level) -> Bool {
+        switch (self, level) {
+        case (.all, _), (.info, .info), (.success, .success), (.warning, .warning),
+            (.error, .error):
+            true
+        default:
+            false
+        }
+    }
+
+    static func title(for level: AppLogEntry.Level) -> String {
+        switch level {
+        case .info: "信息"
+        case .success: "成功"
+        case .warning: "警告"
+        case .error: "错误"
         }
     }
 }
@@ -67,6 +270,11 @@ private struct LogRow: View {
                 .foregroundStyle(color)
                 .frame(width: 42, alignment: .leading)
 
+            Text(levelTitle)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(color)
+                .frame(width: 30, alignment: .leading)
+
             Text(entry.message)
                 .font(.system(.callout, design: .monospaced))
                 .textSelection(.enabled)
@@ -81,6 +289,15 @@ private struct LogRow: View {
         case .success: .green
         case .warning: .orange
         case .error: .red
+        }
+    }
+
+    private var levelTitle: String {
+        switch entry.level {
+        case .info: "信息"
+        case .success: "成功"
+        case .warning: "警告"
+        case .error: "错误"
         }
     }
 }

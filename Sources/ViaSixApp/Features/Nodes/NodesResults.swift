@@ -8,7 +8,7 @@ extension NodesView {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("候选节点")
                         .font(.headline)
-                    Text("已按测速结果排序，可直接选择节点")
+                    Text(resultsSubtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -19,15 +19,36 @@ extension NodesView {
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .foregroundStyle(.secondary)
 
+                Button(action: copyCandidateIP) {
+                    Image(
+                        systemName: copiedCandidateIP == candidateSelection
+                            ? "checkmark"
+                            : "doc.on.doc"
+                    )
+                }
+                .buttonStyle(.borderless)
+                .help(copiedCandidateIP == candidateSelection ? "已复制" : "复制所选 IP")
+                .accessibilityLabel(
+                    copiedCandidateIP == candidateSelection ? "已复制所选 IP" : "复制所选 IP"
+                )
+                .disabled(candidateSelection == nil)
+
                 if model.switchingIP != nil {
                     ProgressView()
                         .controlSize(.small)
                         .accessibilityLabel("正在切换节点")
                 }
+
+                Button(action: requestCandidateApplication) {
+                    Label(applyButtonTitle, systemImage: "checkmark.circle")
+                }
+                .buttonStyle(.bordered)
+                .tint(VisualStyle.accent)
+                .disabled(applySelectionDisabled)
             }
 
             ZStack {
-                Table(model.state.results, selection: selectedResultBinding) {
+                Table(model.state.results, selection: $candidateSelection) {
                     TableColumn("IP") { result in
                         HStack(spacing: 7) {
                             if result.ip == model.state.preferences.selectedIP {
@@ -80,7 +101,6 @@ extension NodesView {
                     .width(min: 54, ideal: 72)
                 }
                 .frame(height: resultsTableHeight)
-                .disabled(nodeSelectionDisabled)
                 .accessibilityLabel("候选节点")
 
                 if model.state.results.isEmpty {

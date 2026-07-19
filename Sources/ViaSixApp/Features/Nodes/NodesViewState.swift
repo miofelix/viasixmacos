@@ -51,7 +51,7 @@ extension NodesView {
     var speedTestStatusText: String {
         switch model.state.speedTest.phase {
         case .idle:
-            "准备就绪"
+            model.state.results.isEmpty ? "准备就绪" : "上次结果可用"
         case .running:
             model.state.speedTest.total > 0 ? "正在扫描并测试候选 IP" : "正在等待测速进度"
         case .stopping:
@@ -95,24 +95,69 @@ extension NodesView {
         return "已完成 \(model.state.speedTest.current) 项，共 \(model.state.speedTest.total) 项，\(progressPercentage)"
     }
 
-    var selectedResultBinding: Binding<SpeedTestResult.ID?> {
-        Binding {
-            let selectedIP = model.state.preferences.selectedIP
-            guard model.state.results.contains(where: { $0.ip == selectedIP }) else { return nil }
-            return selectedIP
-        } set: { ip in
-            guard let ip else { return }
-            selectIP(ip)
+    var parameterValidationMessage: String? {
+        do {
+            _ = try model.parameters.validated()
+            return nil
+        } catch {
+            return error.localizedDescription
         }
     }
 
-    var nodeSelectionDisabled: Bool {
-        if model.switchingIP != nil { return true }
+    var canStartSpeedTest: Bool {
+        model.state.launchPhase == .ready
+            && model.state.runtimePhase != .installing
+            && model.hasCfstExecutable
+            && parameterValidationMessage == nil
+    }
+
+    var speedTestReadinessMessage: String? {
+        guard model.state.launchPhase == .ready, !model.hasCfstExecutable else { return nil }
+        return "尚未找到 CloudflareSpeedTest，请在设置中安装或指定路径。"
+    }
+
+    var resultsSubtitle: String {
+        guard !model.state.results.isEmpty else {
+            return "完成测速后，候选节点会显示在这里"
+        }
+
+        switch model.state.speedTest.phase {
+        case .running, .stopping:
+            return "测速进行中，当前显示上次成功结果"
+        case .failed:
+            return "本次测速未完成，当前显示上次成功结果"
+        case .idle:
+            return "选择候选节点后，再点击“应用节点”"
+        }
+    }
+
+    var applySelectionDisabled: Bool {
+        guard let candidateSelection else { return true }
+        if candidateSelection == model.state.preferences.selectedIP { return true }
+        if model.switchingIP != nil || isTesting { return true }
+
         switch model.state.xrayPhase {
         case .validating, .starting, .stopping:
             return true
         case .stopped, .running, .failed:
             return false
+        }
+    }
+
+    var applyButtonTitle: String {
+        guard let candidateSelection else { return "应用节点" }
+        if model.switchingIP == candidateSelection { return "正在应用" }
+        if candidateSelection == model.state.preferences.selectedIP { return "已应用" }
+        return model.state.isXrayRunning ? "应用并重连" : "应用节点"
+    }
+
+    var reconnectConfirmationPresented: Binding<Bool> {
+        Binding {
+            reconnectConfirmationIP != nil
+        } set: { isPresented in
+            if !isPresented {
+                reconnectConfirmationIP = nil
+            }
         }
     }
 
@@ -182,9 +227,46 @@ extension NodesView {
         }
     }
 
-    func selectIP(_ ip: String) {
-        guard !nodeSelectionDisabled else { return }
-        model.selectIP(ip)
+    func requestCandidateApplication() {
+        guard let candidateSelection, !applySelectionDisabled else { return }
+        if model.state.isXrayRunning {
+            reconnectConfirmationIP = candidateSelection
+        } else {
+            model.selectIP(candidateSelection)
+        }
+    }
+
+    func copyCandidateIP() {
+        guard let candidateSelection else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(candidateSelection, forType: .string)
+        copiedCandidateIP = candidateSelection
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            if copiedCandidateIP == candidateSelection {
+                copiedCandidateIP = nil
+            }
+        }
+    }
+
+    func syncCandidateSelection() {
+        guard !model.state.results.isEmpty else {
+            candidateSelection = nil
+            return
+        }
+
+        if let candidateSelection,
+            model.state.results.contains(where: { $0.id == candidateSelection })
+        {
+            return
+        }
+
+        let appliedIP = model.state.preferences.selectedIP
+        candidateSelection =
+            model.state.results.contains(where: { $0.id == appliedIP })
+            ? appliedIP
+            : model.state.results.first?.id
     }
 
     func metric(_ value: String) -> String {

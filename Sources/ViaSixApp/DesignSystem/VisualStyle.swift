@@ -15,10 +15,10 @@ struct CardModifier: ViewModifier {
         content
             .background(
                 Color(nsColor: .controlBackgroundColor),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(VisualStyle.surfaceBorder, lineWidth: 1)
             }
     }
