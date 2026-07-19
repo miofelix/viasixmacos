@@ -2,141 +2,168 @@ import SwiftUI
 import ViaSixCore
 
 struct RootView: View {
+    @Environment(AppModel.self) private var model
     @State private var selection: AppSection? = .overview
 
     var body: some View {
         NavigationSplitView {
-            List(AppSection.allCases, selection: $selection) { section in
-                Label(section.title, systemImage: section.systemImage)
-                    .tag(section)
+            VStack(spacing: 0) {
+                List(AppSection.allCases, selection: $selection) { section in
+                    Label(section.title, systemImage: section.systemImage)
+                        .tag(section)
+                }
+                .listStyle(.sidebar)
+
+                Divider()
+
+                HStack(spacing: 9) {
+                    Circle()
+                        .fill(sidebarStatusColor)
+                        .frame(width: 8, height: 8)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(sidebarStatusTitle)
+                            .font(.caption.weight(.semibold))
+                        Text("127.0.0.1:11451")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(14)
             }
             .navigationTitle(AppMetadata.name)
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
         } detail: {
-            ZStack {
+            ZStack(alignment: .bottomTrailing) {
                 VisualStyle.pageBackground
                     .ignoresSafeArea()
 
-                page(for: selection ?? .overview)
-                    .padding(28)
+                detailContent
+                    .padding(26)
+
+                if let notice = model.state.notice {
+                    NoticeView(notice: notice) {
+                        model.clearNotice()
+                    }
+                    .padding(22)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
         }
         .tint(VisualStyle.accent)
-        .frame(minWidth: 960, minHeight: 640)
+        .frame(minWidth: 980, minHeight: 660)
+        .animation(.easeOut(duration: 0.18), value: model.state.notice?.id)
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        switch model.state.launchPhase {
+        case .idle, .loading:
+            VStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("正在准备 ViaSix…")
+                    .font(.headline)
+                Text("初始化应用数据并检查运行组件")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("初始化失败", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("重试", action: model.retryBootstrap)
+                    .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        case .ready:
+            page(for: selection ?? .overview)
+        }
     }
 
     @ViewBuilder
     private func page(for section: AppSection) -> some View {
         switch section {
         case .overview:
-            OverviewPlaceholderView()
+            OverviewView()
         case .nodes:
-            FeaturePlaceholderView(
-                title: "节点优选",
-                subtitle: "Cloudflare IPv4 / IPv6 测速与节点切换",
-                systemImage: "network"
-            )
+            NodesView()
         case .logs:
-            FeaturePlaceholderView(
-                title: "运行日志",
-                subtitle: "测速和 Xray 输出将在这里集中展示",
-                systemImage: "text.alignleft"
-            )
+            LogsView()
         case .settings:
-            SettingsPlaceholderView()
+            SettingsView()
+        }
+    }
+
+    private var sidebarStatusColor: Color {
+        switch model.state.xrayPhase {
+        case .running: .green
+        case .validating, .starting, .stopping: .orange
+        case .failed: .red
+        case .stopped: .secondary
+        }
+    }
+
+    private var sidebarStatusTitle: String {
+        switch model.state.xrayPhase {
+        case .running: "Xray 运行中"
+        case .validating: "正在校验"
+        case .starting: "正在启动"
+        case .stopping: "正在停止"
+        case .failed: "Xray 异常"
+        case .stopped: "Xray 已停止"
         }
     }
 }
 
-private struct OverviewPlaceholderView: View {
+private struct NoticeView: View {
+    let notice: AppNotice
+    let dismiss: () -> Void
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("ViaSix", systemImage: "sparkles")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white.opacity(0.82))
-
-                    Text("让 IPv6 节点优选更简单")
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-
-                    Text("原生测速、智能切换与 Xray 生命周期管理。")
-                        .foregroundStyle(.white.opacity(0.78))
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(30)
-                .background(VisualStyle.banner, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .shadow(color: VisualStyle.secondaryAccent.opacity(0.22), radius: 22, y: 10)
-
-                HStack(spacing: 16) {
-                    StatusCard(title: "代理状态", value: "未启动", systemImage: "power")
-                    StatusCard(title: "当前节点", value: "—", systemImage: "globe.asia.australia")
-                    StatusCard(title: "本地端口", value: "11451", systemImage: "point.3.connected.trianglepath.dotted")
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("项目骨架已就绪")
-                        .font(.headline)
-                    Text("接下来的阶段会加入参数持久化、测速引擎、配置切换、Xray 管理、出口检测和菜单栏控制。")
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(22)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .cardStyle()
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+            Text(notice.message)
+                .font(.callout.weight(.medium))
+                .lineLimit(2)
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption)
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("关闭通知")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(.white.opacity(0.55))
+        }
+        .shadow(color: .black.opacity(0.12), radius: 16, y: 7)
+        .onTapGesture(perform: dismiss)
+    }
+
+    private var color: Color {
+        switch notice.style {
+        case .info: VisualStyle.accent
+        case .success: .green
+        case .error: .red
+        }
+    }
+
+    private var icon: String {
+        switch notice.style {
+        case .info: "info.circle.fill"
+        case .success: "checkmark.circle.fill"
+        case .error: "xmark.circle.fill"
         }
     }
 }
-
-private struct StatusCard: View {
-    let title: String
-    let value: String
-    let systemImage: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Image(systemName: systemImage)
-                .font(.title3)
-                .foregroundStyle(VisualStyle.accent)
-                .frame(width: 38, height: 38)
-                .background(VisualStyle.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 11))
-
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Text(value)
-                .font(.title2.weight(.semibold))
-                .lineLimit(1)
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardStyle()
-    }
-}
-
-private struct FeaturePlaceholderView: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-
-    var body: some View {
-        ContentUnavailableView(title, systemImage: systemImage, description: Text(subtitle))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .cardStyle()
-    }
-}
-
-struct SettingsPlaceholderView: View {
-    var body: some View {
-        ContentUnavailableView(
-            "设置",
-            systemImage: "gearshape",
-            description: Text("运行组件与应用偏好将在后续阶段加入。")
-        )
-        .padding(24)
-    }
-}
-

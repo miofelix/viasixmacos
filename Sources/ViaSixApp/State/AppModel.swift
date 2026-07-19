@@ -39,6 +39,7 @@ final class AppModel {
     @ObservationIgnored private var activeXray: XrayController?
     @ObservationIgnored private var activeXrayID: UUID?
     @ObservationIgnored private var xrayStopRequested = false
+    @ObservationIgnored private var isShuttingDown = false
 
     init(
         paths: AppPaths,
@@ -69,11 +70,17 @@ final class AppModel {
     }
 
     func start() {
-        guard bootstrapTask == nil, state.launchPhase == .idle else { return }
+        guard !isShuttingDown, bootstrapTask == nil, state.launchPhase == .idle else { return }
         state.launchPhase = .loading
         bootstrapTask = Task { [weak self] in
             await self?.bootstrap()
         }
+    }
+
+    func retryBootstrap() {
+        guard case .failed = state.launchPhase, bootstrapTask == nil else { return }
+        state.launchPhase = .idle
+        start()
     }
 
     func installRuntime() {
@@ -247,7 +254,8 @@ final class AppModel {
         }
 
         appendLog(source: .app, level: .success, message: "已切换节点：\(ip)")
-        if shouldRestartXray {
+        if shouldRestartXray, activeXray != nil {
+            state.xrayPhase = .stopping
             do {
                 try await restartActiveXray()
             } catch {
@@ -269,6 +277,8 @@ final class AppModel {
             return
         }
 
+        xrayStopRequested = false
+        state.xrayPhase = .validating
         xrayStartTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -292,7 +302,6 @@ final class AppModel {
                 let controllerID = UUID()
                 activeXray = controller
                 activeXrayID = controllerID
-                xrayStopRequested = false
                 appendLog(source: .xray, message: "正在校验配置并启动 Xray")
 
                 try await controller.start { [weak self] event in
@@ -315,22 +324,48 @@ final class AppModel {
     }
 
     func stopXray() {
-        guard xrayStopTask == nil, let controller = activeXray else { return }
-        let controllerID = activeXrayID
+        guard xrayStopTask == nil else { return }
+        let controller = activeXray
+        let startTask = xrayStartTask
+        guard controller != nil || startTask != nil else { return }
+
         xrayStopRequested = true
         state.xrayPhase = .stopping
         xrayStopTask = Task { [weak self] in
             guard let self else { return }
-            await controller.stop()
-            if activeXrayID == controllerID {
-                activeXray = nil
-                activeXrayID = nil
-                state.xrayPhase = .stopped
-                appendLog(source: .xray, level: .warning, message: "Xray 已停止")
-                showNotice("Xray 已停止")
+            startTask?.cancel()
+            if let controller {
+                await controller.stop()
             }
+            if let startTask {
+                await startTask.value
+            }
+
+            activeXray = nil
+            activeXrayID = nil
+            state.xrayPhase = .stopped
+            appendLog(source: .xray, level: .warning, message: "Xray 已停止")
+            showNotice("Xray 已停止")
             xrayStopRequested = false
             xrayStopTask = nil
+        }
+    }
+
+    func restartXray() {
+        guard state.isXrayRunning,
+              activeXray != nil,
+              xrayStartTask == nil,
+              xrayStopTask == nil else { return }
+        state.xrayPhase = .stopping
+        xrayStartTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await restartActiveXray()
+                showNotice("Xray 已重启", style: .success)
+            } catch {
+                showNotice("Xray 重启失败：\(error.localizedDescription)", style: .error)
+            }
+            xrayStartTask = nil
         }
     }
 
@@ -364,15 +399,30 @@ final class AppModel {
     }
 
     func shutdown() async {
-        saveTask?.cancel()
-        noticeTask?.cancel()
-        detectTask?.cancel()
-        runtimeTask?.cancel()
+        guard !isShuttingDown else { return }
+        isShuttingDown = true
+
+        let pendingTasks = [
+            bootstrapTask,
+            runtimeTask,
+            speedTestTask,
+            saveTask,
+            detectTask,
+            noticeTask,
+            xrayStartTask,
+            xrayStopTask
+        ].compactMap { $0 }
+        pendingTasks.forEach { $0.cancel() }
+
         if let activeRunner {
             await activeRunner.cancel()
         }
         if let activeXray {
             await activeXray.stop()
+        }
+
+        for task in pendingTasks {
+            await task.value
         }
         try? await preferencesStore.save(state.preferences)
     }
