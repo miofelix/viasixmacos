@@ -163,7 +163,17 @@ struct SettingsView: View {
                 )
             }
 
-            if proxyImportDisabled {
+            if let templateOperationStatus {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(templateOperationStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(templateOperationStatus)
+            } else if proxyImportDisabled {
                 Text("请先停止本地代理，再导入或编辑连接配置。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -390,11 +400,23 @@ struct SettingsView: View {
 
     private var proxyImportDisabled: Bool {
         guard model.state.launchPhase == .ready else { return true }
+        guard model.state.templateOperationPhase == .idle else { return true }
         return switch model.state.xrayPhase {
         case .validating, .starting, .running, .stopping:
             true
         case .stopped, .failed:
             false
+        }
+    }
+
+    private var templateOperationStatus: String? {
+        switch model.state.templateOperationPhase {
+        case .idle:
+            nil
+        case .importing:
+            "正在导入代理配置，请稍候…"
+        case .saving:
+            "正在保存代理配置，请稍候…"
         }
     }
 

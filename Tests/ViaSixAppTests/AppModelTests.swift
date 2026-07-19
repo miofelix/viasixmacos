@@ -135,13 +135,67 @@ final class AppModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: paths.root) }
         try paths.prepare()
         let model = makeModel(paths: paths)
+        let openedTemplate = validTemplate()
+        try openedTemplate.write(to: paths.templateConfig, options: .atomic)
         let template = validTemplate(host: "127.0.0.2", port: 18_081)
 
-        try await model.saveXrayTemplate(template)
+        try await model.saveXrayTemplate(template, expectedTemplateData: openedTemplate)
 
         XCTAssertEqual(try Data(contentsOf: paths.templateConfig), template)
         XCTAssertEqual(model.state.proxyEndpoint, ProxyEndpoint(host: "127.0.0.2", port: 18_081))
+        XCTAssertEqual(model.state.templateOperationPhase, .idle)
         XCTAssertTrue(model.state.logs.contains { $0.message == "已保存代理连接模板" })
+        await model.shutdown()
+    }
+
+    func testSaveXrayTemplateRejectsExternalChangeWithoutOverwritingIt() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        let openedTemplate = try Data(contentsOf: paths.templateConfig)
+        let externalTemplate = validTemplate(host: "127.0.0.2", port: 18_082)
+        try externalTemplate.write(to: paths.templateConfig, options: .atomic)
+        let model = makeModel(paths: paths, bootstrapper: bootstrapper)
+
+        do {
+            try await model.saveXrayTemplate(
+                validTemplate(host: "127.0.0.3", port: 18_083),
+                expectedTemplateData: openedTemplate
+            )
+            XCTFail("Expected the externally changed template to be preserved")
+        } catch {
+            XCTAssertEqual(error as? AppModelError, .templateChangedExternally)
+        }
+
+        XCTAssertEqual(try Data(contentsOf: paths.templateConfig), externalTemplate)
+        XCTAssertEqual(model.state.templateOperationPhase, .idle)
+        XCTAssertTrue(model.state.logs.contains { $0.message.contains("已阻止覆盖外部修改") })
+        await model.shutdown()
+    }
+
+    func testTemplateImportPublishesBusyStateAndBlocksConcurrentSave() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        try paths.prepare()
+        let importedTemplate = validTemplate(host: "127.0.0.4", port: 18_084)
+        let importURL = paths.root.appendingPathComponent("imported-template.json")
+        try importedTemplate.write(to: importURL, options: .atomic)
+        let model = makeModel(paths: paths)
+
+        model.importXrayTemplate(from: importURL)
+        XCTAssertEqual(model.state.templateOperationPhase, .importing)
+
+        do {
+            try await model.saveXrayTemplate(validTemplate(port: 11_452))
+            XCTFail("Expected saving to be rejected while a template import is running")
+        } catch {
+            XCTAssertEqual(error as? AppModelError, .templateOperationInProgress)
+        }
+
+        try await waitUntil { model.state.templateOperationPhase == .idle }
+        XCTAssertEqual(try Data(contentsOf: paths.templateConfig), importedTemplate)
+        XCTAssertEqual(model.state.proxyEndpoint, ProxyEndpoint(host: "127.0.0.4", port: 18_084))
         await model.shutdown()
     }
 
@@ -170,6 +224,7 @@ final class AppModelTests: XCTestCase {
             try await model.saveXrayTemplate(validTemplate())
         }
         try await waitForTemplateRequest(replacer)
+        XCTAssertEqual(model.state.templateOperationPhase, .saving)
 
         do {
             try await model.saveXrayTemplate(validTemplate(port: 11_452))
@@ -189,6 +244,7 @@ final class AppModelTests: XCTestCase {
         }
         let requestCount = await replacer.requestCount
         XCTAssertEqual(requestCount, 1)
+        XCTAssertEqual(model.state.templateOperationPhase, .idle)
         XCTAssertFalse(model.state.logs.contains { $0.message.contains("保存代理配置失败") })
     }
 
@@ -526,7 +582,11 @@ final class AppModelTests: XCTestCase {
 private actor SuspendedTemplateReplacer: XrayTemplateReplacing {
     private(set) var requestCount = 0
 
-    func replaceTemplate(with _: Data, selectedIP _: String?) async throws -> ProxyEndpoint {
+    func replaceTemplate(
+        with _: Data,
+        selectedIP _: String?,
+        expectedTemplateData _: Data?
+    ) async throws -> ProxyEndpoint {
         requestCount += 1
         try await Task.sleep(for: .seconds(30))
         return ProxyEndpoint()

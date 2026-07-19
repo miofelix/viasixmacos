@@ -33,6 +33,12 @@ struct AppState: Equatable, Sendable {
         case failed(String)
     }
 
+    enum TemplateOperationPhase: Equatable, Sendable {
+        case idle
+        case importing
+        case saving
+    }
+
     struct SpeedTestState: Equatable, Sendable {
         var phase: SpeedTestPhase = .idle
         var current = 0
@@ -79,6 +85,7 @@ struct AppState: Equatable, Sendable {
     var speedTest = SpeedTestState()
     var configurationTest = ConfigurationTestState()
     var xrayPhase: XrayPhase = .stopped
+    var templateOperationPhase: TemplateOperationPhase = .idle
     var proxyEndpoint = ProxyEndpoint()
     var exit = ExitState()
     var logs: [AppLogEntry] = []
