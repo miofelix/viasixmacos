@@ -109,7 +109,7 @@ final class RuntimeOperationStateTests: XCTestCase {
                 archiveFormat: .zip,
                 downloadURL: URL(string: "https://example.invalid/cfst.zip")!,
                 sha256: sha256,
-                payloadFiles: [.cfst]
+                payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
             ),
             RuntimeAsset(
                 component: .xray,
@@ -119,7 +119,11 @@ final class RuntimeOperationStateTests: XCTestCase {
                 archiveFormat: .zip,
                 downloadURL: URL(string: "https://example.invalid/xray.zip")!,
                 sha256: sha256,
-                payloadFiles: [.xray, .geoIP, .geoSite]
+                payloadExpectations: [
+                    RuntimePayloadExpectation(file: .xray),
+                    RuntimePayloadExpectation(file: .geoIP),
+                    RuntimePayloadExpectation(file: .geoSite),
+                ]
             ),
         ])
     }

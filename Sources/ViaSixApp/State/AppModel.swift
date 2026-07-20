@@ -336,7 +336,7 @@ final class AppModel {
         else { return }
         let operationID = UUID()
         activeRuntimeOperationID = operationID
-        state.runtimeOperation = .installing(.resolvingLatestReleases)
+        state.runtimeOperation = .installing(.preparingInstallation)
         state.runtimeOperationError = nil
         appendLog(source: .app, message: "正在下载并校验运行组件…")
 

@@ -100,7 +100,7 @@ public typealias RuntimeArchiveExtractor =
 public typealias RuntimeInstallationStageHandler = @Sendable (RuntimeInstallationStage) async -> Void
 
 public enum RuntimeInstallationStage: Equatable, Sendable {
-    case resolvingLatestReleases
+    case preparingInstallation
     case downloading(RuntimeComponent)
     case verifying(RuntimeComponent)
     case extracting(RuntimeComponent)
@@ -109,10 +109,11 @@ public enum RuntimeInstallationStage: Equatable, Sendable {
 
 public enum RuntimeComponentError: LocalizedError, Equatable, Sendable {
     case missingManifestAsset(RuntimeComponent, RuntimeArchitecture)
-    case missingLatestRelease(RuntimeComponent)
-    case invalidLatestRelease(RuntimeComponent)
-    case missingLatestReleaseAsset(RuntimeComponent, String)
-    case missingLatestReleaseDigest(RuntimeComponent, String)
+    case invalidPayloadExpectations(
+        RuntimeComponent,
+        expected: [RuntimePayloadFile],
+        actual: [RuntimePayloadFile]
+    )
     case sourceNotFound(URL)
     case sourceIsNotFileOrDirectory(URL)
     case noPayloadFiles([URL])
@@ -132,6 +133,8 @@ public enum RuntimeComponentError: LocalizedError, Equatable, Sendable {
     case invalidDownloadResponse(URL)
     case httpStatus(Int, URL)
     case checksumMismatch(archiveName: String, expected: String, actual: String)
+    case payloadByteCountMismatch(RuntimePayloadFile, expected: Int64, actual: Int64)
+    case payloadChecksumMismatch(RuntimePayloadFile, expected: String, actual: String)
     case extractionFailed(archiveName: String, status: Int32, output: String)
     case extractionTimedOut(archiveName: String)
     case invalidRuntimeDirectory(URL)
@@ -141,14 +144,10 @@ public enum RuntimeComponentError: LocalizedError, Equatable, Sendable {
         switch self {
         case .missingManifestAsset(let component, let architecture):
             return "缺少 \(component.rawValue) 的 \(architecture.rawValue) 运行组件清单。"
-        case .missingLatestRelease(let component):
-            return "未能解析 \(component.displayName) 的最新正式版本。"
-        case .invalidLatestRelease(let component):
-            return "\(component.displayName) 的 GitHub 最新版本信息无效。"
-        case .missingLatestReleaseAsset(let component, let archiveName):
-            return "\(component.displayName) 的最新版本缺少当前 Mac 所需的 \(archiveName)。"
-        case .missingLatestReleaseDigest(let component, let archiveName):
-            return "\(component.displayName) 的 \(archiveName) 未提供可用的 SHA-256 校验值。"
+        case .invalidPayloadExpectations(let component, let expected, let actual):
+            let expectedNames = expected.map(\.rawValue).joined(separator: ", ")
+            let actualNames = actual.map(\.rawValue).joined(separator: ", ")
+            return "\(component.rawValue) 的运行组件文件声明无效，必须且只能包含 \(expectedNames)（实际：\(actualNames)）。"
         case .sourceNotFound(let url):
             return "本地路径不存在：\(url.path)"
         case .sourceIsNotFileOrDirectory(let url):
@@ -175,6 +174,10 @@ public enum RuntimeComponentError: LocalizedError, Equatable, Sendable {
             return "下载失败（HTTP \(status)）：\(url.absoluteString)"
         case .checksumMismatch(let archiveName, let expected, let actual):
             return "\(archiveName) 的 SHA256 校验失败，预期 \(expected)，实际 \(actual)。"
+        case .payloadByteCountMismatch(let payload, let expected, let actual):
+            return "运行组件文件 \(payload.rawValue) 大小校验失败，预期 \(expected) 字节，实际 \(actual) 字节。"
+        case .payloadChecksumMismatch(let payload, let expected, let actual):
+            return "运行组件文件 \(payload.rawValue) 的 SHA256 校验失败，预期 \(expected)，实际 \(actual)。"
         case .extractionFailed(let archiveName, let status, let output):
             return "解压 \(archiveName) 失败（退出码 \(status)）：\(output)"
         case .extractionTimedOut(let archiveName):
@@ -204,7 +207,6 @@ public actor RuntimeComponentManager {
 
     private let downloadHandler: RuntimeDownloadHandler
     private let archiveExtractor: RuntimeArchiveExtractor
-    private let releaseResolver: RuntimeReleaseResolver?
     private var operationInProgress = false
 
     public init(
@@ -215,7 +217,6 @@ public actor RuntimeComponentManager {
         self.manifest = manifest
         self.downloadHandler = Self.downloadUsingURLSession
         self.archiveExtractor = Self.extractArchive
-        self.releaseResolver = RuntimeReleaseResolver()
     }
 
     public init(
@@ -235,7 +236,6 @@ public actor RuntimeComponentManager {
         self.manifest = manifest
         self.downloadHandler = downloadHandler
         self.archiveExtractor = archiveExtractor
-        self.releaseResolver = nil
     }
 
     public func installedStatus() -> RuntimeInstallationStatus {
@@ -320,21 +320,9 @@ public actor RuntimeComponentManager {
                 current: .current
             )
         }
-        await onStage(.resolvingLatestReleases)
+        await onStage(.preparingInstallation)
         try Task.checkCancellation()
-        let assets: [RuntimeAsset]
-        if let releaseResolver {
-            // Live managers fail closed when GitHub's latest-release metadata
-            // cannot be resolved.  Do not silently fall back to the pinned
-            // manifest: that would make the default "安装" action install an
-            // older component while presenting it as the latest release.
-            assets = try await releaseResolver.latestAssets(for: architecture)
-        } else {
-            // The deterministic manifest path is reserved for managers whose
-            // downloader/extractor were explicitly injected (tests/offline
-            // integration).  Production initializers always provide a resolver.
-            assets = try assetsForInstallation(architecture: architecture)
-        }
+        let assets = try assetsForInstallation(architecture: architecture)
         try Task.checkCancellation()
         let fileManager = FileManager.default
         let workspace = transactionDirectory(prefix: "download")
@@ -378,6 +366,11 @@ public actor RuntimeComponentManager {
             guard missingFiles.isEmpty else {
                 throw RuntimeComponentError.missingArchivePayload(asset.component, missingFiles)
             }
+            try Self.validatePayloadExpectations(
+                asset.payloadExpectations,
+                for: asset.component,
+                discoveredFiles: discovered
+            )
             for payload in asset.component.payloadFiles {
                 payloadFiles[payload] = discovered[payload]
             }
@@ -443,7 +436,61 @@ public actor RuntimeComponentManager {
             guard let asset = manifest.asset(for: component, architecture: architecture) else {
                 throw RuntimeComponentError.missingManifestAsset(component, architecture)
             }
+            let expectedPayloads = component.payloadFiles.sorted { $0.rawValue < $1.rawValue }
+            let actualPayloads = asset.payloadExpectations.map(\.file)
+                .sorted { $0.rawValue < $1.rawValue }
+            guard actualPayloads == expectedPayloads else {
+                throw RuntimeComponentError.invalidPayloadExpectations(
+                    component,
+                    expected: expectedPayloads,
+                    actual: actualPayloads
+                )
+            }
             return asset
+        }
+    }
+
+    private static func validatePayloadExpectations(
+        _ expectations: [RuntimePayloadExpectation],
+        for component: RuntimeComponent,
+        discoveredFiles: [RuntimePayloadFile: URL]
+    ) throws {
+        let requiredFiles = Set(component.payloadFiles)
+        for expectation in expectations where requiredFiles.contains(expectation.file) {
+            try Task.checkCancellation()
+            guard let fileURL = discoveredFiles[expectation.file] else {
+                throw RuntimeComponentError.missingArchivePayload(component, [expectation.file])
+            }
+            let values = try fileURL.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isSymbolicLinkKey,
+                .fileSizeKey,
+            ])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw RuntimeComponentError.invalidPayload(expectation.file)
+            }
+
+            let actualByteCount = Int64(values.fileSize ?? 0)
+            if let expectedByteCount = expectation.byteCount,
+                actualByteCount != expectedByteCount
+            {
+                throw RuntimeComponentError.payloadByteCountMismatch(
+                    expectation.file,
+                    expected: expectedByteCount,
+                    actual: actualByteCount
+                )
+            }
+
+            if let expectedSHA256 = expectation.sha256 {
+                let actualSHA256 = try RuntimeSHA256.hexDigest(ofFileAt: fileURL)
+                guard actualSHA256 == expectedSHA256 else {
+                    throw RuntimeComponentError.payloadChecksumMismatch(
+                        expectation.file,
+                        expected: expectedSHA256,
+                        actual: actualSHA256
+                    )
+                }
+            }
         }
     }
 

@@ -35,7 +35,7 @@ final class RuntimeComponentCancellationTests: XCTestCase {
         XCTAssertEqual(
             stages,
             [
-                .resolvingLatestReleases,
+                .preparingInstallation,
                 .downloading(.cfst),
                 .verifying(.cfst),
                 .extracting(.cfst),
@@ -159,7 +159,7 @@ final class RuntimeComponentCancellationTests: XCTestCase {
                 archiveFormat: .zip,
                 downloadURL: URL(string: "https://example.invalid/cfst.zip")!,
                 sha256: digest,
-                payloadFiles: [.cfst]
+                payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
             ),
             RuntimeAsset(
                 component: .xray,
@@ -169,7 +169,11 @@ final class RuntimeComponentCancellationTests: XCTestCase {
                 archiveFormat: .zip,
                 downloadURL: URL(string: "https://example.invalid/xray.zip")!,
                 sha256: digest,
-                payloadFiles: [.xray, .geoIP, .geoSite]
+                payloadExpectations: [
+                    RuntimePayloadExpectation(file: .xray),
+                    RuntimePayloadExpectation(file: .geoIP),
+                    RuntimePayloadExpectation(file: .geoSite),
+                ]
             ),
         ])
         let manager = RuntimeComponentManager(
@@ -242,7 +246,7 @@ final class RuntimeComponentCancellationTests: XCTestCase {
                 archiveFormat: .zip,
                 downloadURL: URL(string: "https://example.invalid/cfst.zip")!,
                 sha256: sha256,
-                payloadFiles: [.cfst]
+                payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
             ),
             RuntimeAsset(
                 component: .xray,
@@ -252,7 +256,11 @@ final class RuntimeComponentCancellationTests: XCTestCase {
                 archiveFormat: .zip,
                 downloadURL: URL(string: "https://example.invalid/xray.zip")!,
                 sha256: sha256,
-                payloadFiles: [.xray, .geoIP, .geoSite]
+                payloadExpectations: [
+                    RuntimePayloadExpectation(file: .xray),
+                    RuntimePayloadExpectation(file: .geoIP),
+                    RuntimePayloadExpectation(file: .geoSite),
+                ]
             ),
         ])
     }

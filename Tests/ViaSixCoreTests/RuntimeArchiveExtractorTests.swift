@@ -95,7 +95,11 @@ final class RuntimeArchiveExtractorTests: XCTestCase {
                 archiveFormat: .zip,
                 downloadURL: URL(string: "https://example.invalid/xray-runtime.zip")!,
                 sha256: digest,
-                payloadFiles: [.xray, .geoIP, .geoSite]
+                payloadExpectations: [
+                    RuntimePayloadExpectation(file: .xray),
+                    RuntimePayloadExpectation(file: .geoIP),
+                    RuntimePayloadExpectation(file: .geoSite),
+                ]
             ),
         ])
         let manager = RuntimeComponentManager(
@@ -153,7 +157,11 @@ final class RuntimeArchiveExtractorTests: XCTestCase {
                 archiveFormat: .zip,
                 downloadURL: URL(string: "https://example.invalid/xray-runtime.zip")!,
                 sha256: digest,
-                payloadFiles: [.xray, .geoIP, .geoSite]
+                payloadExpectations: [
+                    RuntimePayloadExpectation(file: .xray),
+                    RuntimePayloadExpectation(file: .geoIP),
+                    RuntimePayloadExpectation(file: .geoSite),
+                ]
             ),
         ])
         let manager = RuntimeComponentManager(
@@ -208,7 +216,7 @@ final class RuntimeArchiveExtractorTests: XCTestCase {
             archiveFormat: archiveFormat,
             downloadURL: URL(string: "https://example.invalid/\(archiveName)")!,
             sha256: sha256,
-            payloadFiles: [.cfst]
+            payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
         )
     }
 

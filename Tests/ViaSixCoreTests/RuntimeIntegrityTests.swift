@@ -155,22 +155,26 @@ final class RuntimeIntegrityTests: XCTestCase {
             RuntimeAsset(
                 component: .cfst,
                 version: "test",
-                architecture: .arm64,
+                architecture: .current,
                 archiveName: "cfst.zip",
                 archiveFormat: .zip,
                 downloadURL: URL(string: "https://example.invalid/cfst.zip")!,
                 sha256: digest,
-                payloadFiles: [.cfst]
+                payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
             ),
             RuntimeAsset(
                 component: .xray,
                 version: "test",
-                architecture: .arm64,
+                architecture: .current,
                 archiveName: "xray.zip",
                 archiveFormat: .zip,
                 downloadURL: URL(string: "https://example.invalid/xray.zip")!,
                 sha256: digest,
-                payloadFiles: [.xray]
+                payloadExpectations: [
+                    RuntimePayloadExpectation(file: .xray),
+                    RuntimePayloadExpectation(file: .geoIP),
+                    RuntimePayloadExpectation(file: .geoSite),
+                ]
             ),
         ])
         let manager = RuntimeComponentManager(
@@ -190,7 +194,7 @@ final class RuntimeIntegrityTests: XCTestCase {
         )
 
         do {
-            _ = try await manager.downloadAndInstall(architecture: .arm64)
+            _ = try await manager.downloadAndInstall(architecture: .current)
             XCTFail("Expected missing geo assets to be rejected")
         } catch let error as RuntimeComponentError {
             XCTAssertEqual(
@@ -199,6 +203,220 @@ final class RuntimeIntegrityTests: XCTestCase {
             )
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: runtimeURL.path))
+    }
+
+    func testManifestRequiresExactlyOneExpectationForEveryComponentPayload() async throws {
+        let root = makeRoot()
+        let runtimeURL = root.appendingPathComponent("Runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let digest = String(repeating: "0", count: 64)
+        let manifest = RuntimeManifest(assets: [
+            RuntimeAsset(
+                component: .cfst,
+                version: "test",
+                architecture: .current,
+                archiveName: "cfst.zip",
+                archiveFormat: .zip,
+                downloadURL: URL(string: "https://example.invalid/cfst.zip")!,
+                sha256: digest,
+                payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
+            ),
+            RuntimeAsset(
+                component: .xray,
+                version: "test",
+                architecture: .current,
+                archiveName: "xray.zip",
+                archiveFormat: .zip,
+                downloadURL: URL(string: "https://example.invalid/xray.zip")!,
+                sha256: digest,
+                payloadExpectations: [RuntimePayloadExpectation(file: .xray)]
+            ),
+        ])
+        let manager = RuntimeComponentManager(
+            runtimeDirectory: runtimeURL,
+            manifest: manifest,
+            downloadHandler: { _ in
+                XCTFail("Invalid manifest must be rejected before any download")
+                throw CancellationError()
+            },
+            archiveExtractor: { _, _, _ in
+                XCTFail("Invalid manifest must be rejected before extraction")
+            }
+        )
+
+        do {
+            _ = try await manager.downloadAndInstall(architecture: .current)
+            XCTFail("Expected incomplete payload expectations to be rejected")
+        } catch let error as RuntimeComponentError {
+            XCTAssertEqual(
+                error,
+                .invalidPayloadExpectations(
+                    .xray,
+                    expected: RuntimeComponent.xray.payloadFiles.sorted {
+                        $0.rawValue < $1.rawValue
+                    },
+                    actual: [.xray]
+                )
+            )
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: runtimeURL.path))
+    }
+
+    func testPayloadByteCountMismatchPreservesExistingRuntime() async throws {
+        let root = makeRoot()
+        let archiveURL = root.appendingPathComponent("archive")
+        let runtimeURL = root.appendingPathComponent("Runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try makeReadyRuntime(at: runtimeURL, marker: "existing")
+
+        let archiveData = Data("archive fixture".utf8)
+        let cfstData = executableScript(marker: "replacement-cfst")
+        try archiveData.write(to: archiveURL)
+        let expectedByteCount = Int64(cfstData.count + 1)
+        let manager = RuntimeComponentManager(
+            runtimeDirectory: runtimeURL,
+            manifest: makeDownloadManifest(
+                archiveData: archiveData,
+                cfstExpectation: RuntimePayloadExpectation(
+                    file: .cfst,
+                    byteCount: expectedByteCount,
+                    sha256: RuntimeSHA256.hexDigest(of: cfstData)
+                )
+            ),
+            downloadHandler: { _ in
+                RuntimeDownloadedFile(fileURL: archiveURL, statusCode: 200)
+            },
+            archiveExtractor: { asset, _, destinationURL in
+                try writeIntegrityPayloads(
+                    for: asset.component,
+                    cfstData: cfstData,
+                    to: destinationURL
+                )
+            }
+        )
+
+        do {
+            _ = try await manager.downloadAndInstall(architecture: .current)
+            XCTFail("Expected payload byte-count mismatch")
+        } catch let error as RuntimeComponentError {
+            XCTAssertEqual(
+                error,
+                .payloadByteCountMismatch(
+                    .cfst,
+                    expected: expectedByteCount,
+                    actual: Int64(cfstData.count)
+                )
+            )
+        }
+
+        let status = await manager.installedStatus()
+        XCTAssertTrue(status.isReady)
+        for payload in RuntimePayloadFile.allCases {
+            XCTAssertEqual(
+                try Data(contentsOf: runtimeURL.appendingPathComponent(payload.rawValue)),
+                integrityRuntimeFixtureData(for: payload, marker: "existing")
+            )
+        }
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            .filter { $0.hasPrefix(".Runtime-download-") || $0.hasPrefix(".Runtime-install-") }
+        XCTAssertTrue(leftovers.isEmpty, "Unexpected transaction leftovers: \(leftovers)")
+    }
+
+    func testPayloadSHA256MismatchRejectsInstallation() async throws {
+        let root = makeRoot()
+        let archiveURL = root.appendingPathComponent("archive")
+        let runtimeURL = root.appendingPathComponent("Runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let archiveData = Data("archive fixture".utf8)
+        let cfstData = executableScript(marker: "replacement-cfst")
+        let expectedSHA256 = String(repeating: "0", count: 64)
+        try archiveData.write(to: archiveURL)
+        let manager = RuntimeComponentManager(
+            runtimeDirectory: runtimeURL,
+            manifest: makeDownloadManifest(
+                archiveData: archiveData,
+                cfstExpectation: RuntimePayloadExpectation(
+                    file: .cfst,
+                    byteCount: Int64(cfstData.count),
+                    sha256: expectedSHA256
+                )
+            ),
+            downloadHandler: { _ in
+                RuntimeDownloadedFile(fileURL: archiveURL, statusCode: 200)
+            },
+            archiveExtractor: { asset, _, destinationURL in
+                try writeIntegrityPayloads(
+                    for: asset.component,
+                    cfstData: cfstData,
+                    to: destinationURL
+                )
+            }
+        )
+
+        do {
+            _ = try await manager.downloadAndInstall(architecture: .current)
+            XCTFail("Expected payload SHA-256 mismatch")
+        } catch let error as RuntimeComponentError {
+            XCTAssertEqual(
+                error,
+                .payloadChecksumMismatch(
+                    .cfst,
+                    expected: expectedSHA256,
+                    actual: RuntimeSHA256.hexDigest(of: cfstData)
+                )
+            )
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: runtimeURL.path))
+    }
+
+    func testMatchingPayloadIntegrityUsesOnlyPinnedManifestAssetURLs() async throws {
+        let root = makeRoot()
+        let archiveURL = root.appendingPathComponent("archive")
+        let runtimeURL = root.appendingPathComponent("Runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let archiveData = Data("archive fixture".utf8)
+        let cfstData = executableScript(marker: "verified-cfst")
+        try archiveData.write(to: archiveURL)
+        let manifest = makeDownloadManifest(
+            archiveData: archiveData,
+            cfstExpectation: RuntimePayloadExpectation(
+                file: .cfst,
+                byteCount: Int64(cfstData.count),
+                sha256: RuntimeSHA256.hexDigest(of: cfstData)
+            )
+        )
+        let recorder = RuntimeDownloadURLRecorder()
+        let manager = RuntimeComponentManager(
+            runtimeDirectory: runtimeURL,
+            manifest: manifest,
+            downloadHandler: { url in
+                await recorder.append(url)
+                return RuntimeDownloadedFile(fileURL: archiveURL, statusCode: 200)
+            },
+            archiveExtractor: { asset, _, destinationURL in
+                try writeIntegrityPayloads(
+                    for: asset.component,
+                    cfstData: cfstData,
+                    to: destinationURL
+                )
+            }
+        )
+
+        let status = try await manager.downloadAndInstall(architecture: .current)
+
+        XCTAssertTrue(status.isReady)
+        let requestedURLs = await recorder.urls
+        XCTAssertEqual(requestedURLs, manifest.assets(for: .current).map(\.downloadURL))
+        XCTAssertEqual(
+            try Data(contentsOf: runtimeURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue)),
+            cfstData
+        )
     }
 
     func testInstallationRejectsNonCurrentArchitectureBeforeResolvingAssets() async throws {
@@ -226,6 +444,50 @@ final class RuntimeIntegrityTests: XCTestCase {
     private func makeRoot() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("ViaSix-RuntimeIntegrity-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private func makeDownloadManifest(
+        archiveData: Data,
+        cfstExpectation: RuntimePayloadExpectation
+    ) -> RuntimeManifest {
+        let digest = RuntimeSHA256.hexDigest(of: archiveData)
+        return RuntimeManifest(assets: [
+            RuntimeAsset(
+                component: .cfst,
+                version: "pinned-cfst",
+                architecture: .current,
+                archiveName: "cfst.zip",
+                archiveFormat: .zip,
+                downloadURL: URL(string: "https://downloads.example.invalid/pinned/cfst.zip")!,
+                sha256: digest,
+                payloadExpectations: [cfstExpectation]
+            ),
+            RuntimeAsset(
+                component: .xray,
+                version: "pinned-xray",
+                architecture: .current,
+                archiveName: "xray.zip",
+                archiveFormat: .zip,
+                downloadURL: URL(string: "https://downloads.example.invalid/pinned/xray.zip")!,
+                sha256: digest,
+                payloadExpectations: [
+                    RuntimePayloadExpectation(file: .xray),
+                    RuntimePayloadExpectation(file: .geoIP),
+                    RuntimePayloadExpectation(file: .geoSite),
+                ]
+            ),
+        ])
+    }
+
+    private func makeReadyRuntime(at runtimeURL: URL, marker: String) throws {
+        try FileManager.default.createDirectory(at: runtimeURL, withIntermediateDirectories: true)
+        for payload in RuntimePayloadFile.allCases {
+            let fileURL = runtimeURL.appendingPathComponent(payload.rawValue)
+            try integrityRuntimeFixtureData(for: payload, marker: marker).write(to: fileURL)
+            if payload.requiresExecutablePermission {
+                try makeExecutable(fileURL)
+            }
+        }
     }
 
     private func makeExecutable(_ url: URL) throws {
@@ -291,4 +553,38 @@ final class RuntimeIntegrityTests: XCTestCase {
         data.append(UInt8(truncatingIfNeeded: value >> 8))
         data.append(UInt8(truncatingIfNeeded: value))
     }
+}
+
+private actor RuntimeDownloadURLRecorder {
+    private(set) var urls: [URL] = []
+
+    func append(_ url: URL) {
+        urls.append(url)
+    }
+}
+
+private func writeIntegrityPayloads(
+    for component: RuntimeComponent,
+    cfstData: Data,
+    to destinationURL: URL
+) throws {
+    switch component {
+    case .cfst:
+        try cfstData.write(to: destinationURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue))
+    case .xray:
+        for payload in [RuntimePayloadFile.xray, .geoIP, .geoSite] {
+            try integrityRuntimeFixtureData(for: payload, marker: "replacement")
+                .write(to: destinationURL.appendingPathComponent(payload.rawValue))
+        }
+    }
+}
+
+private func integrityRuntimeFixtureData(
+    for payload: RuntimePayloadFile,
+    marker: String
+) -> Data {
+    if payload.requiresExecutablePermission {
+        return Data("#!/bin/sh\n# \(marker)-\(payload.rawValue)\nexit 0\n".utf8)
+    }
+    return Data("\(marker)-\(payload.rawValue)".utf8)
 }

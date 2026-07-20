@@ -28,8 +28,8 @@ struct AppState: Equatable, Sendable {
 
         var description: String {
             switch self {
-            case .installing(.resolvingLatestReleases):
-                "正在查询上游最新正式版本"
+            case .installing(.preparingInstallation):
+                "正在准备安装运行组件"
             case .installing(.downloading(let component)):
                 "正在下载 \(component.displayName)"
             case .installing(.verifying(let component)):

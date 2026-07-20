@@ -5,8 +5,6 @@ import XCTest
 
 final class RuntimeNetworkTests: XCTestCase {
     func testLiveRuntimeNetworkPolicyHasFiniteDeadlines() {
-        XCTAssertEqual(RuntimeNetworkPolicy.releaseRequestTimeout, 20)
-        XCTAssertEqual(RuntimeNetworkPolicy.releaseResourceTimeout, 45)
         XCTAssertEqual(RuntimeNetworkPolicy.downloadRequestTimeout, 30)
         XCTAssertEqual(RuntimeNetworkPolicy.downloadResourceTimeout, 600)
 
@@ -18,56 +16,6 @@ final class RuntimeNetworkTests: XCTestCase {
         XCTAssertEqual(session.configuration.timeoutIntervalForRequest, 30)
         XCTAssertEqual(session.configuration.timeoutIntervalForResource, 600)
         XCTAssertFalse(session.configuration.waitsForConnectivity)
-    }
-
-    func testReleaseMetadataUsesTheConfiguredResourceDeadline() async throws {
-        let session = makeStallingSession(requestTimeout: 30, resourceTimeout: 0.15)
-        defer { session.invalidateAndCancel() }
-        StallingURLProtocol.recorder.reset()
-
-        let clock = ContinuousClock()
-        let startedAt = clock.now
-        do {
-            _ = try await RuntimeReleaseResolver.loadUsingURLSession(
-                URL(string: "https://example.invalid/release")!,
-                using: session
-            )
-            XCTFail("Expected the stalled metadata request to time out")
-        } catch let error as URLError {
-            XCTAssertEqual(error.code, .timedOut)
-        }
-
-        XCTAssertLessThan(startedAt.duration(to: clock.now), .seconds(2))
-        try await waitUntil { StallingURLProtocol.recorder.hasStopped }
-    }
-
-    func testCancellingReleaseMetadataStopsTheUnderlyingRequest() async throws {
-        let session = makeStallingSession(requestTimeout: 30, resourceTimeout: 30)
-        defer { session.invalidateAndCancel() }
-        StallingURLProtocol.recorder.reset()
-
-        let task = Task {
-            try await RuntimeReleaseResolver.loadUsingURLSession(
-                URL(string: "https://example.invalid/release")!,
-                using: session
-            )
-        }
-        try await waitUntil { StallingURLProtocol.recorder.hasStarted }
-        let clock = ContinuousClock()
-        let startedAt = clock.now
-        task.cancel()
-
-        do {
-            _ = try await task.value
-            XCTFail("Expected cancellation")
-        } catch {
-            let isCancelled =
-                error is CancellationError
-                || (error as? URLError)?.code == .cancelled
-            XCTAssertTrue(isCancelled, "Unexpected cancellation error: \(error)")
-        }
-        XCTAssertLessThan(startedAt.duration(to: clock.now), .seconds(2))
-        try await waitUntil { StallingURLProtocol.recorder.hasStopped }
     }
 
     func testCancellingRuntimeArchiveDownloadStopsTheUnderlyingRequest() async throws {

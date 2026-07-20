@@ -34,21 +34,6 @@ public enum RuntimeComponent: String, CaseIterable, Codable, Hashable, Sendable 
         }
     }
 
-    var latestReleaseAPIURL: URL {
-        URL(
-            string: "https://api.github.com/repos\(repositoryURL.path)/releases/latest"
-        )!
-    }
-
-    func archiveName(for architecture: RuntimeArchitecture) -> String {
-        switch (self, architecture) {
-        case (.cfst, .arm64): "cfst_darwin_arm64.zip"
-        case (.cfst, .x8664): "cfst_darwin_amd64.zip"
-        case (.xray, .arm64): "Xray-macos-arm64-v8a.zip"
-        case (.xray, .x8664): "Xray-macos-64.zip"
-        }
-    }
-
     var payloadFiles: [RuntimePayloadFile] {
         switch self {
         case .cfst: [.cfst]
@@ -87,6 +72,22 @@ public enum RuntimeArchiveFormat: Codable, Equatable, Hashable, Sendable {
     case gzip(output: RuntimePayloadFile)
 }
 
+public struct RuntimePayloadExpectation: Codable, Equatable, Hashable, Sendable {
+    public let file: RuntimePayloadFile
+    public let byteCount: Int64?
+    public let sha256: String?
+
+    public init(
+        file: RuntimePayloadFile,
+        byteCount: Int64? = nil,
+        sha256: String? = nil
+    ) {
+        self.file = file
+        self.byteCount = byteCount
+        self.sha256 = sha256?.lowercased()
+    }
+}
+
 public struct RuntimeAsset: Codable, Equatable, Hashable, Sendable {
     public let component: RuntimeComponent
     public let version: String
@@ -95,7 +96,7 @@ public struct RuntimeAsset: Codable, Equatable, Hashable, Sendable {
     public let archiveFormat: RuntimeArchiveFormat
     public let downloadURL: URL
     public let sha256: String
-    public let payloadFiles: [RuntimePayloadFile]
+    public let payloadExpectations: [RuntimePayloadExpectation]
 
     public init(
         component: RuntimeComponent,
@@ -105,7 +106,7 @@ public struct RuntimeAsset: Codable, Equatable, Hashable, Sendable {
         archiveFormat: RuntimeArchiveFormat,
         downloadURL: URL,
         sha256: String,
-        payloadFiles: [RuntimePayloadFile]
+        payloadExpectations: [RuntimePayloadExpectation]
     ) {
         self.component = component
         self.version = version
@@ -114,7 +115,7 @@ public struct RuntimeAsset: Codable, Equatable, Hashable, Sendable {
         self.archiveFormat = archiveFormat
         self.downloadURL = downloadURL
         self.sha256 = sha256.lowercased()
-        self.payloadFiles = payloadFiles
+        self.payloadExpectations = payloadExpectations
     }
 }
 
@@ -155,7 +156,13 @@ public struct RuntimeManifest: Equatable, Sendable {
                     string: "https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.5/cfst_darwin_arm64.zip"
                 )!,
                 sha256: "0623f6d24c939e3d3716f556f4d39c7b8781cf6600ee838a1b64e6b2fe4609dc",
-                payloadFiles: [.cfst]
+                payloadExpectations: [
+                    RuntimePayloadExpectation(
+                        file: .cfst,
+                        byteCount: 7_739_890,
+                        sha256: "c98628414b8812a78c36de0b7fd50066a9fda57347658c212f32f9796dea064a"
+                    )
+                ]
             ),
             RuntimeAsset(
                 component: .cfst,
@@ -167,7 +174,13 @@ public struct RuntimeManifest: Equatable, Sendable {
                     string: "https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.5/cfst_darwin_amd64.zip"
                 )!,
                 sha256: "66ce3ae89430e851cab9710d54b6d91324e0aae255f0c92a91072d57724561d5",
-                payloadFiles: [.cfst]
+                payloadExpectations: [
+                    RuntimePayloadExpectation(
+                        file: .cfst,
+                        byteCount: 8_151_056,
+                        sha256: "899f2db79f3a68d60d35dbaf7f0c34ccbbe3c3ef06d9c8db1a411f99df91c9bf"
+                    )
+                ]
             ),
             RuntimeAsset(
                 component: .xray,
@@ -179,7 +192,11 @@ public struct RuntimeManifest: Equatable, Sendable {
                     string: "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-macos-arm64-v8a.zip"
                 )!,
                 sha256: "2e93a67e8aa1936ecefb307e120830fcbd4c643ab9b1c46a2d0838d5f8409eaf",
-                payloadFiles: [.xray, .geoIP, .geoSite]
+                payloadExpectations: [
+                    RuntimePayloadExpectation(file: .xray),
+                    RuntimePayloadExpectation(file: .geoIP),
+                    RuntimePayloadExpectation(file: .geoSite),
+                ]
             ),
             RuntimeAsset(
                 component: .xray,
@@ -191,7 +208,11 @@ public struct RuntimeManifest: Equatable, Sendable {
                     string: "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-macos-64.zip"
                 )!,
                 sha256: "f5b0471d3459eff1b82e48af0aeac186abcc3298210070afbbbd8437a4e8b203",
-                payloadFiles: [.xray, .geoIP, .geoSite]
+                payloadExpectations: [
+                    RuntimePayloadExpectation(file: .xray),
+                    RuntimePayloadExpectation(file: .geoIP),
+                    RuntimePayloadExpectation(file: .geoSite),
+                ]
             ),
         ]
     )

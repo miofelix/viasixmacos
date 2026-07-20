@@ -17,7 +17,7 @@ final class RuntimeManifestTests: XCTestCase {
                 archiveName: String,
                 url: String,
                 sha256: String,
-                payloadFiles: [RuntimePayloadFile]
+                payloadExpectations: [RuntimePayloadExpectation]
             )] = [
                 (
                     .cfst,
@@ -25,7 +25,13 @@ final class RuntimeManifestTests: XCTestCase {
                     "cfst_darwin_arm64.zip",
                     "https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.5/cfst_darwin_arm64.zip",
                     "0623f6d24c939e3d3716f556f4d39c7b8781cf6600ee838a1b64e6b2fe4609dc",
-                    [.cfst]
+                    [
+                        RuntimePayloadExpectation(
+                            file: .cfst,
+                            byteCount: 7_739_890,
+                            sha256: "c98628414b8812a78c36de0b7fd50066a9fda57347658c212f32f9796dea064a"
+                        )
+                    ]
                 ),
                 (
                     .cfst,
@@ -33,7 +39,13 @@ final class RuntimeManifestTests: XCTestCase {
                     "cfst_darwin_amd64.zip",
                     "https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.5/cfst_darwin_amd64.zip",
                     "66ce3ae89430e851cab9710d54b6d91324e0aae255f0c92a91072d57724561d5",
-                    [.cfst]
+                    [
+                        RuntimePayloadExpectation(
+                            file: .cfst,
+                            byteCount: 8_151_056,
+                            sha256: "899f2db79f3a68d60d35dbaf7f0c34ccbbe3c3ef06d9c8db1a411f99df91c9bf"
+                        )
+                    ]
                 ),
                 (
                     .xray,
@@ -41,7 +53,11 @@ final class RuntimeManifestTests: XCTestCase {
                     "Xray-macos-arm64-v8a.zip",
                     "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-macos-arm64-v8a.zip",
                     "2e93a67e8aa1936ecefb307e120830fcbd4c643ab9b1c46a2d0838d5f8409eaf",
-                    [.xray, .geoIP, .geoSite]
+                    [
+                        RuntimePayloadExpectation(file: .xray),
+                        RuntimePayloadExpectation(file: .geoIP),
+                        RuntimePayloadExpectation(file: .geoSite),
+                    ]
                 ),
                 (
                     .xray,
@@ -49,7 +65,11 @@ final class RuntimeManifestTests: XCTestCase {
                     "Xray-macos-64.zip",
                     "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-macos-64.zip",
                     "f5b0471d3459eff1b82e48af0aeac186abcc3298210070afbbbd8437a4e8b203",
-                    [.xray, .geoIP, .geoSite]
+                    [
+                        RuntimePayloadExpectation(file: .xray),
+                        RuntimePayloadExpectation(file: .geoIP),
+                        RuntimePayloadExpectation(file: .geoSite),
+                    ]
                 ),
             ]
 
@@ -64,7 +84,7 @@ final class RuntimeManifestTests: XCTestCase {
             XCTAssertEqual(asset.archiveFormat, .zip)
             XCTAssertEqual(asset.downloadURL.absoluteString, expected.url)
             XCTAssertEqual(asset.sha256, expected.sha256)
-            XCTAssertEqual(asset.payloadFiles, expected.payloadFiles)
+            XCTAssertEqual(asset.payloadExpectations, expected.payloadExpectations)
             XCTAssertEqual(asset.sha256.count, 64)
             XCTAssertTrue(asset.sha256.allSatisfy { $0.isHexDigit && !$0.isUppercase })
         }
@@ -78,65 +98,11 @@ final class RuntimeManifestTests: XCTestCase {
         }
     }
 
-    func testLatestReleaseResolverBuildsAssetsFromGitHubMetadata() async throws {
-        let resolver = RuntimeReleaseResolver { url in
-            if url == RuntimeComponent.cfst.latestReleaseAPIURL {
-                return RuntimeReleaseResponse(
-                    data: Data(
-                        #"{"tag_name":"v9.1.0","assets":[{"name":"cfst_darwin_arm64.zip","browser_download_url":"https://github.com/XIU2/CloudflareSpeedTest/releases/download/v9.1.0/cfst_darwin_arm64.zip","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}"#
-                            .utf8
-                    ),
-                    statusCode: 200
-                )
-            }
-            return RuntimeReleaseResponse(
-                data: Data(
-                    #"{"tag_name":"v10.2.0","assets":[{"name":"Xray-macos-arm64-v8a.zip","browser_download_url":"https://github.com/XTLS/Xray-core/releases/download/v10.2.0/Xray-macos-arm64-v8a.zip","digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}"#
-                        .utf8
-                ),
-                statusCode: 200
-            )
-        }
+    func testRuntimeManagerDefaultsToPinnedManifest() async {
+        let manager = RuntimeComponentManager(runtimeDirectory: URL(fileURLWithPath: "/tmp/Runtime"))
+        let manifest = await manager.manifest
 
-        let assets = try await resolver.latestAssets(for: .arm64)
-        XCTAssertEqual(assets.map(\.component), [.cfst, .xray])
-        XCTAssertEqual(assets.map(\.version), ["9.1.0", "10.2.0"])
-        XCTAssertEqual(assets.map(\.archiveFormat), [.zip, .zip])
-        XCTAssertEqual(assets[0].sha256, String(repeating: "a", count: 64))
-        XCTAssertEqual(assets[1].payloadFiles, [.xray, .geoIP, .geoSite])
-    }
-
-    func testLatestReleaseResolverRequiresSHA256Digest() async {
-        let resolver = RuntimeReleaseResolver { url in
-            let component = url == RuntimeComponent.cfst.latestReleaseAPIURL ? "cfst" : "xray"
-            let name = component == "cfst" ? "cfst_darwin_arm64.zip" : "Xray-macos-arm64-v8a.zip"
-            let repository = component == "cfst" ? "XIU2/CloudflareSpeedTest" : "XTLS/Xray-core"
-            var asset: [String: Any] = [
-                "name": name,
-                "browser_download_url":
-                    "https://github.com/\(repository)/releases/download/v1.0.0/\(name)",
-            ]
-            if component == "xray" {
-                asset["digest"] = "sha256:\(String(repeating: "b", count: 64))"
-            }
-            let data = try JSONSerialization.data(withJSONObject: [
-                "tag_name": "v1.0.0",
-                "assets": [asset],
-            ])
-            return RuntimeReleaseResponse(data: data, statusCode: 200)
-        }
-
-        do {
-            _ = try await resolver.latestAssets(for: .arm64)
-            XCTFail("Expected missing digest to fail")
-        } catch let error as RuntimeComponentError {
-            XCTAssertEqual(
-                error,
-                .missingLatestReleaseDigest(.cfst, "cfst_darwin_arm64.zip")
-            )
-        } catch {
-            XCTFail("Unexpected error: \(error)")
-        }
+        XCTAssertEqual(manifest, RuntimeManifest.current)
     }
 
     func testSHA256ForDataAndFile() throws {
@@ -155,6 +121,7 @@ final class RuntimeManifestTests: XCTestCase {
         assertSendable(RuntimeArchitecture.arm64)
         assertSendable(RuntimeComponent.cfst)
         assertSendable(RuntimePayloadFile.xray)
+        assertSendable(RuntimePayloadExpectation(file: .cfst))
         assertSendable(RuntimeArchiveFormat.gzip(output: .cfst))
         assertSendable(RuntimeManifest.current)
         assertSendable(RuntimeManifest.current.assets[0])
@@ -267,7 +234,7 @@ final class RuntimeManifestTests: XCTestCase {
             archiveFormat: .zip,
             downloadURL: URL(string: "https://example.invalid/verified.zip")!,
             sha256: RuntimeSHA256.hexDigest(of: archiveData),
-            payloadFiles: [.cfst]
+            payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
         )
         let manager = RuntimeComponentManager(
             runtimeDirectory: root.appendingPathComponent("Runtime"),
@@ -299,7 +266,7 @@ final class RuntimeManifestTests: XCTestCase {
             archiveFormat: .zip,
             downloadURL: URL(string: "https://example.invalid/rejected.zip")!,
             sha256: badHash,
-            payloadFiles: [.cfst]
+            payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
         )
         let manager = RuntimeComponentManager(
             runtimeDirectory: root.appendingPathComponent("Runtime"),
