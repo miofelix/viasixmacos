@@ -7,7 +7,13 @@ public struct AppPaths: Sendable, Equatable {
     public let logs: URL
     public let preferences: URL
     public let resultCSV: URL
+    /// Compatibility mirror containing the complete generated Xray template.
+    /// User-facing configuration is split between `serverConfig` and
+    /// `localProxyConfig`; keeping this file lets older installations and
+    /// advanced imports migrate without losing information.
     public let templateConfig: URL
+    public let serverConfig: URL
+    public let localProxyConfig: URL
     public let generatedConfig: URL
     public let ipv4List: URL
     public let ipv6List: URL
@@ -22,6 +28,8 @@ public struct AppPaths: Sendable, Equatable {
         self.preferences = data.appendingPathComponent("preferences.json")
         self.resultCSV = data.appendingPathComponent("result.csv")
         self.templateConfig = data.appendingPathComponent("template.json")
+        self.serverConfig = data.appendingPathComponent("server.json")
+        self.localProxyConfig = data.appendingPathComponent("local-proxy.json")
         self.generatedConfig = data.appendingPathComponent("config.json")
         self.ipv4List = data.appendingPathComponent("ip.txt")
         self.ipv6List = data.appendingPathComponent("ipv6.txt")

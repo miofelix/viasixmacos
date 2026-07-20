@@ -70,9 +70,9 @@ struct XrayTemplateEditorView: View {
     private var editorHeader: some View {
         HStack(alignment: .top, spacing: 18) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("代理配置编辑器")
+                Text("高级服务器 JSON")
                     .font(.title3.weight(.semibold))
-                Text("直接编辑 Xray JSON；保存前会检查本地入站、proxy 出站及配置能否安全应用。")
+                Text("编辑 Xray 的 proxy 出站。本机监听地址、端口和路由行为可在“本机代理设置”中修改。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -82,12 +82,12 @@ struct XrayTemplateEditorView: View {
 
             Menu {
                 Button("在访达中显示配置", systemImage: "folder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([model.paths.templateConfig])
+                    NSWorkspace.shared.activateFileViewerSelecting([model.paths.serverConfig])
                 }
                 .disabled(originalData == nil)
 
                 Button("复制配置路径", systemImage: "doc.on.doc") {
-                    copyToPasteboard(model.paths.templateConfig.path)
+                    copyToPasteboard(model.paths.serverConfig.path)
                 }
             } label: {
                 Label("更多", systemImage: "ellipsis.circle")
@@ -139,7 +139,7 @@ struct XrayTemplateEditorView: View {
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
-                        .help("配置中的本地 mixed 入站")
+                        .help("运行时使用的本地端点")
                 }
 
                 Spacer(minLength: 12)
@@ -173,7 +173,7 @@ struct XrayTemplateEditorView: View {
                     .truncationMode(.middle)
                     .textSelection(.enabled)
                 Spacer(minLength: 10)
-                Text("应用节点时仅替换 proxy 出站的首个 vnext 地址，不改动凭据。")
+                Text("应用节点时仅替换 proxy 出站的首个服务器地址，不改动凭据。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -332,7 +332,7 @@ struct XrayTemplateEditorView: View {
 
     private func reloadFromDisk(initialLoad: Bool = false) {
         do {
-            let data = try Data(contentsOf: model.paths.templateConfig)
+            let data = try Data(contentsOf: model.paths.serverConfig)
             guard let loadedText = String(data: data, encoding: .utf8) else {
                 throw CocoaError(.fileReadInapplicableStringEncoding)
             }
@@ -357,7 +357,8 @@ struct XrayTemplateEditorView: View {
     private func refreshDraftAnalysis() {
         draftAnalysis = XrayTemplateDraftAnalysis.inspect(
             text,
-            selectedIP: model.state.preferences.selectedIP
+            selectedIP: model.state.preferences.selectedIP,
+            local: model.state.localProxyConfiguration
         )
     }
 
@@ -365,6 +366,7 @@ struct XrayTemplateEditorView: View {
         draftAnalysisTask?.cancel()
         let draft = text
         let selectedIP = model.state.preferences.selectedIP
+        let local = model.state.localProxyConfiguration
         draftAnalysisTask = Task { @MainActor in
             do {
                 try await Task.sleep(for: .milliseconds(140))
@@ -372,7 +374,8 @@ struct XrayTemplateEditorView: View {
                 let analysis = await Task.detached(priority: .userInitiated) {
                     XrayTemplateDraftAnalysis.inspect(
                         draft,
-                        selectedIP: selectedIP
+                        selectedIP: selectedIP,
+                        local: local
                     )
                 }.value
                 guard !Task.isCancelled, text == draft,
@@ -428,7 +431,7 @@ struct XrayTemplateEditorView: View {
         isSaving = true
         Task { @MainActor in
             do {
-                try await model.saveXrayTemplate(data, expectedTemplateData: originalData)
+                try await model.saveServerConfiguration(data)
                 originalData = data
                 originalText = text
                 isSaving = false
@@ -511,7 +514,11 @@ struct XrayTemplateDraftAnalysis: Equatable, Sendable {
         }
     }
 
-    static func inspect(_ text: String, selectedIP: String?) -> XrayTemplateDraftAnalysis {
+    static func inspect(
+        _ text: String,
+        selectedIP: String?,
+        local: LocalProxyConfiguration = .default
+    ) -> XrayTemplateDraftAnalysis {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .empty
         }
@@ -535,11 +542,23 @@ struct XrayTemplateDraftAnalysis: Equatable, Sendable {
         }
 
         do {
-            let endpoint = try ConfigTemplate.validateTemplate(data)
             let normalizedIP =
                 selectedIP?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let validationIP = normalizedIP.isEmpty ? "2001:db8::2" : normalizedIP
-            let generated = try ConfigTemplate.replacingAddress(in: data, with: validationIP)
+            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let endpoint: ProxyEndpoint
+            let generated: Data
+            if object?["inbounds"] != nil || object?["outbounds"] != nil {
+                endpoint = try ConfigTemplate.validateTemplate(data)
+                generated = try ConfigTemplate.replacingAddress(in: data, with: validationIP)
+            } else {
+                endpoint = try local.validated().endpoint
+                generated = try ConfigTemplate.runtimeConfiguration(
+                    server: data,
+                    local: local,
+                    address: validationIP
+                )
+            }
             try ConfigTemplate.validateForLaunch(generated)
             return XrayTemplateDraftAnalysis(
                 status: normalizedIP.isEmpty ? .validWithoutNode(endpoint) : .valid(endpoint),

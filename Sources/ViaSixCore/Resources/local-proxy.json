@@ -1,0 +1,8 @@
+{
+  "listenAddress": "127.0.0.1",
+  "port": 11451,
+  "udpEnabled": true,
+  "sniffingEnabled": true,
+  "bypassPrivateNetworks": true,
+  "logLevel": "warning"
+}

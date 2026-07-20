@@ -14,7 +14,7 @@ public enum ConfigTemplateError: LocalizedError, Equatable, Sendable {
         case .invalidJSON: "Xray 模板不是有效 JSON"
         case .missingOutbounds: "Xray 模板缺少 outbounds"
         case .missingProxyOutbound: "Xray 模板缺少 tag 为 proxy 的出站配置"
-        case .missingVnext: "proxy 出站缺少 settings.vnext"
+        case .missingVnext: "proxy 出站缺少可用的 settings.vnext 或 settings.servers"
         case .invalidLocalInbound:
             "Xray 模板必须仅监听本机回环地址，并包含端口有效的 mixed 入站"
         case .connectionNotConfigured: "代理连接尚未配置，请在“设置”中导入或编辑你自己的 Xray 模板"
@@ -32,14 +32,19 @@ public enum ConfigTemplate {
         guard let proxyIndex = outbounds.firstIndex(where: { $0["tag"] as? String == "proxy" }) else {
             throw ConfigTemplateError.missingProxyOutbound
         }
-        guard var settings = outbounds[proxyIndex]["settings"] as? [String: Any],
-            var vnext = settings["vnext"] as? [[String: Any]], !vnext.isEmpty
-        else {
+        guard var settings = outbounds[proxyIndex]["settings"] as? [String: Any] else {
             throw ConfigTemplateError.missingVnext
         }
-
-        vnext[0]["address"] = ip.trimmingCharacters(in: .whitespacesAndNewlines)
-        settings["vnext"] = vnext
+        let normalizedIP = ip.trimmingCharacters(in: .whitespacesAndNewlines)
+        if var vnext = settings["vnext"] as? [[String: Any]], !vnext.isEmpty {
+            vnext[0]["address"] = normalizedIP
+            settings["vnext"] = vnext
+        } else if var servers = settings["servers"] as? [[String: Any]], !servers.isEmpty {
+            servers[0]["address"] = normalizedIP
+            settings["servers"] = servers
+        } else {
+            throw ConfigTemplateError.missingVnext
+        }
         outbounds[proxyIndex]["settings"] = settings
         config["outbounds"] = outbounds
 
@@ -64,9 +69,18 @@ public enum ConfigTemplate {
         guard let proxy = outbounds.first(where: { $0["tag"] as? String == "proxy" }) else {
             throw ConfigTemplateError.missingProxyOutbound
         }
-        guard let settings = proxy["settings"] as? [String: Any],
-            let vnext = settings["vnext"] as? [[String: Any]],
-            let server = vnext.first,
+        guard let settings = proxy["settings"] as? [String: Any] else {
+            throw ConfigTemplateError.missingVnext
+        }
+        let server: [String: Any]?
+        if let vnext = settings["vnext"] as? [[String: Any]] {
+            server = vnext.first
+        } else if let servers = settings["servers"] as? [[String: Any]] {
+            server = servers.first
+        } else {
+            server = nil
+        }
+        guard let server,
             let address = server["address"] as? String,
             !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
@@ -94,16 +108,24 @@ public enum ConfigTemplate {
 
     public static func address(in config: Data) -> String? {
         guard let object = try? JSONSerialization.jsonObject(with: config),
-            let dictionary = object as? [String: Any],
-            let outbounds = dictionary["outbounds"] as? [[String: Any]],
-            let proxy = outbounds.first(where: { $0["tag"] as? String == "proxy" }),
-            let settings = proxy["settings"] as? [String: Any],
-            let vnext = settings["vnext"] as? [[String: Any]],
-            let address = vnext.first?["address"] as? String
-        else {
-            return nil
+            let dictionary = object as? [String: Any]
+        else { return nil }
+        let proxy: [String: Any]?
+        if let outbounds = dictionary["outbounds"] as? [[String: Any]] {
+            proxy = outbounds.first(where: { $0["tag"] as? String == "proxy" })
+        } else if dictionary["tag"] as? String == "proxy" {
+            proxy = dictionary
+        } else {
+            proxy = nil
         }
-        return address
+        guard let settings = proxy?["settings"] as? [String: Any] else { return nil }
+        if let vnext = settings["vnext"] as? [[String: Any]] {
+            return vnext.first?["address"] as? String
+        }
+        if let servers = settings["servers"] as? [[String: Any]] {
+            return servers.first?["address"] as? String
+        }
+        return nil
     }
 
     public static func proxyEndpoint(in config: Data) throws -> ProxyEndpoint {

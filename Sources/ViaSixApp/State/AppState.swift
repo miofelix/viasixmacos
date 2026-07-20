@@ -133,6 +133,7 @@ struct AppState: Equatable, Sendable {
     var templateOperationPhase: TemplateOperationPhase = .idle
     var templateOperationError: String?
     var proxyEndpoint = ProxyEndpoint()
+    var localProxyConfiguration = LocalProxyConfiguration()
     var exit = ExitState()
     var logs: [AppLogEntry] = []
     var notice: AppNotice?

@@ -30,6 +30,18 @@ public enum DefaultResourceInstaller {
             using: fileManager
         )
         try copyIfMissing(resource: "ipv6", extension: "txt", to: paths.ipv6List, using: fileManager)
+        try copyIfMissing(
+            resource: "server",
+            extension: "json",
+            to: paths.serverConfig,
+            using: fileManager
+        )
+        try copyIfMissing(
+            resource: "local-proxy",
+            extension: "json",
+            to: paths.localProxyConfig,
+            using: fileManager
+        )
         try installBundledResource(
             resource: "template",
             extension: "json",

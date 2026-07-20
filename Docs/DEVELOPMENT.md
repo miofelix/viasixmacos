@@ -194,6 +194,8 @@ CloudflareSpeedTest 是 XIU2 维护的独立第三方项目，并非 Cloudflare 
     preferences.json
     ip.txt
     ipv6.txt
+    server.json
+    local-proxy.json
     template.json
     config.json
     result.csv
@@ -209,7 +211,9 @@ CloudflareSpeedTest 是 XIU2 维护的独立第三方项目，并非 Cloudflare 
 
 - `preferences.json`：`Codable` 用户偏好，新增字段应提供向后兼容默认值。
 - `ip.txt` / `ipv6.txt`：复制到用户目录后的地址源。
-- `template.json`：用户维护的代理连接模板。
+- `server.json`：远端 `proxy` 出站配置。
+- `local-proxy.json`：本机监听地址、端口、UDP、嗅探、私网直连和日志级别。
+- `template.json`：由前两者维护的完整 Xray 配置兼容镜像。
 - `config.json`：由模板和当前节点生成，不是配置的唯一来源。
 - `result.csv`：当前测速输出；启动新任务前删除。
 - `Runtime`：ViaSix 管理的第三方组件。
@@ -240,14 +244,15 @@ ViaSix 会把上述目录权限收紧为 `0700`，把偏好、地址列表和代
 
 - 根对象是有效 JSON。
 - 所有 `inbounds` 都显式绑定本机回环地址。
-- 存在端口有效的回环 `mixed` 入站；本地端点由模板自动解析，不要求固定端口。
-- 包含非空 `outbounds`。
-- 存在 `tag == "proxy"` 的出站。
-- `proxy.settings.vnext` 非空。
+- 存在端口有效的回环 `mixed` 入站；本地端点来自 `local-proxy.json`。
+- 服务器配置包含 `tag == "proxy"` 的出站。
+- `proxy.settings.vnext` 或 `proxy.settings.servers` 非空。
 
 配置流向：
 
 ```text
+server.json + local-proxy.json
+    ↓
 template.json
     + 当前选择的 IP
     ↓

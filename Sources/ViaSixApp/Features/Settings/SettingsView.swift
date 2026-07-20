@@ -7,6 +7,8 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var showsCustomExecutables = false
     @State private var showsTemplateEditor = false
+    @State private var showsServerEditor = false
+    @State private var showsLocalProxyEditor = false
     @State private var exitIPEndpointDraft = ""
     @State private var exitIPEndpointError: String?
 
@@ -167,7 +169,7 @@ struct SettingsView: View {
             Label("代理配置", systemImage: "point.3.connected.trianglepath.dotted")
                 .font(.headline)
 
-            Text("导入你自己的 Xray JSON 配置，ViaSix 会将所选 IP 写入名为“proxy”的出站连接。")
+            Text("填写服务器连接参数，并按需设置本机监听端口、UDP 和协议行为。VLESS、VMess、Trojan 和 Shadowsocks 连接可以直接使用表单。")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -181,21 +183,37 @@ struct SettingsView: View {
             }
 
             HStack(spacing: 10) {
-                Button("打开配置编辑器", systemImage: "curlybraces.square") {
-                    showsTemplateEditor = true
+                Button("配置服务器", systemImage: "server.rack") {
+                    showsServerEditor = true
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(
                     proxyImportDisabled
-                        || !FileManager.default.fileExists(atPath: model.paths.templateConfig.path)
+                        || !FileManager.default.fileExists(atPath: model.paths.serverConfig.path)
                 )
-                .help("在 ViaSix 中校验、格式化并编辑 Xray JSON")
+                .help("填写服务器地址之外的远端连接参数")
 
-                Button("导入配置…", systemImage: "square.and.arrow.down") {
-                    importXrayTemplate()
+                Button("本机代理设置", systemImage: "laptopcomputer.and.iphone") {
+                    showsLocalProxyEditor = true
                 }
                 .disabled(proxyImportDisabled)
-                .help("从本机导入一份 Xray JSON 配置")
+
+                Menu {
+                    Button("高级 JSON 编辑器", systemImage: "curlybraces.square") {
+                        showsTemplateEditor = true
+                    }
+                    .disabled(
+                        proxyImportDisabled
+                            || !FileManager.default.fileExists(atPath: model.paths.templateConfig.path)
+                    )
+                    Button("导入完整 Xray JSON…", systemImage: "square.and.arrow.down") {
+                        importXrayTemplate()
+                    }
+                    .disabled(proxyImportDisabled)
+                } label: {
+                    Label("高级", systemImage: "ellipsis.circle")
+                }
+                .disabled(proxyImportDisabled)
             }
 
             if let templateOperationStatus {
@@ -223,7 +241,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                Text("本地端点从配置中的回环 mixed 入站自动读取；配置文件保存在 ViaSix 应用数据目录中。")
+                Text("服务器参数和本机代理设置会保存在应用数据目录中。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -233,6 +251,14 @@ struct SettingsView: View {
         .cardStyle()
         .sheet(isPresented: $showsTemplateEditor) {
             XrayTemplateEditorView()
+                .environment(model)
+        }
+        .sheet(isPresented: $showsServerEditor) {
+            ServerConfigurationEditorView()
+                .environment(model)
+        }
+        .sheet(isPresented: $showsLocalProxyEditor) {
+            LocalProxySettingsView()
                 .environment(model)
         }
     }

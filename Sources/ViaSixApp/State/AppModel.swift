@@ -441,6 +441,9 @@ final class AppModel {
                     from: url,
                     selectedIP: selectedIP
                 )
+                if let local = try? await bootstrapper.loadLocalProxyConfiguration() {
+                    state.localProxyConfiguration = local
+                }
                 state.proxyConfigurationPhase = .ready
                 appendLog(source: .app, level: .success, message: "已导入代理连接模板")
                 showNotice("代理配置已导入", style: .success)
@@ -505,6 +508,9 @@ final class AppModel {
             try Task.checkCancellation()
             guard !isShuttingDown else { throw CancellationError() }
             state.proxyEndpoint = endpoint
+            if let local = try? await bootstrapper.loadLocalProxyConfiguration() {
+                state.localProxyConfiguration = local
+            }
             state.proxyConfigurationPhase = .ready
             appendLog(source: .app, level: .success, message: "已保存代理连接模板")
             showNotice("代理配置已保存", style: .success)
@@ -523,6 +529,57 @@ final class AppModel {
             appendLog(source: .app, level: .error, message: "保存代理配置失败：\(error.localizedDescription)")
             throw error
         }
+    }
+
+    func saveServerConfiguration(_ data: Data) async throws {
+        guard state.launchPhase != .loading else { throw AppModelError.appNotReady }
+        guard !isShuttingDown else { throw CancellationError() }
+        switch state.xrayPhase {
+        case .validating, .starting, .running, .stopping:
+            throw AppModelError.xrayMustBeStopped
+        case .stopped, .failed:
+            break
+        }
+        guard state.templateOperationPhase == .idle else {
+            throw AppModelError.templateOperationInProgress
+        }
+        let selectedIP = state.preferences.selectedIP
+        state.templateOperationPhase = .saving
+        defer { state.templateOperationPhase = .idle }
+        let endpoint = try await Task.detached { [bootstrapper] in
+            try await bootstrapper.replaceServerConfiguration(with: data, selectedIP: selectedIP)
+        }.value
+        guard !isShuttingDown else { throw CancellationError() }
+        state.proxyEndpoint = endpoint
+        state.proxyConfigurationPhase = .ready
+        appendLog(source: .app, level: .success, message: "服务器连接配置已保存")
+        showNotice("服务器连接配置已保存", style: .success)
+    }
+
+    func saveLocalProxyConfiguration(_ configuration: LocalProxyConfiguration) async throws {
+        guard state.launchPhase != .loading else { throw AppModelError.appNotReady }
+        guard !isShuttingDown else { throw CancellationError() }
+        switch state.xrayPhase {
+        case .validating, .starting, .running, .stopping:
+            throw AppModelError.xrayMustBeStopped
+        case .stopped, .failed:
+            break
+        }
+        guard state.templateOperationPhase == .idle else {
+            throw AppModelError.templateOperationInProgress
+        }
+        let selectedIP = state.preferences.selectedIP
+        state.templateOperationPhase = .saving
+        defer { state.templateOperationPhase = .idle }
+        let endpoint = try await Task.detached { [bootstrapper] in
+            try await bootstrapper.replaceLocalProxyConfiguration(with: configuration, selectedIP: selectedIP)
+        }.value
+        guard !isShuttingDown else { throw CancellationError() }
+        state.localProxyConfiguration = configuration
+        state.proxyEndpoint = endpoint
+        state.proxyConfigurationPhase = .ready
+        appendLog(source: .app, level: .success, message: "本机代理设置已保存")
+        showNotice("本机代理设置已保存", style: .success)
     }
 
     func selectIPSource(_ mode: IPSourceMode) {
@@ -1126,12 +1183,14 @@ final class AppModel {
 
             var configurationWarning: String?
             var proxyEndpoint = ProxyEndpoint()
+            var localProxyConfiguration = LocalProxyConfiguration()
             var proxyConfigurationPhase: AppState.ProxyConfigurationPhase = .checking
             do {
                 let configuration = try await bootstrapper.synchronizeConfiguration(
                     selectedIP: preferences.selectedIP
                 )
                 proxyEndpoint = configuration.endpoint
+                localProxyConfiguration = configuration.local
                 if let effectiveIP = configuration.effectiveIP {
                     preferences.selectedIP = effectiveIP
                 }
@@ -1161,6 +1220,7 @@ final class AppModel {
             state.results = loadedResults
             state.runtimeStatus = await installedStatus
             state.proxyEndpoint = proxyEndpoint
+            state.localProxyConfiguration = localProxyConfiguration
             state.proxyConfigurationPhase = proxyConfigurationPhase
             refreshRuntimePhase()
             state.launchPhase = .ready
