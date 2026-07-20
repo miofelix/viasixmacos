@@ -25,9 +25,9 @@ public extension ConfigTemplate {
         let routing = object["routing"] as? [String: Any]
         let rules = routing?["rules"] as? [[String: Any]] ?? []
         let bypassPrivate = rules.contains { rule in
-            let ip = rule["ip"] as? [String] ?? []
-            return ip.contains("geoip:private") && rule["outboundTag"] as? String == "direct"
+            isPrivateNetworkDirectRule(rule)
         }
+        let routingMode = inferredRoutingMode(in: object, rules: rules)
         return try LocalProxyConfiguration(
             listenAddress: listen,
             port: port,
@@ -35,7 +35,8 @@ public extension ConfigTemplate {
             sniffingEnabled: sniffing?["enabled"] as? Bool ?? false,
             bypassPrivateNetworks: bypassPrivate,
             logLevel: XrayLogLevel(rawValue: (object["log"] as? [String: Any])?["loglevel"] as? String ?? "warning")
-                ?? .warning
+                ?? .warning,
+            routingMode: routingMode
         ).validated()
     }
 
@@ -44,6 +45,24 @@ public extension ConfigTemplate {
         local: LocalProxyConfiguration,
         address: String
     ) throws -> Data {
+        try runtimeConfiguration(server: Optional(server), local: local, address: address)
+    }
+
+    /// Builds the complete runtime document. Direct mode deliberately accepts
+    /// no server configuration and omits the proxy outbound, while rule and
+    /// global modes require a usable server.
+    static func runtimeConfiguration(
+        server: Data?,
+        local: LocalProxyConfiguration,
+        address: String
+    ) throws -> Data {
+        let local = try local.validated()
+        guard local.routingMode != .direct else {
+            return try composeTemplate(proxyOutbound: nil, local: local)
+        }
+        guard let server else {
+            throw ConfigTemplateError.connectionNotConfigured
+        }
         let serverObject = try configurationDictionary(from: server)
         let outbound = try replacingAddress(in: try proxyOutbound(from: serverObject), with: address)
         return try composeTemplate(proxyOutbound: outbound, local: local)
@@ -89,20 +108,26 @@ public extension ConfigTemplate {
 
         var routing = object["routing"] as? [String: Any] ?? [:]
         var rules = routing["rules"] as? [[String: Any]] ?? []
-        rules.removeAll { rule in
-            let ip = rule["ip"] as? [String] ?? []
-            return ip.contains("geoip:private") && rule["outboundTag"] as? String == "direct"
+        switch validated.routingMode {
+        case .rule:
+            rules.removeAll(where: isManagedRoutingRule)
+            if validated.bypassPrivateNetworks {
+                rules.append(privateNetworkDirectRule)
+            }
+        case .global, .direct:
+            // These modes intentionally bypass user routing rules. Keeping an
+            // old rule ahead of the catch-all would make the selected mode
+            // misleading and could leak traffic through an unexpected path.
+            rules = [catchAllRule(for: validated.routingMode)]
         }
-        if validated.bypassPrivateNetworks {
-            rules.append([
-                "type": "field",
-                "ip": ["geoip:private"],
-                "outboundTag": "direct",
-            ])
+
+        if rules.isEmpty, routing.keys.allSatisfy({ $0 == "domainStrategy" || $0 == "rules" }) {
+            object.removeValue(forKey: "routing")
+        } else {
+            routing["domainStrategy"] = routing["domainStrategy"] ?? "AsIs"
+            routing["rules"] = rules
+            object["routing"] = routing
         }
-        routing["domainStrategy"] = routing["domainStrategy"] ?? "AsIs"
-        routing["rules"] = rules
-        object["routing"] = routing
         return try prettyJSON(object)
     }
 
@@ -320,32 +345,103 @@ public extension ConfigTemplate {
     }
 
     private static func composeTemplate(
-        proxyOutbound: [String: Any],
+        proxyOutbound: [String: Any]?,
         local: LocalProxyConfiguration
     ) throws -> Data {
         let local = try local.validated()
+        var outbounds: [[String: Any]] = []
+        if let proxyOutbound {
+            outbounds.append(proxyOutbound)
+        }
+        outbounds.append(["tag": "direct", "protocol": "freedom"])
+        outbounds.append(["tag": "block", "protocol": "blackhole"])
         var object: [String: Any] = [
             "log": ["loglevel": local.logLevel.rawValue],
             "inbounds": [inboundObject(for: local)],
-            "outbounds": [
-                proxyOutbound,
-                ["tag": "direct", "protocol": "freedom"],
-                ["tag": "block", "protocol": "blackhole"],
-            ],
+            "outbounds": outbounds,
         ]
-        if local.bypassPrivateNetworks {
-            object["routing"] = [
-                "domainStrategy": "AsIs",
-                "rules": [
-                    [
-                        "type": "field",
-                        "ip": ["geoip:private"],
-                        "outboundTag": "direct",
-                    ]
-                ],
-            ]
+        if let routing = routingObject(for: local) {
+            object["routing"] = routing
         }
         return try prettyJSON(object)
+    }
+
+    private static func routingObject(for local: LocalProxyConfiguration) -> [String: Any]? {
+        switch local.routingMode {
+        case .rule:
+            guard local.bypassPrivateNetworks else { return nil }
+            return [
+                "domainStrategy": "AsIs",
+                "rules": [privateNetworkDirectRule],
+            ]
+        case .global, .direct:
+            return [
+                "domainStrategy": "AsIs",
+                "rules": [catchAllRule(for: local.routingMode)],
+            ]
+        }
+    }
+
+    private static var privateNetworkDirectRule: [String: Any] {
+        [
+            "type": "field",
+            "ip": ["geoip:private"],
+            "outboundTag": "direct",
+        ]
+    }
+
+    private static func catchAllRule(for mode: ProxyRoutingMode) -> [String: Any] {
+        [
+            "type": "field",
+            "network": "tcp,udp",
+            "outboundTag": mode == .direct ? "direct" : "proxy",
+        ]
+    }
+
+    private static func isPrivateNetworkDirectRule(_ rule: [String: Any]) -> Bool {
+        let ip = rule["ip"] as? [String] ?? []
+        return ip.contains("geoip:private") && rule["outboundTag"] as? String == "direct"
+    }
+
+    private static func isCatchAllRule(_ rule: [String: Any], outboundTag: String) -> Bool {
+        guard rule["outboundTag"] as? String == outboundTag else { return false }
+        guard rule["type"] as? String == "field" else { return false }
+        guard let network = rule["network"] as? String else { return false }
+        let networks = Set(
+            network.split(separator: ",").map {
+                String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            })
+        guard networks.contains("tcp") && networks.contains("udp") else { return false }
+        // A rule with another matcher is not the mode marker; it may be a
+        // legitimate user rule that happens to use both transports.
+        let matchKeys = Set(rule.keys).subtracting(["type", "network", "outboundTag"])
+        return matchKeys.isEmpty
+    }
+
+    private static func isManagedRoutingRule(_ rule: [String: Any]) -> Bool {
+        isPrivateNetworkDirectRule(rule)
+            || isCatchAllRule(rule, outboundTag: "proxy")
+            || isCatchAllRule(rule, outboundTag: "direct")
+    }
+
+    private static func inferredRoutingMode(
+        in object: [String: Any],
+        rules: [[String: Any]]
+    ) -> ProxyRoutingMode {
+        if rules.contains(where: { isCatchAllRule($0, outboundTag: "direct") }) {
+            return .direct
+        }
+        if rules.contains(where: { isCatchAllRule($0, outboundTag: "proxy") }) {
+            return .global
+        }
+        let outbounds = object["outbounds"] as? [[String: Any]] ?? []
+        let hasProxy = outbounds.contains { $0["tag"] as? String == "proxy" }
+        if !hasProxy,
+            outbounds.contains(where: { $0["tag"] as? String == "direct" })
+        {
+            return .direct
+        }
+        return .rule
     }
 
     private static func inboundObject(for local: LocalProxyConfiguration) -> [String: Any] {

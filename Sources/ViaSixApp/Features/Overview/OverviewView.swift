@@ -8,12 +8,14 @@ struct OverviewView: View {
 
     @State private var copiedEndpoint = false
     @State private var copiedExitIP = false
+    @State private var optimisticRoutingMode: ProxyRoutingMode?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 pageHeader
                 metricsPanel
+                proxyControlPanels
                 proxyPanel
 
                 if model.state.runtimePhase != .ready
@@ -27,6 +29,16 @@ struct OverviewView: View {
             .padding(.bottom, 4)
         }
         .scrollbarSafeContent()
+        .onChange(of: model.state.localProxyConfiguration.routingMode) { _, mode in
+            if optimisticRoutingMode == mode {
+                optimisticRoutingMode = nil
+            }
+        }
+        .onChange(of: model.isRoutingModeChanging) { _, isChanging in
+            if !isChanging {
+                optimisticRoutingMode = nil
+            }
+        }
     }
 
     private var pageHeader: some View {
@@ -43,8 +55,8 @@ struct OverviewView: View {
         LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 18) {
             OverviewMetric(
                 title: "当前节点",
-                value: selectedResult?.ip ?? selectedIP,
-                detail: "Cloudflare IP",
+                value: currentNodeMetricValue,
+                detail: currentNodeMetricDetail,
                 systemImage: "network"
             )
             OverviewMetric(
@@ -105,6 +117,103 @@ struct OverviewView: View {
             }
         }
         .padding(22)
+        .cardStyle()
+    }
+
+    private var proxyControlPanels: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 330), spacing: 18)],
+            alignment: .leading,
+            spacing: 18
+        ) {
+            routingModePanel
+            networkAccessPanel
+        }
+    }
+
+    /// The three routing choices are deliberately presented as a first-class
+    /// card, matching the compact mode card used by Clash while retaining the
+    /// native macOS controls and keyboard/accessibility semantics.
+    private var routingModePanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Label("代理模式", systemImage: "point.3.connected.trianglepath.dotted")
+                    .font(.headline)
+                Spacer()
+                if model.isRoutingModeChanging {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("正在切换代理模式")
+                } else {
+                    Text(displayedRoutingMode.displayName)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            ProxyRoutingModePicker(
+                selection: Binding(
+                    get: { displayedRoutingMode },
+                    set: { selectRoutingMode($0) }
+                ),
+                isDisabled: routingModePickerDisabled
+            )
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardStyle()
+    }
+
+    private var networkAccessPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Label("网络接入", systemImage: "macbook.and.iphone")
+                    .font(.headline)
+                Spacer()
+                systemProxyStatus
+            }
+
+            Divider()
+
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "desktopcomputer")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("系统代理")
+                        .font(.callout.weight(.medium))
+                    Text("让遵循 macOS 代理设置的应用自动使用本地代理")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                Toggle("系统代理", isOn: systemProxyEnabledBinding)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(systemProxyToggleDisabled)
+                    .accessibilityLabel("系统代理")
+                    .accessibilityValue(systemProxyStatusText)
+            }
+
+            if case .failed(let message) = model.state.systemProxyPhase {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Text("系统代理只影响遵循 macOS 代理设置的应用，不会接管全部网络流量。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .cardStyle()
     }
 
@@ -568,6 +677,16 @@ struct OverviewView: View {
         model.state.preferences.selectedIP
     }
 
+    private var currentNodeMetricValue: String {
+        if let ip = selectedResult?.ip { return ip }
+        if !selectedIP.isEmpty { return selectedIP }
+        return model.requiresSelectedNodeForProxy ? "" : "直连模式"
+    }
+
+    private var currentNodeMetricDetail: String {
+        model.requiresSelectedNodeForProxy ? "Cloudflare IP" : "无需选择节点"
+    }
+
     private var proxyEndpoint: String {
         model.state.proxyEndpoint.displayAddress
     }
@@ -587,6 +706,102 @@ struct OverviewView: View {
                 model.stopXray()
             }
         }
+    }
+
+    private var displayedRoutingMode: ProxyRoutingMode {
+        optimisticRoutingMode ?? model.state.localProxyConfiguration.routingMode
+    }
+
+    private var routingModePickerDisabled: Bool {
+        guard model.state.launchPhase == .ready else { return true }
+        if model.isRoutingModeChanging
+            || model.isSystemProxyTransitioning
+            || model.state.runtimeOperation != nil
+            || model.isTemplateOperationBusy
+            || model.switchingIP != nil
+        {
+            return true
+        }
+        switch model.state.xrayPhase {
+        case .stopped, .running, .failed:
+            return false
+        case .validating, .starting, .stopping:
+            return true
+        }
+    }
+
+    private func selectRoutingMode(_ mode: ProxyRoutingMode) {
+        guard mode != displayedRoutingMode, !routingModePickerDisabled else { return }
+        model.setRoutingMode(mode)
+        optimisticRoutingMode = model.isRoutingModeChanging ? mode : nil
+    }
+
+    private var systemProxyEnabledBinding: Binding<Bool> {
+        Binding {
+            model.state.localProxyConfiguration.systemProxyEnabled
+        } set: { enabled in
+            model.setSystemProxyEnabled(enabled)
+        }
+    }
+
+    private var systemProxyToggleDisabled: Bool {
+        guard model.state.launchPhase == .ready else { return true }
+        if model.isRoutingModeChanging
+            || model.state.runtimeOperation != nil
+            || model.isTemplateOperationBusy
+            || model.switchingIP != nil
+        {
+            return true
+        }
+        switch model.state.xrayPhase {
+        case .validating, .starting, .stopping:
+            return true
+        case .stopped, .running, .failed:
+            break
+        }
+        return switch model.state.systemProxyPhase {
+        case .enabling, .disabling:
+            true
+        case .disabled, .enabled, .failed:
+            false
+        }
+    }
+
+    private var systemProxyStatus: some View {
+        HStack(spacing: 7) {
+            if systemProxyIsTransitioning {
+                ProgressView()
+                    .controlSize(.mini)
+            } else {
+                Circle()
+                    .fill(systemProxyStatusColor)
+                    .frame(width: 7, height: 7)
+            }
+            Text(systemProxyStatusText)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("系统代理：\(systemProxyStatusText)")
+    }
+
+    private var systemProxyStatusText: String {
+        systemProxyPresentation.text
+    }
+
+    private var systemProxyStatusColor: Color {
+        systemProxyPresentation.tone.color
+    }
+
+    private var systemProxyIsTransitioning: Bool {
+        systemProxyPresentation.isTransitioning
+    }
+
+    private var systemProxyPresentation: SystemProxyStatusPresentation {
+        SystemProxyStatusPresentation(
+            phase: model.state.systemProxyPhase,
+            isRequested: model.state.localProxyConfiguration.systemProxyEnabled
+        )
     }
 
     private var exitIPDetectionModeBinding: Binding<ExitIPDetectionMode> {
@@ -640,7 +855,7 @@ struct OverviewView: View {
             return false
         case .stopped, .failed:
             return model.switchingIP != nil
-                || selectedIP.isEmpty
+                || (model.requiresSelectedNodeForProxy && selectedIP.isEmpty)
                 || !model.hasXrayExecutable
                 || !model.isProxyConfigurationReady
         }
@@ -668,7 +883,7 @@ struct OverviewView: View {
         if let issue = model.proxyConfigurationIssue {
             return "代理配置尚未就绪：\(issue)。请在设置中导入或编辑配置。"
         }
-        if selectedIP.isEmpty {
+        if model.requiresSelectedNodeForProxy && selectedIP.isEmpty {
             return "先选择一个节点，才能启动本地代理。"
         }
         if !model.hasXrayExecutable {
@@ -824,6 +1039,53 @@ struct OverviewView: View {
         case .ready: "checkmark.circle.fill"
         case .checking: "clock"
         case .missing: "arrow.down.circle"
+        }
+    }
+}
+
+struct SystemProxyStatusPresentation: Equatable {
+    enum Tone: Equatable {
+        case neutral
+        case pending
+        case active
+        case error
+
+        var color: Color {
+            switch self {
+            case .neutral: .secondary
+            case .pending: .orange
+            case .active: .green
+            case .error: .red
+            }
+        }
+    }
+
+    let text: String
+    let tone: Tone
+    let isTransitioning: Bool
+
+    init(phase: AppState.SystemProxyPhase, isRequested: Bool) {
+        switch phase {
+        case .disabled:
+            text = isRequested ? "等待本地代理" : "未启用"
+            tone = isRequested ? .pending : .neutral
+            isTransitioning = false
+        case .enabling:
+            text = "正在启用"
+            tone = .pending
+            isTransitioning = true
+        case .enabled:
+            text = "已启用"
+            tone = .active
+            isTransitioning = false
+        case .disabling:
+            text = "正在恢复"
+            tone = .pending
+            isTransitioning = true
+        case .failed:
+            text = "操作失败"
+            tone = .error
+            isTransitioning = false
         }
     }
 }

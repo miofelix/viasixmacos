@@ -41,9 +41,22 @@ public struct BootstrapConfiguration: Equatable, Sendable {
 
 typealias ConfigurationFileWriter = @Sendable (Data, URL) throws -> Void
 
+private struct ConfigurationSources: Sendable {
+    let server: Data?
+    let local: LocalProxyConfiguration
+    let compatibilityTemplate: Data
+}
+
+private struct ConfigurationSourceSnapshot: Sendable {
+    let server: Data?
+    let local: Data?
+    let compatibilityTemplate: Data?
+}
+
 public actor AppBootstrapper {
     public let paths: AppPaths
     private let configurationFileWriter: ConfigurationFileWriter
+    private var configurationSourceSnapshot: ConfigurationSourceSnapshot?
 
     public init(paths: AppPaths = .live()) {
         self.paths = paths
@@ -67,6 +80,9 @@ public actor AppBootstrapper {
         try DefaultResourceInstaller.install(into: paths)
         try migrateLegacySplitConfigurationIfNeeded()
         try removeStaleSpeedTestResults()
+        if configurationSourceSnapshot == nil {
+            try captureConfigurationSourceSnapshot()
+        }
     }
 
     /// Older releases stored server and local settings together in
@@ -79,11 +95,8 @@ public actor AppBootstrapper {
         let local = try Self.regularFileDataIfPresent(at: paths.localProxyConfig, using: fileManager)
 
         if let legacy {
-            if server == nil {
-                try Self.writeRestrictedConfigurationFile(
-                    ConfigTemplate.serverConfiguration(from: legacy),
-                    to: paths.serverConfig
-                )
+            if server == nil, let extractedServer = try? ConfigTemplate.serverConfiguration(from: legacy) {
+                try Self.writeRestrictedConfigurationFile(extractedServer, to: paths.serverConfig)
             }
             if local == nil, let extracted = try ConfigTemplate.localConfiguration(from: legacy) {
                 try Self.writeRestrictedConfigurationFile(
@@ -93,11 +106,16 @@ public actor AppBootstrapper {
             }
         }
 
-        if let server,
-            let extracted = try? ConfigTemplate.serverConfiguration(from: server),
-            server != extracted
-        {
-            try Self.writeRestrictedConfigurationFile(extracted, to: paths.serverConfig)
+        if let server {
+            if let extracted = try? ConfigTemplate.serverConfiguration(from: server) {
+                if server != extracted {
+                    try Self.writeRestrictedConfigurationFile(extracted, to: paths.serverConfig)
+                }
+            } else {
+                // A direct-only configuration does not need a server file. Keep
+                // an invalid legacy file untouched here; direct mode ignores it,
+                // while rule/global mode reports the problem when it is used.
+            }
         }
         if local == nil {
             try Self.writeRestrictedConfigurationFile(
@@ -189,16 +207,16 @@ public actor AppBootstrapper {
         return try SpeedTestResultParser.parse(data: Data(contentsOf: paths.resultCSV))
     }
 
-    public func writeConfig(ip: String) throws {
-        let template = try requiredConfigurationFileData(at: paths.templateConfig)
-        let config = try ConfigTemplate.replacingAddress(in: template, with: ip)
+    public func writeConfig(ip: String? = nil) throws {
+        let sources = try loadConfigurationSources()
+        let config = try runtimeConfiguration(from: sources, selectedIP: ip)
         try replaceSingleConfigurationFile(config, at: paths.generatedConfig)
     }
 
     @discardableResult
-    public func prepareConfigForLaunch(ip: String) throws -> ProxyEndpoint {
-        let template = try requiredConfigurationFileData(at: paths.templateConfig)
-        let config = try ConfigTemplate.replacingAddress(in: template, with: ip)
+    public func prepareConfigForLaunch(ip: String? = nil) throws -> ProxyEndpoint {
+        let sources = try loadConfigurationSources()
+        let config = try runtimeConfiguration(from: sources, selectedIP: ip)
         let endpoint = try ConfigTemplate.validateForLaunch(config)
         try replaceSingleConfigurationFile(config, at: paths.generatedConfig)
         return endpoint
@@ -210,10 +228,11 @@ public actor AppBootstrapper {
     /// detected during bootstrap.
     @discardableResult
     public func validateTemplateForLaunch(selectedIP: String? = nil) throws -> ProxyEndpoint {
-        let template = try requiredConfigurationFileData(at: paths.templateConfig)
-        let normalizedIP = selectedIP?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let validationIP = normalizedIP.isEmpty ? "2001:db8::2" : normalizedIP
-        let config = try ConfigTemplate.replacingAddress(in: template, with: validationIP)
+        let sources = try loadConfigurationSources()
+        let config = try runtimeConfiguration(
+            from: sources,
+            selectedIP: validationAddress(selectedIP, server: sources.server)
+        )
         return try ConfigTemplate.validateForLaunch(config)
     }
 
@@ -244,19 +263,33 @@ public actor AppBootstrapper {
         selectedIP: String?,
         expectedTemplateData: Data?
     ) throws -> ProxyEndpoint {
-        let endpoint = try ConfigTemplate.validateTemplate(data)
+        _ = try ConfigTemplate.validateTemplate(data)
+        var local = try ConfigTemplate.localConfiguration(from: data) ?? .default
+        if let existingLocal = try? loadLocalProxyConfiguration() {
+            local.systemProxyEnabled = existingLocal.systemProxyEnabled
+        }
+        let server = try? ConfigTemplate.serverConfiguration(from: data)
+        let sources = ConfigurationSources(
+            server: server,
+            local: local,
+            compatibilityTemplate: data
+        )
         let normalizedIP = selectedIP?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let validationIP = normalizedIP.isEmpty ? "2001:db8::2" : normalizedIP
-        let generatedConfig = try ConfigTemplate.replacingAddress(in: data, with: validationIP)
+        let generatedConfig = try runtimeConfiguration(
+            from: sources,
+            selectedIP: validationAddress(selectedIP, server: server)
+        )
         try ConfigTemplate.validateForLaunch(generatedConfig)
 
         try commitConfiguration(
             template: data,
             generated: normalizedIP.isEmpty ? nil : generatedConfig,
+            server: server,
+            local: JSONEncoder.pretty.encode(local),
             expectedTemplateData: expectedTemplateData
         )
-        try synchronizeSplitFiles(from: data)
-        return endpoint
+        try captureConfigurationSourceSnapshot()
+        return local.endpoint
     }
 
     @discardableResult
@@ -265,7 +298,7 @@ public actor AppBootstrapper {
     }
 
     public func loadServerConfiguration() throws -> Data {
-        try ConfigTemplate.serverConfiguration(
+        try canonicalServerConfiguration(
             from: requiredConfigurationFileData(at: paths.serverConfig)
         )
     }
@@ -275,30 +308,40 @@ public actor AppBootstrapper {
         return try JSONDecoder().decode(LocalProxyConfiguration.self, from: data).validated()
     }
 
+    /// Persists user preferences stored alongside local proxy settings without
+    /// rebuilding the compatibility template or the active Xray configuration.
+    /// This is intended for settings that may change while Xray is running.
+    public func saveLocalProxyPreference(_ local: LocalProxyConfiguration) throws {
+        let local = try local.validated()
+        try replaceSplitConfigurationFile(
+            JSONEncoder.pretty.encode(local),
+            at: paths.localProxyConfig
+        )
+        try captureConfigurationSourceSnapshot()
+    }
+
     @discardableResult
     public func replaceServerConfiguration(
         with data: Data,
         selectedIP: String? = nil
     ) throws -> ProxyEndpoint {
-        let server = try ConfigTemplate.serverConfiguration(from: data)
-        let previousServer = try? loadServerConfiguration()
-        let currentTemplate = try requiredConfigurationFileData(at: paths.templateConfig)
-        let updatedTemplate = try ConfigTemplate.updatingServerConfiguration(
-            in: currentTemplate,
-            with: server
+        let server = try canonicalServerConfiguration(from: data)
+        let currentSources = try loadConfigurationSources()
+        let updatedTemplate = try compatibilityTemplate(
+            server: server,
+            local: currentSources.local,
+            base: currentSources.compatibilityTemplate
+        )
+        let updatedSources = ConfigurationSources(
+            server: server,
+            local: currentSources.local,
+            compatibilityTemplate: updatedTemplate
         )
         let result = try commitSplitConfiguration(
-            template: updatedTemplate,
+            sources: updatedSources,
             selectedIP: selectedIP
         )
-        do {
-            try Self.writeRestrictedConfigurationFile(server, to: paths.serverConfig)
-        } catch {
-            if let previousServer {
-                try? Self.writeRestrictedConfigurationFile(previousServer, to: paths.serverConfig)
-            }
-            throw error
-        }
+        try captureConfigurationSourceSnapshot()
         return result
     }
 
@@ -308,68 +351,57 @@ public actor AppBootstrapper {
         selectedIP: String? = nil
     ) throws -> ProxyEndpoint {
         let local = try local.validated()
-        let previousLocal = try? loadLocalProxyConfiguration()
-        let currentTemplate = try requiredConfigurationFileData(at: paths.templateConfig)
-        let updatedTemplate = try ConfigTemplate.updatingLocalConfiguration(
-            in: currentTemplate,
-            with: local
+        let currentSources = try loadConfigurationSources()
+        let server =
+            local.routingMode == .direct
+            ? currentSources.server
+            : try requiredServer(
+                currentSources.server
+            )
+        let updatedTemplate = try compatibilityTemplate(
+            server: server,
+            local: local,
+            base: currentSources.compatibilityTemplate
+        )
+        let updatedSources = ConfigurationSources(
+            server: server,
+            local: local,
+            compatibilityTemplate: updatedTemplate
         )
         let result = try commitSplitConfiguration(
-            template: updatedTemplate,
+            sources: updatedSources,
             selectedIP: selectedIP
         )
-        do {
-            try Self.writeRestrictedConfigurationFile(
-                JSONEncoder.pretty.encode(local),
-                to: paths.localProxyConfig
-            )
-        } catch {
-            if let previousLocal {
-                try? Self.writeRestrictedConfigurationFile(
-                    JSONEncoder.pretty.encode(previousLocal),
-                    to: paths.localProxyConfig
-                )
-            }
-            throw error
-        }
+        try captureConfigurationSourceSnapshot()
         return result
     }
 
     private func commitSplitConfiguration(
-        template: Data,
+        sources: ConfigurationSources,
         selectedIP: String?
     ) throws -> ProxyEndpoint {
         let normalizedIP = selectedIP?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let validationIP = normalizedIP.isEmpty ? "2001:db8::2" : normalizedIP
-        let validatedConfig = try ConfigTemplate.replacingAddress(in: template, with: validationIP)
+        let validatedConfig = try runtimeConfiguration(
+            from: sources,
+            selectedIP: validationAddress(selectedIP, server: sources.server)
+        )
         let endpoint = try ConfigTemplate.validateForLaunch(validatedConfig)
         try commitConfiguration(
-            template: template,
+            template: sources.compatibilityTemplate,
             generated: normalizedIP.isEmpty ? nil : validatedConfig,
+            server: sources.server,
+            local: JSONEncoder.pretty.encode(sources.local),
             expectedTemplateData: nil
         )
         return endpoint
-    }
-
-    private func synchronizeSplitFiles(from template: Data) throws {
-        try Self.writeRestrictedConfigurationFile(
-            ConfigTemplate.serverConfiguration(from: template),
-            to: paths.serverConfig
-        )
-        if let local = try ConfigTemplate.localConfiguration(from: template) {
-            try Self.writeRestrictedConfigurationFile(
-                JSONEncoder.pretty.encode(local),
-                to: paths.localProxyConfig
-            )
-        }
     }
 
     @discardableResult
     public func ensureConfig(ip: String) throws -> Bool {
         let normalizedIP = ip.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedIP.isEmpty else { return false }
-        let template = try requiredConfigurationFileData(at: paths.templateConfig)
-        let expectedConfig = try ConfigTemplate.replacingAddress(in: template, with: normalizedIP)
+        let sources = try loadConfigurationSources()
+        let expectedConfig = try runtimeConfiguration(from: sources, selectedIP: normalizedIP)
         if try configurationFileMatches(expectedConfig, at: paths.generatedConfig) {
             return false
         }
@@ -379,16 +411,18 @@ public actor AppBootstrapper {
 
     public func synchronizeConfiguration(selectedIP: String?) throws -> BootstrapConfiguration {
         try migrateLegacySplitConfigurationIfNeeded()
-        let template = try requiredConfigurationFileData(at: paths.templateConfig)
-        let local = try loadLocalProxyConfiguration()
-        let endpoint = try ConfigTemplate.validateTemplate(template)
+        let sources = try loadConfigurationSources()
+        let local = sources.local
+        let endpoint = local.endpoint
         let generatedData = try regularFileDataIfPresent(at: paths.generatedConfig)
         let configuredIP = generatedData.flatMap { ConfigTemplate.address(in: $0) }?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedIP = selectedIP?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let effectiveIP = configuredIP?.isEmpty == false ? configuredIP : (selectedIP.isEmpty ? nil : selectedIP)
-        let validationIP = effectiveIP ?? "2001:db8::2"
-        let expectedConfig = try ConfigTemplate.replacingAddress(in: template, with: validationIP)
+        let expectedConfig = try runtimeConfiguration(
+            from: sources,
+            selectedIP: validationAddress(effectiveIP, server: sources.server)
+        )
         let launchIssue: ConfigTemplateError?
         do {
             _ = try ConfigTemplate.validateForLaunch(expectedConfig)
@@ -398,7 +432,7 @@ public actor AppBootstrapper {
             launchIssue = error
         }
 
-        if effectiveIP != nil,
+        if effectiveIP != nil || local.routingMode == .direct,
             try !configurationFileMatches(expectedConfig, at: paths.generatedConfig)
         {
             try replaceSingleConfigurationFile(expectedConfig, at: paths.generatedConfig)
@@ -411,9 +445,184 @@ public actor AppBootstrapper {
         )
     }
 
+    private func loadConfigurationSources() throws -> ConfigurationSources {
+        let localData = try requiredConfigurationFileData(at: paths.localProxyConfig)
+        var local = try JSONDecoder().decode(LocalProxyConfiguration.self, from: localData).validated()
+        let splitServerData = try regularFileDataIfPresent(at: paths.serverConfig)
+        let compatibilityData = try regularFileDataIfPresent(at: paths.templateConfig)
+        let currentSnapshot = ConfigurationSourceSnapshot(
+            server: splitServerData,
+            local: localData,
+            compatibilityTemplate: compatibilityData
+        )
+        let compatibilityChanged: Bool
+        let splitChanged: Bool
+        if let previousSnapshot = configurationSourceSnapshot {
+            compatibilityChanged =
+                currentSnapshot.compatibilityTemplate != previousSnapshot.compatibilityTemplate
+            splitChanged =
+                currentSnapshot.server != previousSnapshot.server
+                || currentSnapshot.local != previousSnapshot.local
+        } else {
+            compatibilityChanged = false
+            splitChanged = false
+            configurationSourceSnapshot = currentSnapshot
+        }
+        let useCompatibilityConfiguration = compatibilityChanged && !splitChanged
+
+        if useCompatibilityConfiguration, let compatibilityData {
+            _ = try ConfigTemplate.validateTemplate(compatibilityData)
+            if var compatibilityLocal = try ConfigTemplate.localConfiguration(from: compatibilityData) {
+                compatibilityLocal.systemProxyEnabled = local.systemProxyEnabled
+                local = compatibilityLocal
+            }
+        }
+
+        var server: Data?
+        if let splitServerData {
+            do {
+                server = try canonicalServerConfiguration(from: splitServerData)
+            } catch {
+                guard local.routingMode == .direct else { throw error }
+            }
+        }
+
+        if useCompatibilityConfiguration, let compatibilityData {
+            if let compatibilityServer = try? canonicalServerConfiguration(from: compatibilityData) {
+                server = compatibilityServer
+            } else if local.routingMode == .direct {
+                server = nil
+            }
+        }
+
+        if local.routingMode != .direct {
+            server = try requiredServer(server)
+        }
+
+        let template = try compatibilityTemplate(
+            server: server,
+            local: local,
+            base: compatibilityData
+        )
+        return ConfigurationSources(
+            server: server,
+            local: local,
+            compatibilityTemplate: template
+        )
+    }
+
+    private func compatibilityTemplate(
+        server: Data?,
+        local: LocalProxyConfiguration,
+        base: Data?
+    ) throws -> Data {
+        if let base {
+            do {
+                var template = base
+                if let server {
+                    template = try ConfigTemplate.updatingServerConfiguration(
+                        in: template,
+                        with: server
+                    )
+                }
+                template = try ConfigTemplate.updatingLocalConfiguration(
+                    in: template,
+                    with: local
+                )
+                _ = try ConfigTemplate.validateTemplate(template)
+                return template
+            } catch let error as ConfigTemplateError where error != .connectionNotConfigured {
+                // A compatibility mirror from an older release may no longer
+                // be usable. The split files are sufficient to rebuild it.
+            }
+        }
+
+        return try ConfigTemplate.runtimeConfiguration(
+            server: local.routingMode == .direct ? nil : try requiredServer(server),
+            local: local,
+            address: validationAddress(nil, server: server)
+        )
+    }
+
+    private func runtimeConfiguration(
+        from sources: ConfigurationSources,
+        selectedIP: String?
+    ) throws -> Data {
+        let local = try sources.local.validated()
+        var template = try ConfigTemplate.updatingLocalConfiguration(
+            in: sources.compatibilityTemplate,
+            with: local
+        )
+
+        if local.routingMode == .direct {
+            return try removingProxyOutbound(from: template)
+        }
+
+        let server = try requiredServer(sources.server)
+        template = try ConfigTemplate.updatingServerConfiguration(in: template, with: server)
+        return try ConfigTemplate.replacingAddress(
+            in: template,
+            with: validationAddress(selectedIP, server: server)
+        )
+    }
+
+    private func removingProxyOutbound(from configuration: Data) throws -> Data {
+        guard
+            var object = try JSONSerialization.jsonObject(with: configuration) as? [String: Any],
+            var outbounds = object["outbounds"] as? [[String: Any]]
+        else {
+            throw ConfigTemplateError.invalidJSON
+        }
+        outbounds.removeAll { $0["tag"] as? String == "proxy" }
+        object["outbounds"] = outbounds
+        guard JSONSerialization.isValidJSONObject(object) else {
+            throw ConfigTemplateError.invalidJSON
+        }
+        return try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        )
+    }
+
+    private func canonicalServerConfiguration(from data: Data) throws -> Data {
+        try ConfigTemplate.serverConfiguration(from: data)
+    }
+
+    private func requiredServer(_ server: Data?) throws -> Data {
+        guard let server else {
+            throw ConfigTemplateError.connectionNotConfigured
+        }
+        return server
+    }
+
+    private func validationAddress(_ selectedIP: String?, server: Data?) -> String {
+        let normalizedIP = selectedIP?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !normalizedIP.isEmpty {
+            return normalizedIP
+        }
+        let serverAddress =
+            server.flatMap(ConfigTemplate.address(in:))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return serverAddress.isEmpty ? "2001:db8::2" : serverAddress
+    }
+
+    private func captureConfigurationSourceSnapshot() throws {
+        configurationSourceSnapshot = ConfigurationSourceSnapshot(
+            server: try regularFileDataIfPresent(at: paths.serverConfig),
+            local: try regularFileDataIfPresent(at: paths.localProxyConfig),
+            compatibilityTemplate: try regularFileDataIfPresent(at: paths.templateConfig)
+        )
+    }
+
+    private func replaceSplitConfigurationFile(_ data: Data, at destination: URL) throws {
+        try replaceSingleConfigurationFile(data, at: destination)
+    }
+
     private func commitConfiguration(
         template: Data,
         generated: Data?,
+        server: Data?,
+        local: Data,
         expectedTemplateData: Data?
     ) throws {
         let fileManager = FileManager.default
@@ -437,6 +646,12 @@ public actor AppBootstrapper {
             try configurationFileWriter(generated, transaction.stagedGenerated)
             try Self.validateAndRestrictStagedFile(transaction.stagedGenerated, using: fileManager)
         }
+        if let server {
+            try configurationFileWriter(server, transaction.stagedServer)
+            try Self.validateAndRestrictStagedFile(transaction.stagedServer, using: fileManager)
+        }
+        try configurationFileWriter(local, transaction.stagedLocal)
+        try Self.validateAndRestrictStagedFile(transaction.stagedLocal, using: fileManager)
 
         let templateSnapshot = try ConfigurationFileSnapshot.capture(
             paths.templateConfig,
@@ -448,6 +663,16 @@ public actor AppBootstrapper {
             backupURL: transaction.generatedBackup,
             using: fileManager
         )
+        let serverSnapshot = try ConfigurationFileSnapshot.capture(
+            paths.serverConfig,
+            backupURL: transaction.serverBackup,
+            using: fileManager
+        )
+        let localSnapshot = try ConfigurationFileSnapshot.capture(
+            paths.localProxyConfig,
+            backupURL: transaction.localBackup,
+            using: fileManager
+        )
         if let expectedTemplateData, templateSnapshot.data != expectedTemplateData {
             throw AppBootstrapperError.templateChangedExternally
         }
@@ -455,11 +680,15 @@ public actor AppBootstrapper {
         let preparedManifest = ConfigurationTransactionManifest(
             state: .prepared,
             templateExisted: templateSnapshot.existed,
-            generatedExisted: generatedSnapshot.existed
+            generatedExisted: generatedSnapshot.existed,
+            serverExisted: serverSnapshot.existed,
+            localExisted: localSnapshot.existed
         )
         try Self.writeTransactionManifest(preparedManifest, to: transaction.manifest)
         try templateSnapshot.assertUnchanged(at: paths.templateConfig, using: fileManager)
         try generatedSnapshot.assertUnchanged(at: paths.generatedConfig, using: fileManager)
+        try serverSnapshot.assertUnchanged(at: paths.serverConfig, using: fileManager)
+        try localSnapshot.assertUnchanged(at: paths.localProxyConfig, using: fileManager)
 
         do {
             if generated != nil {
@@ -471,6 +700,20 @@ public actor AppBootstrapper {
             } else {
                 try Self.removeRegularFileIfPresent(paths.generatedConfig, using: fileManager)
             }
+            if server != nil {
+                try Self.publishStagedFile(
+                    transaction.stagedServer,
+                    to: paths.serverConfig,
+                    using: fileManager
+                )
+            } else {
+                try Self.removeRegularFileIfPresent(paths.serverConfig, using: fileManager)
+            }
+            try Self.publishStagedFile(
+                transaction.stagedLocal,
+                to: paths.localProxyConfig,
+                using: fileManager
+            )
             try Self.publishStagedFile(
                 transaction.stagedTemplate,
                 to: paths.templateConfig,
@@ -479,7 +722,9 @@ public actor AppBootstrapper {
             let committedManifest = ConfigurationTransactionManifest(
                 state: .committed,
                 templateExisted: templateSnapshot.existed,
-                generatedExisted: generatedSnapshot.existed
+                generatedExisted: generatedSnapshot.existed,
+                serverExisted: serverSnapshot.existed,
+                localExisted: localSnapshot.existed
             )
             try Self.writeTransactionManifest(committedManifest, to: transaction.manifest)
         } catch {
@@ -487,6 +732,8 @@ public actor AppBootstrapper {
             let rollbackErrors = rollbackConfiguration(
                 templateSnapshot: templateSnapshot,
                 generatedSnapshot: generatedSnapshot,
+                serverSnapshot: serverSnapshot,
+                localSnapshot: localSnapshot,
                 using: fileManager
             )
             if !rollbackErrors.isEmpty {
@@ -593,9 +840,25 @@ public actor AppBootstrapper {
             data: nil,
             backupURL: transaction.generatedBackup
         )
+        let serverSnapshot = manifest.serverExisted.map {
+            ConfigurationFileSnapshot(
+                existed: $0,
+                data: nil,
+                backupURL: transaction.serverBackup
+            )
+        }
+        let localSnapshot = manifest.localExisted.map {
+            ConfigurationFileSnapshot(
+                existed: $0,
+                data: nil,
+                backupURL: transaction.localBackup
+            )
+        }
         let errors = rollbackConfiguration(
             templateSnapshot: templateSnapshot,
             generatedSnapshot: generatedSnapshot,
+            serverSnapshot: serverSnapshot,
+            localSnapshot: localSnapshot,
             using: fileManager
         )
         guard errors.isEmpty else {
@@ -609,13 +872,22 @@ public actor AppBootstrapper {
     private func rollbackConfiguration(
         templateSnapshot: ConfigurationFileSnapshot,
         generatedSnapshot: ConfigurationFileSnapshot,
+        serverSnapshot: ConfigurationFileSnapshot? = nil,
+        localSnapshot: ConfigurationFileSnapshot? = nil,
         using fileManager: FileManager
     ) -> [String] {
         var errors: [String] = []
-        for (label, snapshot, destination) in [
+        var files = [
             ("template.json", templateSnapshot, paths.templateConfig),
             ("config.json", generatedSnapshot, paths.generatedConfig),
-        ] {
+        ]
+        if let serverSnapshot {
+            files.append(("server.json", serverSnapshot, paths.serverConfig))
+        }
+        if let localSnapshot {
+            files.append(("local-proxy.json", localSnapshot, paths.localProxyConfig))
+        }
+        for (label, snapshot, destination) in files {
             do {
                 try snapshot.restore(to: destination, using: fileManager)
             } catch {
@@ -736,16 +1008,24 @@ private struct ConfigurationTransactionPaths {
     let manifest: URL
     let stagedTemplate: URL
     let stagedGenerated: URL
+    let stagedServer: URL
+    let stagedLocal: URL
     let templateBackup: URL
     let generatedBackup: URL
+    let serverBackup: URL
+    let localBackup: URL
 
     init(root: URL) {
         self.root = root
         manifest = root.appendingPathComponent("manifest.json")
         stagedTemplate = root.appendingPathComponent("template.stage.json")
         stagedGenerated = root.appendingPathComponent("config.stage.json")
+        stagedServer = root.appendingPathComponent("server.stage.json")
+        stagedLocal = root.appendingPathComponent("local-proxy.stage.json")
         templateBackup = root.appendingPathComponent("template.backup.json")
         generatedBackup = root.appendingPathComponent("config.backup.json")
+        serverBackup = root.appendingPathComponent("server.backup.json")
+        localBackup = root.appendingPathComponent("local-proxy.backup.json")
     }
 }
 
@@ -758,6 +1038,8 @@ private struct ConfigurationTransactionManifest: Codable, Sendable {
     let state: State
     let templateExisted: Bool
     let generatedExisted: Bool
+    let serverExisted: Bool?
+    let localExisted: Bool?
 }
 
 private struct ConfigurationFileSnapshot: Sendable {

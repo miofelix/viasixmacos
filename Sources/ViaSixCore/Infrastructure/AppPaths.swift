@@ -14,6 +14,8 @@ public struct AppPaths: Sendable, Equatable {
     public let templateConfig: URL
     public let serverConfig: URL
     public let localProxyConfig: URL
+    /// A crash-safe snapshot of the macOS proxy settings changed by ViaSix.
+    public let systemProxySnapshot: URL
     public let generatedConfig: URL
     public let ipv4List: URL
     public let ipv6List: URL
@@ -30,6 +32,7 @@ public struct AppPaths: Sendable, Equatable {
         self.templateConfig = data.appendingPathComponent("template.json")
         self.serverConfig = data.appendingPathComponent("server.json")
         self.localProxyConfig = data.appendingPathComponent("local-proxy.json")
+        self.systemProxySnapshot = data.appendingPathComponent("system-proxy.json")
         self.generatedConfig = data.appendingPathComponent("config.json")
         self.ipv4List = data.appendingPathComponent("ip.txt")
         self.ipv6List = data.appendingPathComponent("ipv6.txt")

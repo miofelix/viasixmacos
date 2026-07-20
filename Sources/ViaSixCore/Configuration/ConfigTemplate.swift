@@ -56,7 +56,11 @@ public enum ConfigTemplate {
 
     @discardableResult
     public static func validateTemplate(_ template: Data) throws -> ProxyEndpoint {
-        let endpoint = try validateLocalInbounds(in: configurationObject(in: template))
+        let object = try configurationObject(in: template)
+        let endpoint = try validateLocalInbounds(in: object)
+        if try isDirectConfiguration(object) {
+            return endpoint
+        }
         _ = try replacingAddress(in: template, with: "2001:db8::1")
         return endpoint
     }
@@ -66,6 +70,9 @@ public enum ConfigTemplate {
         let object = try configurationObject(in: config)
         let endpoint = try validateLocalInbounds(in: object)
         let outbounds = try outboundList(in: object)
+        if try isDirectConfiguration(object, outbounds: outbounds) {
+            return endpoint
+        }
         guard let proxy = outbounds.first(where: { $0["tag"] as? String == "proxy" }) else {
             throw ConfigTemplateError.missingProxyOutbound
         }
@@ -146,6 +153,43 @@ public enum ConfigTemplate {
             throw ConfigTemplateError.missingOutbounds
         }
         return outbounds
+    }
+
+    /// Direct mode is valid without server credentials. It is recognized by
+    /// either ViaSix's explicit direct catch-all route or by a direct-only
+    /// outbound list, so generated configurations and concise advanced JSON
+    /// documents share the same validation behavior.
+    private static func isDirectConfiguration(
+        _ config: [String: Any],
+        outbounds suppliedOutbounds: [[String: Any]]? = nil
+    ) throws -> Bool {
+        let outbounds: [[String: Any]]
+        if let suppliedOutbounds {
+            outbounds = suppliedOutbounds
+        } else {
+            outbounds = try outboundList(in: config)
+        }
+        let hasDirect = outbounds.contains { outbound in
+            outbound["tag"] as? String == "direct"
+                && (outbound["protocol"] as? String)?.lowercased() == "freedom"
+        }
+        guard hasDirect else { return false }
+
+        let hasProxy = outbounds.contains { $0["tag"] as? String == "proxy" }
+        if !hasProxy { return true }
+
+        let rules = (config["routing"] as? [String: Any])?["rules"] as? [[String: Any]] ?? []
+        return rules.contains { rule in
+            guard rule["type"] as? String == "field" else { return false }
+            guard rule["outboundTag"] as? String == "direct" else { return false }
+            guard let network = rule["network"] as? String else { return false }
+            let networks = Set(
+                network.split(separator: ",").map {
+                    String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                })
+            guard networks.contains("tcp") && networks.contains("udp") else { return false }
+            return Set(rule.keys).subtracting(["type", "network", "outboundTag"]).isEmpty
+        }
     }
 
     private static func validateLocalInbounds(in config: [String: Any]) throws -> ProxyEndpoint {

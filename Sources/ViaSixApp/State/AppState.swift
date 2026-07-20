@@ -71,6 +71,21 @@ struct AppState: Equatable, Sendable {
         case failed(String)
     }
 
+    enum SystemProxyPhase: Equatable, Sendable {
+        case disabled
+        case enabling
+        case enabled
+        case disabling
+        case failed(String)
+
+        var isTransitioning: Bool {
+            switch self {
+            case .enabling, .disabling: true
+            case .disabled, .enabled, .failed: false
+            }
+        }
+    }
+
     enum TemplateOperationPhase: Equatable, Sendable {
         case idle
         case importing
@@ -130,6 +145,9 @@ struct AppState: Equatable, Sendable {
     var speedTest = SpeedTestState()
     var configurationTest = ConfigurationTestState()
     var xrayPhase: XrayPhase = .stopped
+    /// Actual macOS proxy state, kept separate from the user's local
+    /// preference (`localProxyConfiguration.systemProxyEnabled`).
+    var systemProxyPhase: SystemProxyPhase = .disabled
     var templateOperationPhase: TemplateOperationPhase = .idle
     var templateOperationError: String?
     var proxyEndpoint = ProxyEndpoint()

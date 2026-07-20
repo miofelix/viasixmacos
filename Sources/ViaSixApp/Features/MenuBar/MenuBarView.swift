@@ -250,7 +250,8 @@ struct MenuBarView: View {
                     || model.isTemplateOperationBusy
                     || model.switchingIP != nil
                     || !model.hasXrayExecutable
-                    || model.state.preferences.selectedIP.isEmpty
+                    || (model.requiresSelectedNodeForProxy
+                        && model.state.preferences.selectedIP.isEmpty)
                     || !model.isProxyConfigurationReady
             )
         case .validating, .starting:
@@ -344,7 +345,9 @@ struct MenuBarView: View {
         case .stopped, .failed:
             break
         }
-        if model.state.preferences.selectedIP.isEmpty {
+        if model.requiresSelectedNodeForProxy
+            && model.state.preferences.selectedIP.isEmpty
+        {
             return "请先打开 ViaSix 选择节点"
         }
         if let issue = model.proxyConfigurationIssue {

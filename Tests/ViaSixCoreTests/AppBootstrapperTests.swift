@@ -544,6 +544,111 @@ final class AppBootstrapperTests: XCTestCase {
         XCTAssertEqual(ConfigTemplate.address(in: Data(generated.utf8)), "2606::8")
     }
 
+    func testPrepareConfigForLaunchBuildsFromSplitServerAndLocalSettings() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+
+        let splitServer = try ConfigTemplate.serverConfiguration(
+            from: TestConfigFixtures.connectionTemplate(
+                userID: "75bc54ec-d578-445a-9608-aec3f1b91c25",
+                serverName: "split.example.net",
+                path: "/split"
+            )
+        )
+        let splitLocal = LocalProxyConfiguration(
+            listenAddress: "127.0.0.2",
+            port: 18_080,
+            bypassPrivateNetworks: false,
+            routingMode: .global
+        )
+        try splitServer.write(to: paths.serverConfig, options: .atomic)
+        try JSONEncoder.pretty.encode(splitLocal).write(
+            to: paths.localProxyConfig,
+            options: .atomic
+        )
+
+        let endpoint = try await bootstrapper.prepareConfigForLaunch(ip: "2606::80")
+
+        XCTAssertEqual(endpoint, splitLocal.endpoint)
+        let generated = try Data(contentsOf: paths.generatedConfig)
+        let generatedText = String(decoding: generated, as: UTF8.self)
+        XCTAssertTrue(generatedText.contains("75bc54ec-d578-445a-9608-aec3f1b91c25"))
+        XCTAssertTrue(generatedText.contains("split.example.net"))
+        XCTAssertTrue(generatedText.contains("/split"))
+        XCTAssertEqual(ConfigTemplate.address(in: generated), "2606::80")
+        XCTAssertEqual(
+            try ConfigTemplate.localConfiguration(from: generated),
+            splitLocal
+        )
+    }
+
+    func testDirectModeLaunchesWithoutServerOrSelectedIP() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+
+        let direct = LocalProxyConfiguration(
+            listenAddress: "127.0.0.3",
+            port: 19_090,
+            routingMode: .direct
+        )
+        _ = try await bootstrapper.replaceLocalProxyConfiguration(with: direct)
+        try FileManager.default.removeItem(at: paths.serverConfig)
+
+        let endpoint = try await bootstrapper.prepareConfigForLaunch()
+
+        XCTAssertEqual(endpoint, direct.endpoint)
+        let generated = try Data(contentsOf: paths.generatedConfig)
+        XCTAssertNil(ConfigTemplate.address(in: generated))
+        XCTAssertNoThrow(try ConfigTemplate.validateForLaunch(generated))
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: generated) as? [String: Any]
+        )
+        let outbounds = try XCTUnwrap(object["outbounds"] as? [[String: Any]])
+        XCTAssertEqual(outbounds.compactMap { $0["tag"] as? String }, ["direct", "block"])
+    }
+
+    func testSynchronizeDirectModeDoesNotRequireServerOrSelectedIP() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        let direct = LocalProxyConfiguration(routingMode: .direct)
+        _ = try await bootstrapper.replaceLocalProxyConfiguration(with: direct)
+        try FileManager.default.removeItem(at: paths.serverConfig)
+        try? FileManager.default.removeItem(at: paths.generatedConfig)
+
+        let configuration = try await bootstrapper.synchronizeConfiguration(selectedIP: nil)
+
+        XCTAssertEqual(configuration.local, direct)
+        XCTAssertEqual(configuration.endpoint, direct.endpoint)
+        XCTAssertNil(configuration.effectiveIP)
+        XCTAssertNil(configuration.launchIssue)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.generatedConfig.path))
+    }
+
+    func testSaveLocalProxyPreferenceDoesNotRewriteRuntimeConfiguration() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        try await bootstrapper.writeConfig(ip: "2606::9")
+        let templateBefore = try Data(contentsOf: paths.templateConfig)
+        let generatedBefore = try Data(contentsOf: paths.generatedConfig)
+        var local = try await bootstrapper.loadLocalProxyConfiguration()
+        local.systemProxyEnabled = true
+
+        try await bootstrapper.saveLocalProxyPreference(local)
+
+        let savedLocal = try await bootstrapper.loadLocalProxyConfiguration()
+        XCTAssertTrue(savedLocal.systemProxyEnabled)
+        XCTAssertEqual(try Data(contentsOf: paths.templateConfig), templateBefore)
+        XCTAssertEqual(try Data(contentsOf: paths.generatedConfig), generatedBefore)
+    }
+
     private func makePaths() -> AppPaths {
         AppPaths(
             root: FileManager.default.temporaryDirectory

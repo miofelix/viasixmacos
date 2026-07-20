@@ -4,6 +4,20 @@ import XCTest
 @testable import ViaSixCore
 
 final class SplitProxyConfigurationTests: XCTestCase {
+    func testLegacyLocalProxyConfigurationDefaultsToRuleMode() throws {
+        let legacy = Data(
+            #"{"listenAddress":"127.0.0.2","port":18080,"udpEnabled":false,"sniffingEnabled":false,"bypassPrivateNetworks":false,"logLevel":"info"}"#
+                .utf8
+        )
+
+        let local = try JSONDecoder().decode(LocalProxyConfiguration.self, from: legacy)
+
+        XCTAssertEqual(local.routingMode, .rule)
+        XCTAssertFalse(local.systemProxyEnabled)
+        XCTAssertEqual(local.endpoint, ProxyEndpoint(host: "127.0.0.2", port: 18_080))
+        XCTAssertFalse(local.udpEnabled)
+    }
+
     func testLegacyTemplateSplitsServerAndLocalSettings() throws {
         let legacy = try TestConfigFixtures.connectionTemplate(
             address: "2001:db8::10",
@@ -59,6 +73,108 @@ final class SplitProxyConfigurationTests: XCTestCase {
         XCTAssertNil(object["routing"])
     }
 
+    func testRuleModeGeneratesPrivateNetworkBypassAndDefaultsOtherTrafficToProxy() throws {
+        let server = try configuredServer()
+        let local = LocalProxyConfiguration(
+            bypassPrivateNetworks: true,
+            routingMode: .rule
+        )
+
+        let runtime = try ConfigTemplate.runtimeConfiguration(
+            server: server,
+            local: local,
+            address: "2606:4700::1111"
+        )
+        let object = try configurationObject(runtime)
+        let rules = try routingRules(object)
+
+        XCTAssertEqual(rules.count, 1)
+        XCTAssertEqual(rules[0]["outboundTag"] as? String, "direct")
+        XCTAssertEqual(rules[0]["ip"] as? [String], ["geoip:private"])
+        XCTAssertEqual(try ConfigTemplate.localConfiguration(from: runtime)?.routingMode, .rule)
+        XCTAssertNoThrow(try ConfigTemplate.validateForLaunch(runtime))
+    }
+
+    func testGlobalModeGeneratesCatchAllProxyRoute() throws {
+        let server = try configuredServer()
+        let local = LocalProxyConfiguration(
+            bypassPrivateNetworks: true,
+            routingMode: .global
+        )
+
+        let runtime = try ConfigTemplate.runtimeConfiguration(
+            server: server,
+            local: local,
+            address: "2606:4700::1111"
+        )
+        let object = try configurationObject(runtime)
+        let rules = try routingRules(object)
+
+        XCTAssertEqual(rules.count, 1)
+        XCTAssertEqual(rules[0]["outboundTag"] as? String, "proxy")
+        XCTAssertEqual(rules[0]["network"] as? String, "tcp,udp")
+        XCTAssertNil(rules[0]["ip"])
+        XCTAssertEqual(try ConfigTemplate.localConfiguration(from: runtime)?.routingMode, .global)
+        XCTAssertNoThrow(try ConfigTemplate.validateForLaunch(runtime))
+    }
+
+    func testDirectModeBuildsAndValidatesWithoutServerConfiguration() throws {
+        let local = LocalProxyConfiguration(routingMode: .direct)
+
+        let runtime = try ConfigTemplate.runtimeConfiguration(
+            server: nil,
+            local: local,
+            address: ""
+        )
+        let object = try configurationObject(runtime)
+        let outbounds = try XCTUnwrap(object["outbounds"] as? [[String: Any]])
+        let rules = try routingRules(object)
+
+        XCTAssertEqual(outbounds.compactMap { $0["tag"] as? String }, ["direct", "block"])
+        XCTAssertEqual(rules.count, 1)
+        XCTAssertEqual(rules[0]["outboundTag"] as? String, "direct")
+        XCTAssertEqual(rules[0]["network"] as? String, "tcp,udp")
+        XCTAssertEqual(try ConfigTemplate.localConfiguration(from: runtime)?.routingMode, .direct)
+        XCTAssertNoThrow(try ConfigTemplate.validateTemplate(runtime))
+        XCTAssertNoThrow(try ConfigTemplate.validateForLaunch(runtime))
+    }
+
+    func testRuleAndGlobalModesRequireServerConfiguration() {
+        for mode in [ProxyRoutingMode.rule, .global] {
+            XCTAssertThrowsError(
+                try ConfigTemplate.runtimeConfiguration(
+                    server: nil,
+                    local: LocalProxyConfiguration(routingMode: mode),
+                    address: "2606:4700::1111"
+                )
+            ) { error in
+                XCTAssertEqual(error as? ConfigTemplateError, .connectionNotConfigured)
+            }
+        }
+    }
+
+    func testDirectRoutingSkipsPlaceholderServerValidation() throws {
+        let placeholder = try TestConfigFixtures.connectionTemplate(
+            userID: ConfigTemplate.placeholderUserID,
+            serverName: ConfigTemplate.placeholderServerName,
+            path: "/"
+        )
+        let directTemplate = try ConfigTemplate.updatingLocalConfiguration(
+            in: placeholder,
+            with: LocalProxyConfiguration(routingMode: .direct)
+        )
+
+        XCTAssertNoThrow(try ConfigTemplate.validateForLaunch(directTemplate))
+
+        let globalTemplate = try ConfigTemplate.updatingLocalConfiguration(
+            in: directTemplate,
+            with: LocalProxyConfiguration(routingMode: .global)
+        )
+        XCTAssertThrowsError(try ConfigTemplate.validateForLaunch(globalTemplate)) { error in
+            XCTAssertEqual(error as? ConfigTemplateError, .connectionNotConfigured)
+        }
+    }
+
     func testGuidedServerProfileRoundTripsVlessWebSocketTLS() throws {
         let profile = try XrayServerProfile(
             serverPort: 443,
@@ -110,5 +226,23 @@ final class SplitProxyConfigurationTests: XCTestCase {
         XCTAssertNoThrow(try ConfigTemplate.serverConfiguration(for: vmess))
         XCTAssertNoThrow(try ConfigTemplate.serverConfiguration(for: trojan))
         XCTAssertNoThrow(try ConfigTemplate.serverConfiguration(for: shadowsocks))
+    }
+
+    private func configuredServer() throws -> Data {
+        let legacy = try TestConfigFixtures.connectionTemplate(
+            userID: "7b602ceb-cc3f-4274-a79d-c1a38f0fb0da",
+            serverName: "edge.example.test",
+            path: "/proxy"
+        )
+        return try ConfigTemplate.serverConfiguration(from: legacy)
+    }
+
+    private func configurationObject(_ data: Data) throws -> [String: Any] {
+        try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private func routingRules(_ object: [String: Any]) throws -> [[String: Any]] {
+        let routing = try XCTUnwrap(object["routing"] as? [String: Any])
+        return try XCTUnwrap(routing["rules"] as? [[String: Any]])
     }
 }

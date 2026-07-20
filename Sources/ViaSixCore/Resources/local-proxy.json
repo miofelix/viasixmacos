@@ -4,5 +4,7 @@
   "udpEnabled": true,
   "sniffingEnabled": true,
   "bypassPrivateNetworks": true,
-  "logLevel": "warning"
+  "logLevel": "warning",
+  "routingMode": "rule",
+  "systemProxyEnabled": false
 }

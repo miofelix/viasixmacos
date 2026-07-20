@@ -276,6 +276,193 @@ final class AppModelTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testRoutingModeCanSwitchToDirectWithoutServerOrSelectedNode() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        let model = makeModel(paths: paths, bootstrapper: bootstrapper)
+        model.start()
+        try await waitUntilReady(model)
+        XCTAssertFalse(model.isProxyConfigurationReady)
+
+        model.setRoutingMode(.direct)
+        try await waitUntil {
+            !model.isRoutingModeChanging
+                && model.state.localProxyConfiguration.routingMode == .direct
+        }
+
+        XCTAssertTrue(model.isProxyConfigurationReady)
+        XCTAssertFalse(model.requiresSelectedNodeForProxy)
+        let stored = try await bootstrapper.loadLocalProxyConfiguration()
+        XCTAssertEqual(stored.routingMode, .direct)
+        await model.shutdown()
+    }
+
+    func testDirectModeStartsWithoutSelectedNodeAndSystemProxyFollowsLifecycle() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let store = PreferencesStore(fileURL: paths.preferences)
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        _ = try await bootstrapper.replaceLocalProxyConfiguration(
+            with: LocalProxyConfiguration(routingMode: .direct),
+            selectedIP: nil
+        )
+        let executableURL = try makeExecutable(in: paths)
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                selectedIP: "",
+                xrayPath: executableURL.path
+            ))
+        let systemProxy = ControlledSystemProxyManager()
+        let xray = ControlledXrayController()
+        let model = makeModel(
+            paths: paths,
+            store: store,
+            bootstrapper: bootstrapper,
+            systemProxyManager: systemProxy,
+            xrayControllerFactory: { _ in xray }
+        )
+        model.start()
+        try await waitUntilReady(model)
+
+        model.setSystemProxyEnabled(true)
+        try await waitUntil {
+            model.state.localProxyConfiguration.systemProxyEnabled
+        }
+        let activeBeforeStart = await systemProxy.isActive
+        let storedBeforeStart = try await bootstrapper.loadLocalProxyConfiguration()
+        XCTAssertFalse(activeBeforeStart)
+        XCTAssertTrue(storedBeforeStart.systemProxyEnabled)
+
+        model.startXray()
+        try await waitUntilAsync {
+            let enableCount = await systemProxy.enableCount
+            return model.state.xrayPhase == .running
+                && model.state.systemProxyPhase == .enabled
+                && enableCount == 1
+        }
+
+        XCTAssertEqual(model.state.preferences.selectedIP, "")
+        XCTAssertNil(ConfigTemplate.address(in: try Data(contentsOf: paths.generatedConfig)))
+        let lastEndpoint = await systemProxy.lastEndpoint
+        XCTAssertEqual(lastEndpoint, model.state.proxyEndpoint)
+
+        model.stopXray()
+        try await waitUntilAsync {
+            let disableCount = await systemProxy.disableCount
+            return model.state.xrayPhase == .stopped
+                && model.state.systemProxyPhase == .disabled
+                && disableCount == 1
+        }
+        let activeAfterStop = await systemProxy.isActive
+        XCTAssertFalse(activeAfterStop)
+        await model.shutdown()
+    }
+
+    func testSystemProxyEnableFailureStopsTheStartedProxy() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let store = PreferencesStore(fileURL: paths.preferences)
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        _ = try await bootstrapper.replaceLocalProxyConfiguration(
+            with: LocalProxyConfiguration(
+                routingMode: .direct,
+                systemProxyEnabled: true
+            ),
+            selectedIP: nil
+        )
+        let executableURL = try makeExecutable(in: paths)
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                xrayPath: executableURL.path
+            ))
+        let systemProxy = ControlledSystemProxyManager(enableFailure: .permissionDenied)
+        let xray = ControlledXrayController()
+        let model = makeModel(
+            paths: paths,
+            store: store,
+            bootstrapper: bootstrapper,
+            systemProxyManager: systemProxy,
+            xrayControllerFactory: { _ in xray }
+        )
+        model.start()
+        try await waitUntilReady(model)
+
+        model.startXray()
+        try await waitUntil {
+            if case .failed = model.state.xrayPhase { return true }
+            return false
+        }
+
+        let enableCount = await systemProxy.enableCount
+        let stopCount = await xray.stopCount
+        let xrayIsRunning = await xray.isRunning
+        XCTAssertEqual(enableCount, 1)
+        XCTAssertEqual(stopCount, 1)
+        XCTAssertFalse(xrayIsRunning)
+        guard case .failed(let message) = model.state.systemProxyPhase else {
+            return XCTFail("Expected the system proxy failure to remain visible")
+        }
+        XCTAssertTrue(message.contains("权限"))
+        await model.shutdown()
+    }
+
+    func testUnexpectedProxyExitRestoresSystemProxy() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let store = PreferencesStore(fileURL: paths.preferences)
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        _ = try await bootstrapper.replaceLocalProxyConfiguration(
+            with: LocalProxyConfiguration(
+                routingMode: .direct,
+                systemProxyEnabled: true
+            ),
+            selectedIP: nil
+        )
+        let executableURL = try makeExecutable(in: paths)
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                xrayPath: executableURL.path
+            ))
+        let systemProxy = ControlledSystemProxyManager()
+        let xray = ControlledXrayController()
+        let model = makeModel(
+            paths: paths,
+            store: store,
+            bootstrapper: bootstrapper,
+            systemProxyManager: systemProxy,
+            xrayControllerFactory: { _ in xray }
+        )
+        model.start()
+        try await waitUntilReady(model)
+        model.startXray()
+        try await waitUntilAsync {
+            let enableCount = await systemProxy.enableCount
+            return model.state.systemProxyPhase == .enabled
+                && enableCount == 1
+        }
+
+        await xray.exitUnexpectedly()
+        try await waitUntilAsync {
+            let disableCount = await systemProxy.disableCount
+            if case .failed = model.state.xrayPhase {
+                return model.state.systemProxyPhase == .disabled
+                    && disableCount == 1
+            }
+            return false
+        }
+
+        let activeAfterExit = await systemProxy.isActive
+        XCTAssertFalse(activeAfterExit)
+        await model.shutdown()
+    }
+
     func testSaveXrayTemplateWaitsForSuccessfulWrite() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
@@ -1109,6 +1296,16 @@ final class AppModelTests: XCTestCase {
         XCTFail("Timed out waiting for condition")
     }
 
+    private func waitUntilAsync(
+        _ predicate: @MainActor () async -> Bool
+    ) async throws {
+        for _ in 0..<100 {
+            if await predicate() { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTFail("Timed out waiting for asynchronous condition")
+    }
+
     private func waitForRequestCount(
         _ detector: ControlledExitDetector,
         _ count: Int
@@ -1154,7 +1351,9 @@ final class AppModelTests: XCTestCase {
         store: PreferencesStore? = nil,
         bootstrapper: AppBootstrapper? = nil,
         exitDetector: (any ExitIPDetecting)? = nil,
-        templateReplacer: (any XrayTemplateReplacing)? = nil
+        templateReplacer: (any XrayTemplateReplacing)? = nil,
+        systemProxyManager: (any SystemProxyManaging)? = nil,
+        xrayControllerFactory: XrayControllerFactory? = nil
     ) -> AppModel {
         AppModel(
             paths: paths,
@@ -1162,8 +1361,24 @@ final class AppModelTests: XCTestCase {
             bootstrapper: bootstrapper ?? AppBootstrapper(paths: paths),
             runtimeManager: RuntimeComponentManager(paths: paths),
             exitDetector: exitDetector ?? ExitIPDetector(),
-            templateReplacer: templateReplacer
+            templateReplacer: templateReplacer,
+            systemProxyManager: systemProxyManager,
+            xrayControllerFactory: xrayControllerFactory
         )
+    }
+
+    private func makeExecutable(in paths: AppPaths) throws -> URL {
+        let executableURL = paths.root.appendingPathComponent("xray-test")
+        try "#!/bin/sh\nexit 0\n".write(
+            to: executableURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+        return executableURL
     }
 
     private func makeSpeedTestModel(
@@ -1239,6 +1454,92 @@ final class AppModelTests: XCTestCase {
             }
             """#.utf8
         )
+    }
+}
+
+private actor ControlledSystemProxyManager: SystemProxyManaging {
+    enum Failure: Error, LocalizedError, Sendable {
+        case permissionDenied
+
+        var errorDescription: String? {
+            "没有修改系统代理所需的权限"
+        }
+    }
+
+    private let enableFailure: Failure?
+    private(set) var enableCount = 0
+    private(set) var disableCount = 0
+    private(set) var recoveryCount = 0
+    private(set) var lastEndpoint: ProxyEndpoint?
+    private(set) var isActive = false
+
+    init(enableFailure: Failure? = nil) {
+        self.enableFailure = enableFailure
+    }
+
+    func enable(endpoint: ProxyEndpoint) async throws -> SystemProxySnapshot {
+        enableCount += 1
+        lastEndpoint = endpoint
+        if let enableFailure { throw enableFailure }
+        isActive = true
+        return SystemProxySnapshot(endpoint: endpoint, services: [])
+    }
+
+    func disable() async throws -> SystemProxyRestoreReport {
+        disableCount += 1
+        isActive = false
+        return SystemProxyRestoreReport(restoredServiceIDs: ["test-service"])
+    }
+
+    func recoverIfNeeded() async throws -> SystemProxyRestoreReport {
+        recoveryCount += 1
+        isActive = false
+        return SystemProxyRestoreReport()
+    }
+
+    func isEnabled() async -> Bool {
+        isActive
+    }
+}
+
+private actor ControlledXrayController: XrayControlling {
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    private(set) var restartCount = 0
+    private(set) var isRunning = false
+    private var eventHandler: XrayEventHandler?
+
+    func start(onEvent: @escaping XrayEventHandler) async throws {
+        startCount += 1
+        eventHandler = onEvent
+        await onEvent(.stateChanged(.validating))
+        await onEvent(.stateChanged(.starting))
+        isRunning = true
+        await onEvent(.stateChanged(.running(pid: 42)))
+    }
+
+    func stop() async {
+        stopCount += 1
+        guard isRunning || eventHandler != nil else { return }
+        isRunning = false
+        if let eventHandler {
+            await eventHandler(.stateChanged(.stopping))
+            await eventHandler(.stateChanged(.stopped))
+        }
+        self.eventHandler = nil
+    }
+
+    func restart(onEvent: @escaping XrayEventHandler) async throws {
+        restartCount += 1
+        await stop()
+        try await start(onEvent: onEvent)
+    }
+
+    func exitUnexpectedly() async {
+        guard let eventHandler else { return }
+        isRunning = false
+        self.eventHandler = nil
+        await eventHandler(.unexpectedExit(status: 9, output: "test exit"))
     }
 }
 

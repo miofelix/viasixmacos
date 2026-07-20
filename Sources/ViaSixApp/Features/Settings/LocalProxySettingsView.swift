@@ -17,7 +17,7 @@ struct LocalProxySettingsView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("本机代理设置")
                         .font(.title3.weight(.semibold))
-                    Text("这些参数只决定 ViaSix 在本机如何提供代理，不会写入服务器连接配置。")
+                    Text("设置代理模式、网络接入、本地监听和协议行为。")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -34,6 +34,30 @@ struct LocalProxySettingsView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
+                        ProxySectionCard(title: "代理模式") {
+                            ProxyRoutingModePicker(
+                                selection: $configuration.routingMode,
+                                isDisabled: isSaving
+                            )
+                            Text("模式只影响进入本地代理的连接；系统代理是否开启在网络接入中单独控制。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        ProxySectionCard(title: "网络接入") {
+                            Toggle(
+                                "启动本地代理时使用系统代理",
+                                isOn: $configuration.systemProxyEnabled
+                            )
+                            Text("开启后，ViaSix 会在本地代理启动成功时配置 macOS 系统代理，并在停止时恢复原设置。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("系统代理不会接管忽略 macOS 代理设置的应用流量。")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         ProxySectionCard(title: "监听") {
                             localRow("监听地址") {
                                 TextField("127.0.0.1", text: $configuration.listenAddress)

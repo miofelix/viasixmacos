@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ViaSixCore
 
 enum VisualStyle {
     static let accent = Color(nsColor: .systemBlue)
@@ -11,6 +12,112 @@ enum VisualStyle {
 
     static var pageBackground: some View {
         Color(nsColor: .windowBackgroundColor)
+    }
+}
+
+// MARK: - Proxy routing controls
+
+/// Presentation metadata for the three routing modes exposed by the local
+/// mixed proxy.  Keeping the wording here (rather than in the configuration
+/// model) lets the persisted model remain a small, platform-neutral value
+/// while the app can use friendly copy and SF Symbols.
+extension ProxyRoutingMode {
+    var appSystemImage: String {
+        switch self {
+        case .rule: "line.3.horizontal.decrease.circle"
+        case .global: "globe"
+        case .direct: "arrow.up.right"
+        }
+    }
+
+    var appDescription: String {
+        switch self {
+        case .rule:
+            "私有地址直连，其余流量通过代理。"
+        case .global:
+            "所有经过本地代理的流量都通过代理节点。"
+        case .direct:
+            "所有经过本地代理的流量都直接连接。"
+        }
+    }
+}
+
+/// A compact, equal-width mode selector inspired by Clash's mode card.  The
+/// caller owns persistence through the binding; this view only presents and
+/// changes the selected value, so it is also safe to use in a draft editor.
+struct ProxyRoutingModePicker: View {
+    @Binding var selection: ProxyRoutingMode
+    var isDisabled = false
+    var showsDescription = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                ForEach(ProxyRoutingMode.allCases, id: \.rawValue) { mode in
+                    Button {
+                        selection = mode
+                    } label: {
+                        Label(mode.displayName, systemImage: mode.appSystemImage)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+                    }
+                    .buttonStyle(
+                        ProxyRoutingModeButtonStyle(isSelected: selection == mode)
+                    )
+                    .disabled(isDisabled)
+                    .accessibilityLabel("代理模式：\(mode.displayName)")
+                    .accessibilityValue(selection == mode ? "当前" : "")
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            if showsDescription {
+                Text(selection.appDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 7))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(VisualStyle.accent.opacity(0.38), lineWidth: 1)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("代理模式说明")
+            }
+        }
+    }
+}
+
+private struct ProxyRoutingModeButtonStyle: ButtonStyle {
+    let isSelected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout.weight(isSelected ? .semibold : .regular))
+            .foregroundStyle(isSelected ? Color.white : Color.primary)
+            .frame(maxWidth: .infinity, minHeight: 38)
+            .padding(.horizontal, 8)
+            .background(
+                isSelected ? VisualStyle.accent : Color(nsColor: .controlBackgroundColor),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(
+                        isSelected ? VisualStyle.accent : VisualStyle.surfaceBorder,
+                        lineWidth: 1
+                    )
+            }
+            .shadow(
+                color: isSelected ? VisualStyle.accent.opacity(0.22) : .clear,
+                radius: 3,
+                y: 1
+            )
+            .opacity(configuration.isPressed ? 0.76 : 1)
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

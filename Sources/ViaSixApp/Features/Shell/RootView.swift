@@ -188,7 +188,8 @@ struct RootView: View {
         case .stopped, .failed:
             return model.switchingIP != nil
                 || !model.hasXrayExecutable
-                || model.state.preferences.selectedIP.isEmpty
+                || (model.requiresSelectedNodeForProxy
+                    && model.state.preferences.selectedIP.isEmpty)
                 || !model.isProxyConfigurationReady
         case .stopping:
             return true
@@ -219,7 +220,9 @@ struct RootView: View {
                 "请先在设置中安装 Xray-core"
             } else if let issue = model.proxyConfigurationIssue {
                 "请先在设置中修复代理配置：\(issue)"
-            } else if model.state.preferences.selectedIP.isEmpty {
+            } else if model.requiresSelectedNodeForProxy
+                && model.state.preferences.selectedIP.isEmpty
+            {
                 "请先选择节点"
             } else {
                 "启动本地代理"
