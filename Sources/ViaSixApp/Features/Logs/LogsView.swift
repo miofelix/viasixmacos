@@ -5,10 +5,24 @@ struct LogsView: View {
     @State private var searchText = ""
     @State private var sourceFilter: LogSourceFilter = .all
     @State private var levelFilter: LogLevelFilter = .all
-    @State private var followsLatest = true
+    @State private var followState = LogFollowState()
+    @State private var visibleScrollTarget: LogScrollTarget?
     @State private var showsClearConfirmation = false
 
     var body: some View {
+        let visibleLogs = filteredLogs
+        let visibleLogIDs = visibleLogs.map(\.id)
+        let latestVisibleLogID = visibleLogIDs.last
+        let filterIdentity = LogFilterIdentity(
+            searchText: searchText,
+            source: sourceFilter,
+            level: levelFilter
+        )
+        let filteredSnapshot = FilteredLogSnapshot(
+            filter: filterIdentity,
+            ids: visibleLogIDs
+        )
+
         VStack(spacing: 18) {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -22,7 +36,7 @@ struct LogsView: View {
                 Spacer()
 
                 if isFiltering {
-                    Text("\(filteredLogs.count) / \(model.state.logs.count) 条")
+                    Text("\(visibleLogs.count) / \(model.state.logs.count) 条")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -30,17 +44,20 @@ struct LogsView: View {
                 filterMenu
 
                 Button {
-                    followsLatest.toggle()
+                    followState.toggleExplicitFollowing(
+                        latestEntryID: latestVisibleLogID,
+                        visibleTarget: visibleScrollTarget
+                    )
                 } label: {
                     Label(
-                        followsLatest ? "暂停跟随" : "跟随最新",
-                        systemImage: followsLatest ? "pause" : "arrow.down.to.line"
+                        followState.followsLatest ? "暂停跟随" : "跟随最新",
+                        systemImage: followState.followsLatest ? "pause" : "arrow.down.to.line"
                     )
                 }
                 .buttonStyle(.borderless)
                 .frame(minHeight: VisualStyle.controlHeight)
                 .help(
-                    followsLatest
+                    followState.followsLatest
                         ? "暂停新日志到达时的自动滚动"
                         : "滚动到最新日志并恢复自动跟随"
                 )
@@ -65,7 +82,7 @@ struct LogsView: View {
                     description: Text("开始节点测速或启动本地代理后，记录会显示在这里。")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if filteredLogs.isEmpty {
+            } else if visibleLogs.isEmpty {
                 ContentUnavailableView {
                     Label("没有匹配的运行记录", systemImage: "magnifyingglass")
                 } description: {
@@ -78,41 +95,96 @@ struct LogsView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(filteredLogs) { entry in
-                                LogRow(entry: entry)
-                                    .id(entry.id)
+                            ForEach(visibleLogs) { entry in
+                                VStack(spacing: 0) {
+                                    LogRow(entry: entry)
 
-                                if entry.id != filteredLogs.last?.id {
-                                    Divider()
-                                        .opacity(0.45)
+                                    if entry.id != latestVisibleLogID {
+                                        Divider()
+                                            .opacity(0.45)
+                                    }
                                 }
+                                .id(LogScrollTarget.entry(entry.id))
+                            }
+
+                            if let latestVisibleLogID {
+                                Color.clear
+                                    .frame(height: 1)
+                                    .id(LogScrollTarget.bottom(latestVisibleLogID))
+                                    .accessibilityHidden(true)
                             }
                         }
+                        .scrollTargetLayout()
                     }
+                    .scrollPosition(id: $visibleScrollTarget, anchor: .bottom)
                     .scrollbarSafeContent()
+                    .overlay(alignment: .bottomTrailing) {
+                        if !followState.followsLatest {
+                            Button {
+                                followState.resumeFollowing(
+                                    target: latestVisibleLogID,
+                                    visibleTarget: visibleScrollTarget
+                                )
+                            } label: {
+                                Label(
+                                    followState.pendingNewRecordCount > 0
+                                        ? "有 \(followState.pendingNewRecordCount) 条新记录"
+                                        : "回到最新",
+                                    systemImage: "arrow.down.to.line"
+                                )
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .help("滚动到最新日志并恢复自动跟随")
+                            .padding(.trailing, VisualStyle.scrollbarClearance + 8)
+                            .padding(.bottom, 10)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                    }
                     .onAppear {
-                        scrollToLatest(using: proxy)
+                        let shouldScroll = followState.beginMaintainingLatest(
+                            target: latestVisibleLogID,
+                            visibleTarget: visibleScrollTarget
+                        )
+                        guard shouldScroll else { return }
+                        scrollToLatest(using: proxy, latestEntryID: latestVisibleLogID)
                     }
-                    .onChange(of: filteredLogs.last?.id) { _, _ in
-                        scrollToLatest(using: proxy)
+                    .onChange(of: filteredSnapshot) { _, current in
+                        let shouldMaintainLatest = followState.beginMaintainingLatest(
+                            target: current.ids.last,
+                            visibleTarget: visibleScrollTarget
+                        )
+                        guard shouldMaintainLatest else { return }
+                        scrollToLatest(using: proxy, latestEntryID: current.ids.last)
                     }
-                    .onChange(of: searchText) { _, _ in
-                        scrollToLatest(using: proxy)
+                    .onChange(of: visibleScrollTarget) { _, target in
+                        followState.observeVisibleTarget(
+                            target,
+                            latestEntryID: latestVisibleLogID
+                        )
                     }
-                    .onChange(of: sourceFilter) { _, _ in
-                        scrollToLatest(using: proxy)
-                    }
-                    .onChange(of: levelFilter) { _, _ in
-                        scrollToLatest(using: proxy)
-                    }
-                    .onChange(of: followsLatest) { _, isFollowing in
+                    .onChange(of: followState.followsLatest) { _, isFollowing in
                         guard isFollowing else { return }
-                        scrollToLatest(using: proxy)
+                        scrollToLatest(using: proxy, latestEntryID: latestVisibleLogID)
                     }
                 }
             }
         }
         .searchable(text: $searchText, placement: .toolbar, prompt: "搜索运行记录")
+        .onChange(of: filteredSnapshot) { previous, current in
+            if previous.filter == current.filter {
+                followState.observeMatchingLogIDs(
+                    previous: previous.ids,
+                    current: current.ids
+                )
+            } else {
+                followState.rebaselineMatchingRecords()
+            }
+        }
+        .onChange(of: logIDs) { _, currentIDs in
+            guard currentIDs.isEmpty else { return }
+            followState.resetAfterClearingLogs()
+        }
         .confirmationDialog(
             "清空所有运行记录？",
             isPresented: $showsClearConfirmation,
@@ -138,6 +210,10 @@ struct LogsView: View {
                 || entry.source.rawValue.localizedCaseInsensitiveContains(query)
                 || LogLevelFilter.title(for: entry.level).localizedCaseInsensitiveContains(query)
         }
+    }
+
+    private var logIDs: [AppLogEntry.ID] {
+        model.state.logs.map(\.id)
     }
 
     private var isFiltering: Bool {
@@ -186,10 +262,149 @@ struct LogsView: View {
         levelFilter = .all
     }
 
-    private func scrollToLatest(using proxy: ScrollViewProxy) {
-        guard followsLatest, let id = filteredLogs.last?.id else { return }
-        proxy.scrollTo(id, anchor: .bottom)
+    private func scrollToLatest(
+        using proxy: ScrollViewProxy,
+        latestEntryID: AppLogEntry.ID?
+    ) {
+        guard followState.followsLatest, let latestEntryID else { return }
+        proxy.scrollTo(LogScrollTarget.bottom(latestEntryID), anchor: .bottom)
     }
+}
+
+enum LogScrollTarget: Hashable {
+    case entry(AppLogEntry.ID)
+    case bottom(AppLogEntry.ID)
+
+    func isBottom(for id: AppLogEntry.ID) -> Bool {
+        self == .bottom(id)
+    }
+}
+
+enum LogFollowMode: Equatable {
+    case following
+    case pausedByScroll
+    case pausedExplicitly
+}
+
+struct LogFollowState {
+    private(set) var mode = LogFollowMode.following
+    private(set) var pendingNewRecordCount = 0
+    private(set) var expectedAutomaticTargetID: AppLogEntry.ID?
+
+    var followsLatest: Bool {
+        mode == .following
+    }
+
+    mutating func toggleExplicitFollowing(
+        latestEntryID: AppLogEntry.ID?,
+        visibleTarget: LogScrollTarget? = nil
+    ) {
+        switch mode {
+        case .following:
+            mode = .pausedExplicitly
+            expectedAutomaticTargetID = nil
+        case .pausedByScroll, .pausedExplicitly:
+            resumeFollowing(target: latestEntryID, visibleTarget: visibleTarget)
+        }
+    }
+
+    mutating func resumeFollowing(
+        target: AppLogEntry.ID?,
+        visibleTarget: LogScrollTarget? = nil
+    ) {
+        mode = .following
+        pendingNewRecordCount = 0
+        expectedAutomaticTargetID = pendingTarget(target, visibleTarget: visibleTarget)
+    }
+
+    mutating func observeMatchingLogIDs(
+        previous: [AppLogEntry.ID],
+        current: [AppLogEntry.ID]
+    ) {
+        guard !followsLatest else { return }
+
+        let previousIDs = Set(previous)
+        pendingNewRecordCount += current.lazy.filter { !previousIDs.contains($0) }.count
+    }
+
+    mutating func rebaselineMatchingRecords() {
+        pendingNewRecordCount = 0
+    }
+
+    mutating func resetAfterClearingLogs() {
+        mode = .following
+        pendingNewRecordCount = 0
+        expectedAutomaticTargetID = nil
+    }
+
+    mutating func beginMaintainingLatest(
+        target: AppLogEntry.ID?,
+        visibleTarget: LogScrollTarget? = nil
+    ) -> Bool {
+        guard followsLatest, let target else {
+            expectedAutomaticTargetID = nil
+            return false
+        }
+        guard !visibleTarget.isBottom(for: target) else {
+            expectedAutomaticTargetID = nil
+            return false
+        }
+        expectedAutomaticTargetID = target
+        return true
+    }
+
+    mutating func observeVisibleTarget(
+        _ target: LogScrollTarget?,
+        latestEntryID: AppLogEntry.ID?
+    ) {
+        guard let target, let latestEntryID else { return }
+
+        if let expectedAutomaticTargetID {
+            if target.isBottom(for: expectedAutomaticTargetID) {
+                self.expectedAutomaticTargetID = nil
+            }
+            return
+        }
+
+        switch mode {
+        case .following:
+            if !target.isBottom(for: latestEntryID) {
+                mode = .pausedByScroll
+            }
+        case .pausedByScroll:
+            if target.isBottom(for: latestEntryID) {
+                mode = .following
+                pendingNewRecordCount = 0
+            }
+        case .pausedExplicitly:
+            break
+        }
+    }
+
+    private func pendingTarget(
+        _ target: AppLogEntry.ID?,
+        visibleTarget: LogScrollTarget?
+    ) -> AppLogEntry.ID? {
+        guard let target, !visibleTarget.isBottom(for: target) else { return nil }
+        return target
+    }
+}
+
+private extension Optional where Wrapped == LogScrollTarget {
+    func isBottom(for id: AppLogEntry.ID) -> Bool {
+        self?.isBottom(for: id) == true
+    }
+}
+
+private struct LogFilterIdentity: Equatable {
+    let searchText: String
+    let source: LogSourceFilter
+    let level: LogLevelFilter
+}
+
+private struct FilteredLogSnapshot: Equatable {
+    let filter: LogFilterIdentity
+    let ids: [AppLogEntry.ID]
 }
 
 private enum LogSourceFilter: String, CaseIterable, Identifiable, Hashable {
