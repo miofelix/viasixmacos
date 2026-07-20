@@ -17,13 +17,14 @@ final class RuntimeArchiveExtractorTests: XCTestCase {
         try makeGzipArchive(from: sourceURL, at: archiveURL)
 
         let asset = makeAsset(
+            component: .mihomo,
             archiveName: archiveURL.lastPathComponent,
-            archiveFormat: .gzip(output: .cfst),
+            archiveFormat: .gzip(output: .mihomo),
             sha256: try RuntimeSHA256.hexDigest(ofFileAt: archiveURL)
         )
         try await RuntimeComponentManager.extractArchive(asset, archiveURL, destinationURL)
 
-        let canonicalURL = destinationURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue)
+        let canonicalURL = destinationURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue)
         XCTAssertEqual(try Data(contentsOf: canonicalURL), payloadData)
         XCTAssertFalse(
             FileManager.default.fileExists(
@@ -32,7 +33,7 @@ final class RuntimeArchiveExtractorTests: XCTestCase {
         )
         XCTAssertEqual(
             try FileManager.default.contentsOfDirectory(atPath: destinationURL.path),
-            [RuntimePayloadFile.cfst.rawValue]
+            [RuntimePayloadFile.mihomo.rawValue]
         )
     }
 
@@ -46,8 +47,9 @@ final class RuntimeArchiveExtractorTests: XCTestCase {
         let archiveData = Data("not a gzip archive".utf8)
         try archiveData.write(to: archiveURL)
         let asset = makeAsset(
+            component: .mihomo,
             archiveName: archiveURL.lastPathComponent,
-            archiveFormat: .gzip(output: .cfst),
+            archiveFormat: .gzip(output: .mihomo),
             sha256: RuntimeSHA256.hexDigest(of: archiveData)
         )
 
@@ -66,7 +68,7 @@ final class RuntimeArchiveExtractorTests: XCTestCase {
 
         XCTAssertFalse(
             FileManager.default.fileExists(
-                atPath: destinationURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue).path
+                atPath: destinationURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue).path
             )
         )
     }
@@ -88,18 +90,14 @@ final class RuntimeArchiveExtractorTests: XCTestCase {
                 sha256: digest
             ),
             RuntimeAsset(
-                component: .xray,
+                component: .mihomo,
                 version: "test",
                 architecture: .arm64,
-                archiveName: "xray-runtime.zip",
-                archiveFormat: .zip,
-                downloadURL: URL(string: "https://example.invalid/xray-runtime.zip")!,
+                archiveName: "mihomo-runtime.gz",
+                archiveFormat: .gzip(output: .mihomo),
+                downloadURL: URL(string: "https://example.invalid/mihomo-runtime.gz")!,
                 sha256: digest,
-                payloadExpectations: [
-                    RuntimePayloadExpectation(file: .xray),
-                    RuntimePayloadExpectation(file: .geoIP),
-                    RuntimePayloadExpectation(file: .geoSite),
-                ]
+                payloadExpectations: [RuntimePayloadExpectation(file: .mihomo)]
             ),
         ])
         let manager = RuntimeComponentManager(
@@ -150,18 +148,14 @@ final class RuntimeArchiveExtractorTests: XCTestCase {
                 sha256: digest
             ),
             RuntimeAsset(
-                component: .xray,
+                component: .mihomo,
                 version: "test",
                 architecture: .arm64,
-                archiveName: "xray-runtime.zip",
-                archiveFormat: .zip,
-                downloadURL: URL(string: "https://example.invalid/xray-runtime.zip")!,
+                archiveName: "mihomo-runtime.gz",
+                archiveFormat: .gzip(output: .mihomo),
+                downloadURL: URL(string: "https://example.invalid/mihomo-runtime.gz")!,
                 sha256: digest,
-                payloadExpectations: [
-                    RuntimePayloadExpectation(file: .xray),
-                    RuntimePayloadExpectation(file: .geoIP),
-                    RuntimePayloadExpectation(file: .geoSite),
-                ]
+                payloadExpectations: [RuntimePayloadExpectation(file: .mihomo)]
             ),
         ])
         let manager = RuntimeComponentManager(
@@ -204,19 +198,22 @@ final class RuntimeArchiveExtractorTests: XCTestCase {
     }
 
     private func makeAsset(
+        component: RuntimeComponent = .cfst,
         archiveName: String,
         archiveFormat: RuntimeArchiveFormat,
         sha256: String
     ) -> RuntimeAsset {
         RuntimeAsset(
-            component: .cfst,
+            component: component,
             version: "test",
             architecture: .arm64,
             archiveName: archiveName,
             archiveFormat: archiveFormat,
             downloadURL: URL(string: "https://example.invalid/\(archiveName)")!,
             sha256: sha256,
-            payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
+            payloadExpectations: component.payloadFiles.map {
+                RuntimePayloadExpectation(file: $0)
+            }
         )
     }
 

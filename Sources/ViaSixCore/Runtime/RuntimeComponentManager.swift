@@ -12,9 +12,7 @@ public struct RuntimeDiscoveredFiles: Equatable, Sendable {
     }
 
     public var cfstURL: URL? { self[.cfst] }
-    public var xrayURL: URL? { self[.xray] }
-    public var geoIPURL: URL? { self[.geoIP] }
-    public var geoSiteURL: URL? { self[.geoSite] }
+    public var mihomoURL: URL? { self[.mihomo] }
 
     public var installedFiles: Set<RuntimePayloadFile> {
         Set(files.keys)
@@ -53,14 +51,8 @@ public struct RuntimeInstallationStatus: Equatable, Sendable {
     public var cfstURL: URL? {
         invalidFiles.contains(.cfst) ? nil : discoveredFiles.cfstURL
     }
-    public var xrayURL: URL? {
-        invalidFiles.contains(.xray) ? nil : discoveredFiles.xrayURL
-    }
-    public var geoIPURL: URL? {
-        invalidFiles.contains(.geoIP) ? nil : discoveredFiles.geoIPURL
-    }
-    public var geoSiteURL: URL? {
-        invalidFiles.contains(.geoSite) ? nil : discoveredFiles.geoSiteURL
+    public var mihomoURL: URL? {
+        invalidFiles.contains(.mihomo) ? nil : discoveredFiles.mihomoURL
     }
     public var missingFiles: Set<RuntimePayloadFile> { discoveredFiles.missingFiles }
     public var isInstalled: Bool { discoveredFiles.isComplete }
@@ -71,16 +63,14 @@ public struct RuntimeInstallationStatus: Equatable, Sendable {
             && !invalidFiles.contains(.cfst)
     }
 
-    public var xrayIsReady: Bool {
-        xrayURL != nil
-            && geoIPURL != nil
-            && geoSiteURL != nil
-            && executableFiles.contains(.xray)
-            && invalidFiles.isDisjoint(with: [.xray, .geoIP, .geoSite])
+    public var mihomoIsReady: Bool {
+        mihomoURL != nil
+            && executableFiles.contains(.mihomo)
+            && !invalidFiles.contains(.mihomo)
     }
 
     public var isReady: Bool {
-        isInstalled && invalidFiles.isEmpty && cfstIsReady && xrayIsReady
+        isInstalled && invalidFiles.isEmpty && cfstIsReady && mihomoIsReady
     }
 }
 
@@ -153,7 +143,7 @@ public enum RuntimeComponentError: LocalizedError, Equatable, Sendable {
         case .sourceIsNotFileOrDirectory(let url):
             return "本地路径不是可读取的文件或目录：\(url.path)"
         case .noPayloadFiles(let urls):
-            return "未在本地路径中找到 cfst、xray、geoip.dat 或 geosite.dat：\(urls.map(\.path).joined(separator: ", "))"
+            return "未在本地路径中找到 cfst 或 mihomo：\(urls.map(\.path).joined(separator: ", "))"
         case .missingArchivePayload(let component, let files):
             let names = files.map(\.rawValue).sorted().joined(separator: ", ")
             return "\(component.rawValue) 压缩包缺少必要文件：\(names)"
@@ -192,6 +182,7 @@ public enum RuntimeComponentError: LocalizedError, Equatable, Sendable {
 
 public actor RuntimeComponentManager {
     private static let extractionTimeout: Duration = .seconds(120)
+    private static let legacyPayloadNames = ["xray", "geoip.dat", "geosite.dat"]
     private static let gzipExtractionScript = #"""
         umask 077
         set -C
@@ -358,9 +349,8 @@ public actor RuntimeComponentManager {
                 in: [componentDirectory],
                 using: fileManager
             )
-            // The component definition is authoritative.  A malformed custom
-            // manifest must not be able to make geoip.dat/geosite.dat optional
-            // for Xray by publishing a shortened payload list.
+            // The component definition is authoritative. A malformed custom
+            // manifest must not be able to omit a required component payload.
             let requiredFiles = Set(asset.component.payloadFiles)
             let missingFiles = requiredFiles.subtracting(discovered.keys)
             guard missingFiles.isEmpty else {
@@ -541,6 +531,22 @@ public actor RuntimeComponentManager {
                 try fileManager.removeItem(at: destinationURL)
             }
             try fileManager.copyItem(at: sourceURL, to: destinationURL)
+        }
+
+        // Legacy payloads are removed only from the transaction candidate and
+        // only after Mihomo is present. If validation fails, the live Runtime
+        // directory remains untouched and the candidate is discarded.
+        let candidateMihomoURL = candidateDirectory.appendingPathComponent(
+            RuntimePayloadFile.mihomo.rawValue
+        )
+        if fileManager.fileExists(atPath: candidateMihomoURL.path) {
+            for legacyName in Self.legacyPayloadNames {
+                try Task.checkCancellation()
+                let legacyURL = candidateDirectory.appendingPathComponent(legacyName)
+                if fileManager.fileExists(atPath: legacyURL.path) {
+                    try fileManager.removeItem(at: legacyURL)
+                }
+            }
         }
 
         for payload in RuntimePayloadFile.allCases where payload.requiresExecutablePermission {

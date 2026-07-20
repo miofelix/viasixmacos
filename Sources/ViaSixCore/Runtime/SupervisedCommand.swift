@@ -21,6 +21,7 @@ enum SupervisedCommand {
         arguments: [String],
         workingDirectoryURL: URL,
         environmentOverrides: [String: String] = [:],
+        inheritParentEnvironment: Bool = true,
         timeout: Duration
     ) async throws -> SupervisedCommandResult {
         try Task.checkCancellation()
@@ -29,7 +30,8 @@ enum SupervisedCommand {
             executableURL: executableURL,
             arguments: arguments,
             workingDirectoryURL: workingDirectoryURL,
-            environmentOverrides: environmentOverrides
+            environmentOverrides: environmentOverrides,
+            inheritParentEnvironment: inheritParentEnvironment
         )
         let waitTask = Task.detached {
             let termination = SupervisedProcessControl.waitForProcess(process.pid)

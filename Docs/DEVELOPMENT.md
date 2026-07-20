@@ -12,8 +12,9 @@
 - [内置地址列表](#内置地址列表)
 - [可写数据与资源](#可写数据与资源)
 - [默认资源与迁移](#默认资源与迁移)
-- [Xray 配置流程](#xray-配置流程)
+- [Mihomo 配置流程](#mihomo-配置流程)
 - [进程与并发约定](#进程与并发约定)
+- [虚拟网卡开发边界](#虚拟网卡开发边界)
 - [测速结果约定](#测速结果约定)
 - [文档职责](#文档职责)
 
@@ -58,9 +59,9 @@ make app
 open dist/ViaSix.app
 ```
 
-`make app` 默认生成 ad-hoc 签名包，适用于本地开发与冒烟测试。正式签名和公证流程见 [发布指南](RELEASING.md)。
+`make app` 默认生成 ad-hoc 签名包，适用于本地开发与冒烟测试。正式签名和公证流程见[发布指南](RELEASING.md)。
 
-打包脚本会定义 `VIASIX_PACKAGED_APP`，使正式 bundle 只从 `Bundle.main` 读取资源，避免 SwiftPM 的开发期 `Bundle.module` 路径泄露本机检出目录。修改资源加载或打包命令时必须保留对应验证。
+打包脚本会定义 `VIASIX_PACKAGED_APP`，使 app bundle 只从 `Bundle.main` 读取默认资源，避免 SwiftPM 的开发期 `Bundle.module` 路径泄露本机检出目录。修改资源加载或打包命令时必须保留对应验证。
 
 ## 测试与验证
 
@@ -70,7 +71,7 @@ open dist/ViaSix.app
 make format
 ```
 
-运行格式、脚本语法、Info.plist 和文档链接检查：
+运行格式、脚本语法、元数据、文档链接和许可证检查：
 
 ```bash
 make lint
@@ -106,53 +107,52 @@ make clean
 
 ```text
 Sources/
+  ViaSixMihomoConfig/       Mihomo YAML、Profile、分享链接与旧配置迁移
   ViaSixCore/
-    Configuration/    Xray 模板验证与配置生成
-    Infrastructure/   路径、默认资源、启动准备、系统代理与网络接入能力
-    Models/           测速参数、结果和用户偏好
-    Networking/       出口 IP 检测
-    Parsing/          CSV 与 CFST 流式输出解析
-    Resources/        默认地址列表和中性 Xray 模板
-    Runtime/          组件安装、CFST 与 Xray 生命周期
+    Configuration/          本机代理设置和兼容配置逻辑
+    Infrastructure/         路径、默认资源、启动、系统代理与接入能力
+    Models/                 测速参数、结果和用户偏好
+    Networking/             出口 IP 检测
+    Parsing/                CSV 与 CFST 流式输出解析
+    Resources/              默认地址列表和本机代理设置
+    Runtime/                固定组件安装、CFST 与 Mihomo 生命周期
   ViaSixApp/
-    App/              应用入口和生命周期
-    DesignSystem/     视觉样式
-    Features/         连接、节点测速、活动、设置和菜单栏
-    State/            AppModel 与应用状态
-Tests/
-  ViaSixCoreTests/    核心逻辑与进程行为测试
-  ViaSixAppTests/     应用状态编排和配置一致性测试
-Packaging/            Info.plist 与应用图标源文件
-Scripts/              图标、应用打包与 bundle 验证
-Docs/                 用户、开发、架构与发布文档
-ThirdPartyLicenses/   固定上游版本的许可证原文
-.github/              CI、Dependabot 与 Pull Request 模板
-LICENSE               ViaSix 自身的 MIT License
+    App/                    应用入口、生命周期与内置文档
+    DesignSystem/           视觉样式
+    Features/               首页、节点、日志、设置和菜单栏
+    State/                  AppModel 与应用状态
+  ViaSixPrivilegedProtocol/ app/helper 共用的固定 XPC 协议
+  ViaSixTunHelperSupport/   helper 身份校验和会话恢复支撑
+  ViaSixTunHelper/          SMAppService LaunchDaemon 可执行程序
+Tests/                      各目标单元和集成测试
+Packaging/                  Info.plist、entitlements、LaunchDaemon plist 与图标
+Scripts/                    图标、应用打包、文档链接与 bundle 验证
+Docs/                       用户、开发、架构与发布文档
+ThirdPartyLicenses/         固定上游版本的许可证原文
 ```
 
-SwiftPM 定义四个主要目标：
+SwiftPM 的主要边界：
 
-- `ViaSixCore`：可导入的核心库，不依赖 SwiftUI。
-- `ViaSixApp`：原生 SwiftUI macOS 可执行程序。
-- `ViaSixPrivilegedProtocol`：app/helper 共用的固定 XPC 协议与代码签名要求。
-- `ViaSixTunHelper`：由 `SMAppService` 管理的 LaunchDaemon 可执行程序。
+- `ViaSixMihomoConfig` 只负责 Mihomo 配置语义，不依赖 SwiftUI。
+- `ViaSixCore` 负责平台逻辑和用户态进程，不应反向依赖 App target。
+- `ViaSixApp` 负责呈现与工作流编排。
+- `ViaSixPrivilegedProtocol` 只暴露固定 typed XPC 协议，不能接受路径、argv、shell 或任意 YAML。
+- `ViaSixTunHelperSupport` 与 `ViaSixTunHelper` 保持最小特权面；当前没有真实 TUN 后端。
 
-更详细的模块关系见 [架构说明](ARCHITECTURE.md)。
+更详细的模块关系见[架构说明](ARCHITECTURE.md)。
 
 ## 运行组件
 
-运行组件版本、下载地址、目标架构和 SHA-256 位于：
+运行组件版本、下载地址、目标架构、压缩格式、压缩包哈希和 payload 预期位于：
 
 ```text
 Sources/ViaSixCore/Runtime/RuntimeManifest.swift
 ```
 
-源码审计基线组件：
+当前固定组件：
 
 - CloudflareSpeedTest `v2.3.5`
-- Xray-core `v26.3.27`
-
-普通 Xray 代理继续按上述审计基线运行；虚拟网卡能力另有更高的最低门槛（Xray `v26.7.11`），且还需要特权 helper、DNS 管理和恢复能力全部通过探测。阶段二不会因为下载到较新的 Xray 就自动启用虚拟网卡。
+- Mihomo `v1.19.29`
 
 组件解析优先级：
 
@@ -164,25 +164,23 @@ Sources/ViaSixCore/Runtime/RuntimeManifest.swift
 
 在线安装流程：
 
-1. 查询上游 GitHub latest Release。
-2. 按当前 CPU 架构和资产命名规则选择 macOS 资产。
-3. 要求 Release 元数据提供 SHA-256 digest。
-4. 通过 HTTPS 下载到临时目录并重新计算 SHA-256。
-5. 解压并确认必要文件完整。
-6. 将完整组件移动到应用数据目录。
+1. 从固定清单选择当前 CPU 架构对应的 HTTPS 资产，不查询 GitHub `latest`。
+2. 下载到临时目录并核对压缩包 SHA-256。
+3. 用受限 ZIP/GZIP 解压器提取清单声明的 payload。
+4. 核对解压后文件大小、SHA-256 和可执行属性。
+5. 完整验证后事务性替换 `Runtime/`；任何失败都保留旧的可用副本。
 
-固定基线用于审计、单元测试和显式注入清单的场景；ViaSix 的默认在线安装不使用它覆盖 GitHub 最新正式版本。
+本地导入支持可执行文件、目录或多个相关文件。Mihomo 管理副本只需要 `mihomo` 可执行文件；其 home、Provider 缓存和规则数据位于 `Data/Mihomo/`。旧 `xray`、`geoip.dat` 与 `geosite.dat` 不是当前组件，成功安装 Mihomo 后会从受管 Runtime 中清理。
+
+更新固定清单时，必须同时：
+
+- 更新 `RuntimeManifest.swift` 的版本、URL、资产名、压缩格式和双重校验值
+- 更新测试中的预期值
+- 更新[第三方声明](../THIRD_PARTY_NOTICES.md)和离线许可证
+- 在 arm64 与 x86_64 对应环境验证下载、校验和启动
+- 确认旧 Runtime 在新资产校验失败时仍可用
 
 CloudflareSpeedTest 是 XIU2 维护的独立第三方项目，并非 Cloudflare 官方产品。“上游组件”表示从各项目自己的正式 Release 获取。
-
-本地导入支持可执行文件、目录或多个相关文件。Xray 管理副本需要 `xray`、`geoip.dat` 和 `geosite.dat`。
-
-更新审计基线时，必须同时：
-
-- 更新 `RuntimeManifest.swift` 的版本、URL、资产名和哈希
-- 更新测试中的预期值
-- 更新 [第三方声明](../THIRD_PARTY_NOTICES.md)
-- 在 arm64 与 x86_64 对应环境验证下载和启动
 
 ## 内置地址列表
 
@@ -198,95 +196,115 @@ CloudflareSpeedTest 是 XIU2 维护的独立第三方项目，并非 Cloudflare 
     preferences.json
     ip.txt
     ipv6.txt
-    server.json
+    profile.yaml
     local-proxy.json
-    template.json
-    config.json
+    system-proxy.json
     result.csv
+    Mihomo/
+      config.yaml
+      providers/
+      rules/
   Runtime/
     cfst
-    xray
-    geoip.dat
-    geosite.dat
+    mihomo
   Logs/
 ```
 
 文件职责：
 
-- `preferences.json`：`Codable` 用户偏好，新增字段应提供向后兼容默认值。
+- `preferences.json`：`Codable` 用户偏好；新增字段应提供向后兼容默认值。`mihomoPath` 与历史 `xrayPath` 不兼容，不能自动复制。
 - `ip.txt` / `ipv6.txt`：复制到用户目录后的地址源。
-- `server.json`：远端 `proxy` 出站配置。
-- `local-proxy.json`：本机监听地址、端口、UDP、嗅探、私网直连、路由模式和系统代理偏好。
-- `template.json`：由前两者维护的完整 Xray 配置兼容镜像。
-- `config.json`：由模板和当前节点生成，不是配置的唯一来源。
+- `profile.yaml`：用户维护的 Mihomo 节点、Provider、代理组和规则，不包含本机监听设置。
+- `local-proxy.json`：本机监听地址、端口、UDP、嗅探、私网直连、代理模式和互斥的网络接入方式。
+- `Mihomo/config.yaml`：按当前模式生成的运行配置，不是配置的唯一来源。
+- `Mihomo/providers/` / `Mihomo/rules/`：HTTP Provider 的受控相对路径和缓存。
+- `system-proxy.json`：系统代理会话恢复快照。
 - `result.csv`：当前测速输出；启动新任务前删除。
-- `Runtime`：ViaSix 管理的第三方组件。
+- `Runtime`：ViaSix 管理的第三方可执行组件。
 - `Logs`：为未来持久日志预留；当前界面日志仅在内存中。
 
-虚拟网卡能力目前由 `VirtualInterfaceManager` 与只读 helper 握手边界共同描述，默认实现不会创建接口或修改路由/DNS。ad-hoc 构建没有 Developer ID Team 标识，helper 必须拒绝启动/连接；只有正式签名并公证的 app 才能注册 LaunchDaemon。其版本、特权 helper、上游防回环和恢复要求见[虚拟网卡能力边界](VIRTUAL_NETWORK.md)；在真实后端和隔离环境回归完成前，不得增加用户可见开关。
-
-ViaSix 会把上述目录权限收紧为 `0700`，把偏好、地址列表和代理配置等管理文件收紧为 `0600`。新增写入路径时必须保持相同边界；不要依赖用户默认 `umask` 保护敏感配置。
+ViaSix 会把目录权限收紧为 `0700`，把偏好、地址列表和代理配置等管理文件收紧为 `0600`。新增写入路径时必须保持相同边界；不要依赖用户默认 `umask` 保护敏感配置。
 
 ## 默认资源与迁移
 
 `DefaultResourceInstaller` 负责首次复制和安全迁移：
 
-- 目标文件不存在时，从 bundle 复制默认资源。
-- 已存在文件只有在 SHA-256 与某个历史默认版本完全一致时才会迁移。
-- 用户修改过的地址列表或代理模板必须保留。
-- 旧版默认 IPv4 列表可迁移到完整列表。
-- 旧版内置连接模板可迁移为不含真实连接资料的中性模板。
-- 迁移模板时会移除由旧模板生成的 `config.json`，避免继续使用旧连接资料。
+- 目标文件不存在时，从 bundle 复制 `ip.txt`、`ipv6.txt` 和 `local-proxy.json`。
+- 已存在文件只有在 SHA-256 与历史默认版本完全一致时才会迁移。
+- 用户修改过的地址列表和本机设置必须保留。
+- 旧版 `server.json` 优先于 `template.json` 作为只读迁移输入；支持的单节点 Xray JSON 转换为 Mihomo `profile.yaml`。
+- 旧 JSON 保留用于用户回退和人工核对，不作为当前运行配置。
+- 旧 `config.json` 是可丢弃派生文件；当前运行配置只写入 `Data/Mihomo/config.yaml`。
 
 增加新的默认资源迁移时，应：
 
 1. 固定历史资源的准确哈希。
 2. 为完全匹配、用户已修改、目标缺失和派生文件清理分别增加测试。
 3. 不使用文件名、修改时间或模糊内容匹配覆盖用户文件。
+4. 保证失败可重试，并且不会执行旧内核路径。
 
-## Xray 配置流程
+## Mihomo 配置流程
 
-默认模板和导入模板必须满足：
+`MihomoServerConfiguration` 接受 UTF-8 YAML，限制文档大小、深度和复杂度，并只保留服务器侧键：
 
-- 根对象是有效 JSON。
-- 所有 `inbounds` 都显式绑定本机回环地址。
-- 存在端口有效的回环 `mixed` 入站；本地端点来自 `local-proxy.json`。
-- 服务器配置包含 `tag == "proxy"` 的出站。
-- `proxy.settings.vnext` 或 `proxy.settings.servers` 非空。
+- `proxies`
+- `proxy-providers`
+- `proxy-groups`
+- `rules`
+- `rule-providers`
+- `sub-rules`
+
+本机监听、端口、日志、嗅探、UDP、代理模式和网络接入方式必须来自 `local-proxy.json`，不能由导入的服务器 YAML 覆盖。所有运行配置固定 `allow-lan: false`，监听地址必须是回环地址。
 
 配置流向：
 
 ```text
-server.json + local-proxy.json
+profile.yaml + local-proxy.json + 当前模式
+    + 可选的当前测速节点
     ↓
-template.json
-    + 当前选择的 IP
+MihomoServerConfiguration.runtimeConfiguration
     ↓
-ConfigTemplate.replacingAddress
+Data/Mihomo/config.yaml（原子写入）
     ↓
-config.json（原子写入）
+mihomo -t -d Data/Mihomo -f Data/Mihomo/config.yaml
     ↓
-启动前占位符检查与 xray run -test
-    ↓
-Xray 运行
+Mihomo 用户态运行
 ```
 
-ViaSix 只替换 `proxy` 出站中第一个 `vnext.address`。导入新模板时先校验结构，再以原子写入替换用户模板；已有选中节点时同步重新生成 `config.json`。
+重要语义：
 
-中性模板使用明确占位符。启动前若仍存在默认 UUID 或示例域名，应返回面向用户的“连接尚未配置”错误。
+- `rule` / `global` 需要内联 `proxies` 或 `proxy-providers`；Provider-only 配置不需要当前测速节点。
+- 当前测速节点存在时，只替换第一个内联节点的 `server`；没有当前节点时保留原地址。
+- `direct` 不复制代理、Provider、代理组或远端规则，生成 `MATCH,DIRECT`，避免订阅刷新和上游握手。
+- HTTP Provider 的 `path` 被改写到 `providers/` 或 `rules/`；inline Provider 不落任意外部路径；其他 Provider 类型被拒绝。
+- 表单支持 VLESS、VMess、Trojan 和 Shadowsocks；高级编辑器用于多节点、Provider、代理组和规则。
+- 旧 Xray JSON 仅通过 `LegacyXrayConfigurationMigrator` 转换受支持的单节点结构，不直接交给 Mihomo。
+
+修改配置模型时，应覆盖原生 YAML 往返、Provider-only、内联节点覆盖、无节点保留、direct 去远端依赖、旧 JSON 迁移失败和 Mihomo 自身 `-t` 校验。
 
 ## 进程与并发约定
 
-- CFST 与 Xray 均由各自 actor 管理完整生命周期。
-- 系统代理和虚拟网卡能力探测也必须通过独立的 actor/协议边界；不得把特权路由操作放进 SwiftUI 或普通用户态流程。
-- ViaSix 只停止自己创建并仍持有的子进程。
-- 不允许按进程名进行全局 kill。
-- CFST 使用独立进程组，取消任务时应清理其子进程。
+- CFST 与 Mihomo 均由各自 actor 管理完整生命周期。
+- 系统代理和虚拟网卡能力边界也必须通过独立 actor/协议隔离；不得把特权路由操作放进 SwiftUI 或普通用户态流程。
+- ViaSix 只停止自己创建并仍持有的子进程，不允许按进程名进行全局 kill。
+- 子进程使用独立进程组；取消任务时清理其完整进程组。
 - 读取 stdout / stderr 时保持流式处理并等待 EOF。
-- 应用退出时取消未完成任务，停止自有进程并保存偏好。
+- 应用退出时取消未完成任务，恢复系统代理，停止自有进程并保存偏好。
 - UI 状态编排保持在 `@MainActor AppModel`。
 
-修改生命周期代码时，应覆盖启动、取消、异常退出、超时、重复调用和应用退出场景。
+修改生命周期代码时，应覆盖配置校验、启动、取消、异常退出、端口冲突、超时、重复调用、系统代理回滚和应用退出场景。
+
+## 虚拟网卡开发边界
+
+`NetworkAccessMode` 已定义本地代理、系统代理和虚拟网卡三个互斥值，但当前配置生成和应用启动对 `virtualInterface` fail closed，UI 控制项不可用。Mihomo YAML 生成器具备受约束的 `tun` 配置模型，不代表应用已经具备安全启用条件。
+
+真实 TUN 前必须满足[虚拟网卡能力边界](VIRTUAL_NETWORK.md)中的签名、特权、路由、DNS、进程监督和崩溃恢复要求。尤其是：
+
+- helper 不能执行用户可写的 `Runtime/mihomo`。
+- XPC 不能接收路径、argv、shell 或原始 YAML。
+- 特权执行必须使用固定、root-owned、已签名的 Mihomo，并直接 `posix_spawn`。
+- journal 必须能精确识别会话进程、utun、路由、DNS 和配置摘要；不能用空 cleanup 宣告恢复成功。
+- 系统代理与 TUN 的切换必须由同一 `NetworkAccessMode` 状态机协调。
 
 ## 测速结果约定
 
@@ -302,7 +320,7 @@ ViaSix 只替换 `proxy` 出站中第一个 `vnext.address`。导入新模板时
 - `Docs/USER_GUIDE.md`：详细使用、配置、备份和排错。
 - `Docs/DEVELOPMENT.md`：构建、测试、目录、数据和开发约定。
 - `Docs/ARCHITECTURE.md`：模块和进程边界。
-- `Docs/VIRTUAL_NETWORK.md`：虚拟网卡能力、权限和恢复边界（当前仅架构预留）。
+- `Docs/VIRTUAL_NETWORK.md`：虚拟网卡能力、权限和恢复边界。
 - `Docs/RELEASING.md`：签名、公证和发布检查。
 - `Docs/ADDRESS_SOURCES.md`：默认地址列表来源、快照和更新流程。
 - `CONTRIBUTING.md`：Issue / PR、提交、测试和文档同步规则。

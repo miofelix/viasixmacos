@@ -22,7 +22,7 @@ struct SidebarProxyPresentation: Equatable, Sendable {
 
     init(
         launchPhase: AppState.LaunchPhase,
-        xrayPhase: AppState.XrayPhase,
+        proxyCorePhase: AppState.ProxyCorePhase,
         endpoint: ProxyEndpoint
     ) {
         switch launchPhase {
@@ -49,7 +49,7 @@ struct SidebarProxyPresentation: Equatable, Sendable {
         case .ready:
             endpointSummary = endpoint.displayAddress
 
-            switch xrayPhase {
+            switch proxyCorePhase {
             case .stopped:
                 statusTitle = "本地代理未启动"
                 detailText = nil

@@ -73,14 +73,29 @@ if [[ -n "${VIASIX_EXPECTED_BUILD_VERSION:-}" && "$build_version" != "$VIASIX_EX
     fail "expected build version $VIASIX_EXPECTED_BUILD_VERSION, found $build_version"
 fi
 
-for resource_name in ip.txt ipv6.txt template.json; do
+for resource_name in ip.txt ipv6.txt local-proxy.json; do
     [[ -f "$contents_dir/Resources/$resource_name" ]] || fail "missing bundled resource: $resource_name"
 done
-plutil -convert xml1 -o /dev/null "$contents_dir/Resources/template.json"
-grep -F -q -- "00000000-0000-0000-0000-000000000000" "$contents_dir/Resources/template.json" \
-    || fail "bundled template does not contain the neutral user ID placeholder"
-grep -F -q -- "example.com" "$contents_dir/Resources/template.json" \
-    || fail "bundled template does not contain the neutral server placeholder"
+plutil -convert xml1 -o /dev/null "$contents_dir/Resources/local-proxy.json"
+listen_address=$(plutil -extract listenAddress raw "$contents_dir/Resources/local-proxy.json")
+network_access_mode=$(plutil -extract networkAccessMode raw "$contents_dir/Resources/local-proxy.json")
+[[ "$listen_address" == "127.0.0.1" ]] \
+    || fail "bundled local proxy must listen on the IPv4 loopback address"
+[[ "$network_access_mode" == "localProxy" ]] \
+    || fail "bundled local proxy must default to local-only access"
+
+for removed_resource in \
+    server.json \
+    template.json \
+    xray \
+    geoip.dat \
+    geosite.dat \
+    Xray-core-MPL-2.0.txt; do
+    if [[ -e "$contents_dir/Resources/$removed_resource" ]] \
+        || [[ -e "$contents_dir/Resources/ThirdPartyLicenses/$removed_resource" ]]; then
+        fail "removed Xray-era resource is still bundled: $removed_resource"
+    fi
+done
 
 [[ -f "$contents_dir/Resources/Docs/USER_GUIDE.md" ]] || fail "missing user guide"
 [[ -f "$contents_dir/Resources/AppIcon.icns" ]] || fail "missing application icon"
@@ -93,7 +108,7 @@ cmp -s "$project_root/LICENSE" "$contents_dir/Resources/LICENSE" \
 
 for license_specification in \
     "CloudflareSpeedTest-GPL-3.0.txt 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986" \
-    "Xray-core-MPL-2.0.txt 1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5" \
+    "mihomo-GPL-3.0.txt 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986" \
     "Yams-MIT.txt 0354b0ea403d2e78059c5ae0510a2cfae9f8eb306fcef094ac9fff5b47e20bed"
 do
     license_name=${license_specification%% *}

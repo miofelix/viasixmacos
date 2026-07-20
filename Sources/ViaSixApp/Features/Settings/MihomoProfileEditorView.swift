@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 import ViaSixCore
+import ViaSixMihomoConfig
 
-struct XrayTemplateEditorView: View {
+struct MihomoProfileEditorView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
@@ -11,7 +12,7 @@ struct XrayTemplateEditorView: View {
     @State private var originalData: Data?
     @State private var loadError: String?
     @State private var saveError: String?
-    @State private var draftAnalysis = XrayTemplateDraftAnalysis.empty
+    @State private var draftAnalysis = MihomoProfileDraftAnalysis.empty
     @State private var draftAnalysisTask: Task<Void, Never>?
     @State private var hasExternalConflict = false
     @State private var isSaving = false
@@ -32,15 +33,12 @@ struct XrayTemplateEditorView: View {
         }
         .frame(minWidth: 780, minHeight: 640)
         .background(VisualStyle.pageBackground)
-        .task { load() }
+        .task { await load() }
         .onChange(of: text) { _, _ in
             scheduleDraftAnalysis()
             if !hasExternalConflict {
                 saveError = nil
             }
-        }
-        .onChange(of: model.state.preferences.selectedIP) { _, _ in
-            scheduleDraftAnalysis()
         }
         .onDisappear {
             draftAnalysisTask?.cancel()
@@ -59,7 +57,7 @@ struct XrayTemplateEditorView: View {
             titleVisibility: .visible
         ) {
             Button("放弃当前编辑并重新载入", role: .destructive) {
-                reloadFromDisk()
+                Task { await reloadFromDisk() }
             }
             Button("继续编辑", role: .cancel) {}
         } message: {
@@ -68,16 +66,16 @@ struct XrayTemplateEditorView: View {
     }
 
     private var editorHeader: some View {
-        AppPageHeader("服务器 JSON", subtitle: "直接编辑 Xray 的远端 proxy 出站") {
+        AppPageHeader("代理配置", subtitle: "编辑 profile.yaml 中的节点、Provider 与规则") {
             HStack(spacing: VisualStyle.spacing8) {
                 Menu {
                     Button("在访达中显示配置", systemImage: "folder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([model.paths.serverConfig])
+                        NSWorkspace.shared.activateFileViewerSelecting([model.paths.profileConfig])
                     }
                     .disabled(originalData == nil)
 
                     Button("复制配置路径", systemImage: "doc.on.doc") {
-                        copyToPasteboard(model.paths.serverConfig.path)
+                        copyToPasteboard(model.paths.profileConfig.path)
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -95,7 +93,7 @@ struct XrayTemplateEditorView: View {
                 .buttonStyle(.borderless)
                 .iconButtonHitTarget()
                 .help("关闭")
-                .accessibilityLabel("关闭服务器 JSON 编辑器")
+                .accessibilityLabel("关闭代理配置编辑器")
                 .disabled(isSaving)
             }
         }
@@ -121,8 +119,8 @@ struct XrayTemplateEditorView: View {
                         .stroke(VisualStyle.surfaceBorder)
                 }
                 .disabled(isSaving)
-                .accessibilityLabel("Xray JSON 配置")
-                .accessibilityHint("保存前会自动检查配置结构和当前连接参数")
+                .accessibilityLabel("Mihomo YAML 配置")
+                .accessibilityHint("保存前会检查节点、Provider 与规则结构")
 
             editorFeedback
             editorFooter
@@ -135,14 +133,15 @@ struct XrayTemplateEditorView: View {
             HStack(spacing: 10) {
                 draftStatusBadge
 
-                if let endpoint = draftAnalysis.endpoint {
+                if let server = draftAnalysis.inlineServer {
                     Divider()
                         .frame(height: 16)
-                    Label("本机 \(endpoint.displayAddress)", systemImage: "network")
+                    Label(server, systemImage: "server.rack")
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                         .textSelection(.enabled)
-                        .help("运行时使用的本地端点")
                 }
 
                 Spacer(minLength: 12)
@@ -151,13 +150,21 @@ struct XrayTemplateEditorView: View {
                     copyDraft()
                 }
                 .disabled(text.isEmpty || isSaving)
-                .help("复制 JSON 原文")
+                .help("复制 YAML 原文")
 
-                Button("格式化", systemImage: "text.alignleft") {
-                    formatDraft()
+                if draftAnalysis.canMigrate {
+                    Button("迁移为 YAML", systemImage: "arrow.triangle.2.circlepath") {
+                        migrateDraft()
+                    }
+                    .disabled(isSaving)
+                    .help("将可兼容的旧配置转换为 Mihomo YAML")
+                } else {
+                    Button("格式化", systemImage: "text.alignleft") {
+                        formatDraft()
+                    }
+                    .disabled(!draftAnalysis.canFormat || isSaving)
+                    .help("使用稳定的键名顺序和缩进格式化 YAML")
                 }
-                .disabled(!draftAnalysis.canFormat || isSaving)
-                .help("使用稳定的缩进和键名顺序格式化 JSON")
 
                 Button("重新载入", systemImage: "arrow.clockwise") {
                     requestReload()
@@ -166,6 +173,20 @@ struct XrayTemplateEditorView: View {
                 .help("载入磁盘中的最新配置")
             }
 
+            configurationContext
+        }
+        .padding(13)
+        .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(VisualStyle.surfaceBorder.opacity(0.78))
+        }
+    }
+
+    @ViewBuilder
+    private var configurationContext: some View {
+        switch draftAnalysis.status {
+        case .inlineProxy:
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("当前节点")
                     .font(.caption.weight(.medium))
@@ -176,17 +197,29 @@ struct XrayTemplateEditorView: View {
                     .truncationMode(.middle)
                     .textSelection(.enabled)
                 Spacer(minLength: 10)
-                Text("应用节点时仅替换 proxy 出站的首个服务器地址，不改动凭据。")
+                Text("连接时可将第一个内联节点的服务器地址替换为当前节点，不会改动凭据与 TLS 标识。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-        .padding(13)
-        .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(VisualStyle.surfaceBorder.opacity(0.78))
+        case .providerOnly:
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("节点来源")
+                    .font(.caption.weight(.medium))
+                Text("Proxy Provider")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 10)
+                Text("节点由 Provider 管理，测速节点不会覆盖订阅中的服务器地址。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .legacyXrayMigratable, .legacyXrayMigrationFailed:
+            Text("旧配置不会直接写入 profile.yaml；仅在迁移成功后才能保存。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .empty, .invalidYAML, .invalidConfiguration:
+            EmptyView()
         }
     }
 
@@ -219,7 +252,7 @@ struct XrayTemplateEditorView: View {
                 .font(.caption)
                 .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("配置需要修正：\(issue)")
+                .accessibilityLabel("配置需要处理：\(issue)")
         }
     }
 
@@ -270,7 +303,7 @@ struct XrayTemplateEditorView: View {
                     || !hasUnsavedChanges
                     || !draftAnalysis.isValid
             )
-            .help(draftAnalysis.isValid ? "保存配置（⌘S）" : "修正配置后才能保存")
+            .help(draftAnalysis.isValid ? "保存配置（⌘S）" : "修正或迁移配置后才能保存")
         }
     }
 
@@ -283,7 +316,7 @@ struct XrayTemplateEditorView: View {
             )
             HStack(spacing: 10) {
                 Button("重新读取", systemImage: "arrow.clockwise") {
-                    reloadFromDisk(initialLoad: true)
+                    Task { await reloadFromDisk(initialLoad: true) }
                 }
                 .buttonStyle(.borderedProminent)
 
@@ -315,27 +348,28 @@ struct XrayTemplateEditorView: View {
     private var draftStatusColor: Color {
         switch draftAnalysis.status {
         case .empty: .secondary
-        case .invalidJSON, .invalidConfiguration: .orange
-        case .valid, .validWithoutNode: .green
+        case .invalidYAML, .invalidConfiguration, .legacyXrayMigrationFailed: .orange
+        case .legacyXrayMigratable: .blue
+        case .inlineProxy, .providerOnly: .green
         }
     }
 
-    private func load() {
+    private func load() async {
         guard originalText == nil else { return }
-        reloadFromDisk(initialLoad: true)
+        await reloadFromDisk(initialLoad: true)
     }
 
     private func requestReload() {
         if hasUnsavedChanges {
             showsReloadConfirmation = true
         } else {
-            reloadFromDisk()
+            Task { await reloadFromDisk() }
         }
     }
 
-    private func reloadFromDisk(initialLoad: Bool = false) {
+    private func reloadFromDisk(initialLoad: Bool = false) async {
         do {
-            let data = try Data(contentsOf: model.paths.serverConfig)
+            let data = try await model.loadProfileConfiguration()
             guard let loadedText = String(data: data, encoding: .utf8) else {
                 throw CocoaError(.fileReadInapplicableStringEncoding)
             }
@@ -358,32 +392,20 @@ struct XrayTemplateEditorView: View {
     }
 
     private func refreshDraftAnalysis() {
-        draftAnalysis = XrayTemplateDraftAnalysis.inspect(
-            text,
-            selectedIP: model.state.preferences.selectedIP,
-            local: model.state.localProxyConfiguration
-        )
+        draftAnalysis = MihomoProfileDraftAnalysis.inspect(text)
     }
 
     private func scheduleDraftAnalysis() {
         draftAnalysisTask?.cancel()
         let draft = text
-        let selectedIP = model.state.preferences.selectedIP
-        let local = model.state.localProxyConfiguration
         draftAnalysisTask = Task { @MainActor in
             do {
                 try await Task.sleep(for: .milliseconds(140))
                 try Task.checkCancellation()
                 let analysis = await Task.detached(priority: .userInitiated) {
-                    XrayTemplateDraftAnalysis.inspect(
-                        draft,
-                        selectedIP: selectedIP,
-                        local: local
-                    )
+                    MihomoProfileDraftAnalysis.inspect(draft)
                 }.value
-                guard !Task.isCancelled, text == draft,
-                    model.state.preferences.selectedIP == selectedIP
-                else { return }
+                guard !Task.isCancelled, text == draft else { return }
                 draftAnalysis = analysis
             } catch is CancellationError {
                 return
@@ -395,12 +417,24 @@ struct XrayTemplateEditorView: View {
 
     private func formatDraft() {
         do {
-            text = try XrayTemplateDraftAnalysis.formatted(text)
+            text = try MihomoProfileDraftAnalysis.formattedYAML(text)
             if !hasExternalConflict {
                 saveError = nil
             }
         } catch {
             saveError = "格式化失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func migrateDraft() {
+        do {
+            text = try MihomoProfileDraftAnalysis.migratedYAML(text)
+            if !hasExternalConflict {
+                saveError = nil
+            }
+            refreshDraftAnalysis()
+        } catch {
+            saveError = "迁移失败：\(error.localizedDescription)"
         }
     }
 
@@ -426,17 +460,26 @@ struct XrayTemplateEditorView: View {
             saveError = draftAnalysis.issue ?? "请先修正代理配置"
             return
         }
-        guard let data = text.data(using: .utf8) else {
-            saveError = "配置不是有效的 UTF-8 文本"
+
+        let data: Data
+        do {
+            data = try MihomoProfileDraftAnalysis.canonicalData(text)
+        } catch {
+            saveError = "配置无法保存：\(error.localizedDescription)"
             return
         }
 
         isSaving = true
         Task { @MainActor in
             do {
-                try await model.saveServerConfiguration(data)
+                try await model.saveProfileConfiguration(
+                    data,
+                    expectedProfileData: originalData
+                )
+                let savedText = String(decoding: data, as: UTF8.self)
+                text = savedText
+                originalText = savedText
                 originalData = data
-                originalText = text
                 isSaving = false
                 dismiss()
             } catch is CancellationError {
@@ -461,40 +504,56 @@ struct XrayTemplateEditorView: View {
     }
 }
 
-struct XrayTemplateDraftAnalysis: Equatable, Sendable {
+struct MihomoProfileDraftAnalysis: Equatable, Sendable {
     enum Status: Equatable, Sendable {
         case empty
-        case invalidJSON(String)
+        case inlineProxy(String)
+        case providerOnly
+        case invalidYAML(String)
         case invalidConfiguration(String)
-        case valid(ProxyEndpoint)
-        case validWithoutNode(ProxyEndpoint)
+        case legacyXrayMigratable(String)
+        case legacyXrayMigrationFailed(String)
     }
 
     let status: Status
-    let canFormat: Bool
 
-    static let empty = XrayTemplateDraftAnalysis(status: .empty, canFormat: false)
+    static let empty = MihomoProfileDraftAnalysis(status: .empty)
 
-    var endpoint: ProxyEndpoint? {
+    var inlineServer: String? {
         switch status {
-        case .valid(let endpoint), .validWithoutNode(let endpoint):
-            return endpoint
-        default:
-            return nil
+        case .inlineProxy(let server), .legacyXrayMigratable(let server):
+            server
+        case .empty, .providerOnly, .invalidYAML, .invalidConfiguration,
+            .legacyXrayMigrationFailed:
+            nil
         }
     }
 
     var isValid: Bool {
-        endpoint != nil
+        switch status {
+        case .inlineProxy, .providerOnly: true
+        case .empty, .invalidYAML, .invalidConfiguration, .legacyXrayMigratable,
+            .legacyXrayMigrationFailed:
+            false
+        }
+    }
+
+    var canFormat: Bool { isValid }
+
+    var canMigrate: Bool {
+        if case .legacyXrayMigratable = status { true } else { false }
     }
 
     var issue: String? {
         switch status {
         case .empty:
             "配置内容不能为空"
-        case .invalidJSON(let message), .invalidConfiguration(let message):
+        case .invalidYAML(let message), .invalidConfiguration(let message),
+            .legacyXrayMigrationFailed(let message):
             message
-        case .valid, .validWithoutNode:
+        case .legacyXrayMigratable:
+            "检测到可兼容的旧版 Xray JSON，请先迁移为 Mihomo YAML。"
+        case .inlineProxy, .providerOnly:
             nil
         }
     }
@@ -502,96 +561,81 @@ struct XrayTemplateDraftAnalysis: Equatable, Sendable {
     var statusTitle: String {
         switch status {
         case .empty: "等待配置"
-        case .invalidJSON: "JSON 需要修正"
+        case .inlineProxy: "内联节点配置有效"
+        case .providerOnly: "Provider 配置有效"
+        case .invalidYAML: "YAML 需要修正"
         case .invalidConfiguration: "配置需要修正"
-        case .valid: "配置有效"
-        case .validWithoutNode: "配置有效，待选择节点"
+        case .legacyXrayMigratable: "可迁移旧配置"
+        case .legacyXrayMigrationFailed: "旧配置无法迁移"
         }
     }
 
     var statusIcon: String {
         switch status {
         case .empty: "doc.text"
-        case .invalidJSON, .invalidConfiguration: "exclamationmark.circle.fill"
-        case .valid, .validWithoutNode: "checkmark.circle.fill"
+        case .inlineProxy: "server.rack"
+        case .providerOnly: "shippingbox"
+        case .invalidYAML, .invalidConfiguration, .legacyXrayMigrationFailed:
+            "exclamationmark.circle.fill"
+        case .legacyXrayMigratable: "arrow.triangle.2.circlepath"
         }
     }
 
-    static func inspect(
-        _ text: String,
-        selectedIP: String?,
-        local: LocalProxyConfiguration = .default
-    ) -> XrayTemplateDraftAnalysis {
+    static func inspect(_ text: String) -> Self {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .empty
         }
         guard let data = text.data(using: .utf8) else {
-            return XrayTemplateDraftAnalysis(
-                status: .invalidJSON("配置不是有效的 UTF-8 文本"),
-                canFormat: false
-            )
+            return Self(status: .invalidYAML("配置不是有效的 UTF-8 文本"))
         }
 
         do {
-            let object = try JSONSerialization.jsonObject(with: data)
-            guard JSONSerialization.isValidJSONObject(object) else {
-                throw ConfigTemplateError.invalidJSON
+            let configuration = try MihomoServerConfiguration(data: data)
+            let canonical = try configuration.formattedData()
+            if let server = MihomoServerConfiguration.proxyServerAddress(in: canonical) {
+                return Self(status: .inlineProxy(server))
+            }
+            return Self(status: .providerOnly)
+        } catch let error as MihomoConfigurationError {
+            switch error {
+            case .legacyXrayConfiguration:
+                return inspectLegacyXray(data)
+            case .invalidUTF8, .invalidYAML:
+                return Self(status: .invalidYAML(error.localizedDescription))
+            default:
+                return Self(status: .invalidConfiguration(error.localizedDescription))
             }
         } catch {
-            return XrayTemplateDraftAnalysis(
-                status: .invalidJSON(ConfigTemplateError.invalidJSON.localizedDescription),
-                canFormat: false
-            )
-        }
-
-        do {
-            let normalizedIP =
-                selectedIP?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let validationIP = normalizedIP.isEmpty ? "2001:db8::2" : normalizedIP
-            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            let endpoint: ProxyEndpoint
-            let generated: Data
-            if object?["inbounds"] != nil || object?["outbounds"] != nil {
-                endpoint = try ConfigTemplate.validateTemplate(data)
-                generated = try ConfigTemplate.replacingAddress(in: data, with: validationIP)
-            } else {
-                endpoint = try local.validated().endpoint
-                generated = try ConfigTemplate.runtimeConfiguration(
-                    server: data,
-                    local: local,
-                    address: validationIP
-                )
-            }
-            try ConfigTemplate.validateForLaunch(generated)
-            return XrayTemplateDraftAnalysis(
-                status: normalizedIP.isEmpty ? .validWithoutNode(endpoint) : .valid(endpoint),
-                canFormat: true
-            )
-        } catch {
-            return XrayTemplateDraftAnalysis(
-                status: .invalidConfiguration(error.localizedDescription),
-                canFormat: true
-            )
+            return Self(status: .invalidConfiguration(error.localizedDescription))
         }
     }
 
-    static func formatted(_ text: String) throws -> String {
+    static func canonicalData(_ text: String) throws -> Data {
         guard let data = text.data(using: .utf8) else {
-            throw CocoaError(.fileWriteInapplicableStringEncoding)
+            throw MihomoConfigurationError.invalidUTF8
         }
-        let object: Any
+        return try MihomoServerConfiguration(data: data).formattedData()
+    }
+
+    static func formattedYAML(_ text: String) throws -> String {
+        String(decoding: try canonicalData(text), as: UTF8.self)
+    }
+
+    static func migratedYAML(_ text: String) throws -> String {
+        guard let data = text.data(using: .utf8) else {
+            throw MihomoConfigurationError.invalidUTF8
+        }
+        let migrated = try LegacyXrayConfigurationMigrator.serverConfiguration(from: data)
+        return String(decoding: try migrated.formattedData(), as: UTF8.self)
+    }
+
+    private static func inspectLegacyXray(_ data: Data) -> Self {
         do {
-            object = try JSONSerialization.jsonObject(with: data)
+            let migrated = try LegacyXrayConfigurationMigrator.serverConfiguration(from: data)
+            let server = MihomoServerConfiguration.proxyServerAddress(in: migrated.data) ?? "内联节点"
+            return Self(status: .legacyXrayMigratable(server))
         } catch {
-            throw ConfigTemplateError.invalidJSON
+            return Self(status: .legacyXrayMigrationFailed(error.localizedDescription))
         }
-        guard JSONSerialization.isValidJSONObject(object) else {
-            throw ConfigTemplateError.invalidJSON
-        }
-        let formatted = try JSONSerialization.data(
-            withJSONObject: object,
-            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        )
-        return String(decoding: formatted, as: UTF8.self) + "\n"
     }
 }

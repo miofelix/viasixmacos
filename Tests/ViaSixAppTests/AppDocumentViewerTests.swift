@@ -146,9 +146,9 @@ final class AppDocumentViewerTests: XCTestCase {
         )
         XCTAssertEqual(
             DocumentDisplayTitle.resolve(
-                URL(fileURLWithPath: "/tmp/Xray-core-MPL-2.0.txt")
+                URL(fileURLWithPath: "/tmp/mihomo-GPL-3.0.txt")
             ),
-            "Xray-core · MPL-2.0"
+            "Mihomo · GPL-3.0"
         )
         XCTAssertEqual(
             DocumentDisplayTitle.resolve(

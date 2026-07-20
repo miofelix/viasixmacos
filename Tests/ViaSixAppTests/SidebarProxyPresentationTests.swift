@@ -10,7 +10,7 @@ final class SidebarProxyPresentationTests: XCTestCase {
         for launchPhase in [AppState.LaunchPhase.idle, .loading] {
             let presentation = SidebarProxyPresentation(
                 launchPhase: launchPhase,
-                xrayPhase: .running,
+                proxyCorePhase: .running,
                 endpoint: endpoint
             )
 
@@ -28,7 +28,7 @@ final class SidebarProxyPresentationTests: XCTestCase {
     func testLaunchFailureOverridesRuntimeStateAndKeepsDiagnostic() {
         let presentation = SidebarProxyPresentation(
             launchPhase: .failed("无法读取应用数据"),
-            xrayPhase: .running,
+            proxyCorePhase: .running,
             endpoint: endpoint
         )
 
@@ -59,7 +59,7 @@ final class SidebarProxyPresentationTests: XCTestCase {
     }
 
     func testReadyValidationAndStartupOfferCancellation() {
-        let expectations: [(AppState.XrayPhase, String)] = [
+        let expectations: [(AppState.ProxyCorePhase, String)] = [
             (.validating, "正在校验配置"),
             (.starting, "正在启动代理"),
         ]
@@ -115,11 +115,11 @@ final class SidebarProxyPresentationTests: XCTestCase {
     }
 
     private func readyPresentation(
-        _ xrayPhase: AppState.XrayPhase
+        _ proxyCorePhase: AppState.ProxyCorePhase
     ) -> SidebarProxyPresentation {
         SidebarProxyPresentation(
             launchPhase: .ready,
-            xrayPhase: xrayPhase,
+            proxyCorePhase: proxyCorePhase,
             endpoint: endpoint
         )
     }

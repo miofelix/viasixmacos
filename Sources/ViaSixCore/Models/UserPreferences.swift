@@ -69,7 +69,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     public var ipSourceMode: IPSourceMode
     public var selectedIP: String
     public var cfstPath: String
-    public var xrayPath: String
+    public var mihomoPath: String
     public var exitIPEndpoint: String
     public var exitIPDetectionMode: ExitIPDetectionMode
     public var lastSuccessfulSpeedTestParameters: SpeedTestParameters?
@@ -79,7 +79,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         ipSourceMode: IPSourceMode = .ipv6,
         selectedIP: String = "",
         cfstPath: String = "",
-        xrayPath: String = "",
+        mihomoPath: String = "",
         exitIPEndpoint: String = AppMetadata.defaultExitIPEndpoint,
         exitIPDetectionMode: ExitIPDetectionMode = .automatic,
         lastSuccessfulSpeedTestParameters: SpeedTestParameters? = nil
@@ -88,14 +88,14 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         self.ipSourceMode = ipSourceMode
         self.selectedIP = selectedIP
         self.cfstPath = cfstPath
-        self.xrayPath = xrayPath
+        self.mihomoPath = mihomoPath
         self.exitIPEndpoint = exitIPEndpoint
         self.exitIPDetectionMode = exitIPDetectionMode
         self.lastSuccessfulSpeedTestParameters = lastSuccessfulSpeedTestParameters
     }
 
     private enum CodingKeys: String, CodingKey {
-        case parameters, ipSourceMode, selectedIP, cfstPath, xrayPath, exitIPEndpoint
+        case parameters, ipSourceMode, selectedIP, cfstPath, mihomoPath, xrayPath, exitIPEndpoint
         case exitIPDetectionMode, lastSuccessfulSpeedTestParameters
     }
 
@@ -106,7 +106,9 @@ public struct UserPreferences: Codable, Equatable, Sendable {
             ipSourceMode: try values.decodeIfPresent(IPSourceMode.self, forKey: .ipSourceMode) ?? .ipv6,
             selectedIP: try values.decodeIfPresent(String.self, forKey: .selectedIP) ?? "",
             cfstPath: try values.decodeIfPresent(String.self, forKey: .cfstPath) ?? "",
-            xrayPath: try values.decodeIfPresent(String.self, forKey: .xrayPath) ?? "",
+            // An Xray executable cannot be used as a Mihomo executable. Never
+            // migrate that legacy path, even when it still exists on disk.
+            mihomoPath: try values.decodeIfPresent(String.self, forKey: .mihomoPath) ?? "",
             exitIPEndpoint: try values.decodeIfPresent(String.self, forKey: .exitIPEndpoint)
                 ?? AppMetadata.defaultExitIPEndpoint,
             exitIPDetectionMode: try values.decodeIfPresent(
@@ -117,6 +119,50 @@ public struct UserPreferences: Codable, Equatable, Sendable {
                 SpeedTestParameters.self,
                 forKey: .lastSuccessfulSpeedTestParameters
             )
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(parameters, forKey: .parameters)
+        try values.encode(ipSourceMode, forKey: .ipSourceMode)
+        try values.encode(selectedIP, forKey: .selectedIP)
+        try values.encode(cfstPath, forKey: .cfstPath)
+        try values.encode(mihomoPath, forKey: .mihomoPath)
+        try values.encode(exitIPEndpoint, forKey: .exitIPEndpoint)
+        try values.encode(exitIPDetectionMode, forKey: .exitIPDetectionMode)
+        try values.encodeIfPresent(
+            lastSuccessfulSpeedTestParameters,
+            forKey: .lastSuccessfulSpeedTestParameters
+        )
+    }
+
+    /// Source compatibility for one transition build. Reads and writes are
+    /// intentionally ignored so an Xray path can never become a Mihomo path.
+    public var xrayPath: String {
+        get { "" }
+        set {}
+    }
+
+    public init(
+        parameters: SpeedTestParameters,
+        ipSourceMode: IPSourceMode = .ipv6,
+        selectedIP: String = "",
+        cfstPath: String = "",
+        xrayPath _: String,
+        exitIPEndpoint: String = AppMetadata.defaultExitIPEndpoint,
+        exitIPDetectionMode: ExitIPDetectionMode = .automatic,
+        lastSuccessfulSpeedTestParameters: SpeedTestParameters? = nil
+    ) {
+        self.init(
+            parameters: parameters,
+            ipSourceMode: ipSourceMode,
+            selectedIP: selectedIP,
+            cfstPath: cfstPath,
+            mihomoPath: "",
+            exitIPEndpoint: exitIPEndpoint,
+            exitIPDetectionMode: exitIPDetectionMode,
+            lastSuccessfulSpeedTestParameters: lastSuccessfulSpeedTestParameters
         )
     }
 }

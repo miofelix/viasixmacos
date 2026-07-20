@@ -65,6 +65,8 @@ final class MihomoServerConfigurationTests: XCTestCase {
         XCTAssertEqual(profile.name, "single")
         XCTAssertEqual(profile.protocolName, .trojan)
         XCTAssertEqual(profile.credential, "secret")
+        XCTAssertTrue(configuration.hasReplaceablePrimaryServer)
+        XCTAssertFalse(configuration.isProviderOnly)
     }
 
     func testTrojanImplicitTLSAndSNIRoundTripWithoutSyntheticTLSKey() throws {
@@ -113,6 +115,8 @@ final class MihomoServerConfigurationTests: XCTestCase {
         XCTAssertThrowsError(try configuration.primaryProfile()) { error in
             XCTAssertEqual(error as? MihomoConfigurationError, .missingInlineProxy)
         }
+        XCTAssertFalse(configuration.hasReplaceablePrimaryServer)
+        XCTAssertFalse(configuration.isProviderOnly)
     }
 
     func testSingleServerlessProxyMappingIsAcceptedAndWrapped() throws {
@@ -203,6 +207,8 @@ final class MihomoServerConfigurationTests: XCTestCase {
         XCTAssertThrowsError(try configuration.primaryProfile()) { error in
             XCTAssertEqual(error as? MihomoConfigurationError, .missingInlineProxy)
         }
+        XCTAssertFalse(configuration.hasReplaceablePrimaryServer)
+        XCTAssertTrue(configuration.isProviderOnly)
     }
 
     func testRejectsLegacyXrayJSONAndDuplicateProxyNames() throws {

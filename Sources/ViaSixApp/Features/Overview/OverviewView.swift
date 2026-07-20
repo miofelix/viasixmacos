@@ -94,13 +94,13 @@ struct OverviewView: View {
 
                     localEndpointRow
 
-                    if case .failed(let message) = model.state.xrayPhase {
+                    if case .failed(let message) = model.state.proxyCorePhase {
                         inlineMessage(
                             message,
                             systemImage: "exclamationmark.triangle.fill",
                             tone: .negative
                         )
-                    } else if !model.state.isXrayRunning {
+                    } else if !model.state.isProxyRunning {
                         inlineMessage(
                             proxyReadinessHint,
                             systemImage: "info.circle",
@@ -203,7 +203,7 @@ struct OverviewView: View {
                 nodeSelectionButton
                 configurationTestButton
 
-                if model.state.isXrayRunning {
+                if model.state.isProxyRunning {
                     reconnectButton
                 }
             }
@@ -216,7 +216,7 @@ struct OverviewView: View {
 
                 HStack(spacing: VisualStyle.spacing8) {
                     configurationTestButton
-                    if model.state.isXrayRunning {
+                    if model.state.isProxyRunning {
                         reconnectButton
                     }
                 }
@@ -256,7 +256,7 @@ struct OverviewView: View {
     }
 
     private var reconnectButton: some View {
-        Button("重新连接", systemImage: "arrow.clockwise", action: model.restartXray)
+        Button("重新连接", systemImage: "arrow.clockwise", action: model.restartProxy)
             .disabled(model.switchingIP != nil || model.isTemplateOperationBusy)
     }
 
@@ -356,6 +356,20 @@ struct OverviewView: View {
                             .disabled(systemProxyToggleDisabled)
                             .accessibilityLabel("系统代理")
                             .accessibilityValue(systemProxyStatusText)
+                    }
+
+                    Divider()
+
+                    SettingRow(
+                        "虚拟网卡模式",
+                        detail: "通过 TUN 接管不支持系统代理的应用流量",
+                        systemImage: "point.3.filled.connected.trianglepath.dotted"
+                    ) {
+                        Toggle("虚拟网卡模式", isOn: .constant(false))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .disabled(true)
+                            .help("需要安装并授权虚拟网卡服务")
                     }
 
                     Divider()
@@ -534,8 +548,8 @@ struct OverviewView: View {
                 systemImage: model.state.exit.isDetecting ? "hourglass" : "arrow.clockwise"
             )
         }
-        .disabled(model.state.exit.isDetecting || isXrayTransitioning)
-        .accessibilityHint(model.state.isXrayRunning ? "通过本地代理检测出口" : "直接检测本机出口")
+        .disabled(model.state.exit.isDetecting || isProxyTransitioning)
+        .accessibilityHint(model.state.isProxyRunning ? "通过本地代理检测出口" : "直接检测本机出口")
     }
 
     @ViewBuilder
@@ -637,13 +651,13 @@ struct OverviewView: View {
     private var proxyPresentation: SidebarProxyPresentation {
         SidebarProxyPresentation(
             launchPhase: model.state.launchPhase,
-            xrayPhase: model.state.xrayPhase,
+            proxyCorePhase: model.state.proxyCorePhase,
             endpoint: model.state.proxyEndpoint
         )
     }
 
     private var connectionStatusShortTitle: String {
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .stopped: "未启动"
         case .validating: "校验中"
         case .starting: "启动中"
@@ -654,32 +668,34 @@ struct OverviewView: View {
     }
 
     private var currentNodeTitle: String {
-        if !model.requiresSelectedNodeForProxy {
+        if model.state.localProxyConfiguration.routingMode == .direct {
             return "直连模式"
         }
         if let region = selectedResult?.region, !region.isEmpty {
             return region
         }
-        return selectedIP.isEmpty ? "尚未选择节点" : "当前节点"
+        return selectedIP.isEmpty ? "配置默认节点" : "当前节点"
     }
 
     private var currentNodeDetail: String {
-        if !model.requiresSelectedNodeForProxy {
+        if model.state.localProxyConfiguration.routingMode == .direct {
             return "流量直接连接，不经过代理节点"
         }
         if selectedIP.isEmpty {
-            return "前往节点页测速并选择一个可用地址"
+            return "使用代理配置中的服务器或 Provider"
         }
         return selectedIP
     }
 
     private var currentNodeIcon: String {
-        model.requiresSelectedNodeForProxy ? "network" : "arrow.up.right"
+        model.state.localProxyConfiguration.routingMode == .direct
+            ? "arrow.up.right"
+            : "network"
     }
 
     private var currentNodeTone: AppTone {
-        if !model.requiresSelectedNodeForProxy { return .neutral }
-        return selectedIP.isEmpty ? .warning : .accent
+        if model.state.localProxyConfiguration.routingMode == .direct { return .neutral }
+        return selectedIP.isEmpty ? .neutral : .accent
     }
 
     private var selectedResult: ViaSixCore.SpeedTestResult? {
@@ -700,9 +716,9 @@ struct OverviewView: View {
     private func performProxyPrimaryAction() {
         switch proxyPresentation.action {
         case .startProxy:
-            model.startXray()
+            model.startProxy()
         case .stopProxy:
-            model.stopXray()
+            model.stopProxy()
         case .none:
             break
         }
@@ -722,7 +738,7 @@ struct OverviewView: View {
         {
             return true
         }
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .stopped, .running, .failed:
             return false
         case .validating, .starting, .stopping:
@@ -738,9 +754,9 @@ struct OverviewView: View {
 
     private var systemProxyEnabledBinding: Binding<Bool> {
         Binding {
-            model.state.localProxyConfiguration.systemProxyEnabled
+            model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
         } set: { enabled in
-            model.setSystemProxyEnabled(enabled)
+            model.setNetworkAccessMode(enabled ? .systemProxy : .localProxy)
         }
     }
 
@@ -753,7 +769,7 @@ struct OverviewView: View {
         {
             return true
         }
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .validating, .starting, .stopping:
             return true
         case .stopped, .running, .failed:
@@ -778,7 +794,7 @@ struct OverviewView: View {
     private var systemProxyPresentation: SystemProxyStatusPresentation {
         SystemProxyStatusPresentation(
             phase: model.state.systemProxyPhase,
-            isRequested: model.state.localProxyConfiguration.systemProxyEnabled
+            isRequested: model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
         )
     }
 
@@ -805,8 +821,8 @@ struct OverviewView: View {
         }
     }
 
-    private var isXrayTransitioning: Bool {
-        switch model.state.xrayPhase {
+    private var isProxyTransitioning: Bool {
+        switch model.state.proxyCorePhase {
         case .validating, .starting, .stopping:
             true
         case .stopped, .running, .failed:
@@ -817,21 +833,20 @@ struct OverviewView: View {
     private var proxyToggleDisabled: Bool {
         guard model.state.launchPhase == .ready else { return true }
         if model.state.runtimeOperation != nil || model.isTemplateOperationBusy { return true }
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .stopping:
             return true
         case .validating, .starting, .running:
             return false
         case .stopped, .failed:
             return model.switchingIP != nil
-                || (model.requiresSelectedNodeForProxy && selectedIP.isEmpty)
-                || !model.hasXrayExecutable
+                || !model.hasProxyCoreExecutable
                 || !model.isProxyConfigurationReady
         }
     }
 
     private var proxyReadinessHint: String {
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .validating:
             return "正在校验代理配置，可取消启动。"
         case .starting:
@@ -852,11 +867,8 @@ struct OverviewView: View {
         if let issue = model.proxyConfigurationIssue {
             return "代理配置尚未就绪：\(issue)。请在设置中导入或编辑配置。"
         }
-        if model.requiresSelectedNodeForProxy && selectedIP.isEmpty {
-            return "先选择一个节点，才能启动本地代理。"
-        }
-        if !model.hasXrayExecutable {
-            return "尚未找到 Xray-core，请在设置中安装或指定路径。"
+        if !model.hasProxyCoreExecutable {
+            return "尚未找到 Mihomo，请在设置中安装或指定路径。"
         }
         return "本地代理当前未启动。"
     }
@@ -908,7 +920,7 @@ struct OverviewView: View {
             break
         }
 
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .validating, .starting, .running, .stopping:
             return true
         case .stopped, .failed:

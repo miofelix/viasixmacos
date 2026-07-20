@@ -15,7 +15,8 @@ struct SupervisedProcess: Sendable {
         executableURL: URL,
         arguments: [String],
         workingDirectoryURL: URL,
-        environmentOverrides: [String: String] = [:]
+        environmentOverrides: [String: String] = [:],
+        inheritParentEnvironment: Bool = true
     ) throws -> Self {
         var outputDescriptors: [Int32] = [-1, -1]
         guard Darwin.pipe(&outputDescriptors) == 0 else {
@@ -101,7 +102,8 @@ struct SupervisedProcess: Sendable {
         defer { argv.forEach { free($0) } }
         argv.append(nil)
 
-        let environment = ProcessInfo.processInfo.environment.merging(
+        let baseEnvironment = inheritParentEnvironment ? ProcessInfo.processInfo.environment : [:]
+        let environment = baseEnvironment.merging(
             environmentOverrides,
             uniquingKeysWith: { _, override in override }
         )

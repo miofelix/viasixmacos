@@ -2,12 +2,13 @@ import Foundation
 import Network
 import Observation
 import ViaSixCore
+import ViaSixMihomoConfig
 
-protocol XrayTemplateReplacing: Sendable {
-    func replaceTemplate(
+protocol ProxyProfileReplacing: Sendable {
+    func replaceProfile(
         with data: Data,
         selectedIP: String?,
-        expectedTemplateData: Data?
+        expectedProfileData: Data?
     ) async throws -> ProxyEndpoint
 }
 
@@ -23,43 +24,43 @@ protocol SystemProxyManaging: Sendable {
 
 extension SystemProxyManager: SystemProxyManaging {}
 
-protocol XrayControlling: Sendable {
+protocol ProxyCoreControlling: Sendable {
     var isRunning: Bool { get async }
-    func start(onEvent: @escaping XrayEventHandler) async throws
+    func start(onEvent: @escaping MihomoEventHandler) async throws
     func stop() async
-    func restart(onEvent: @escaping XrayEventHandler) async throws
+    func restart(onEvent: @escaping MihomoEventHandler) async throws
 }
 
-extension XrayController: XrayControlling {}
+extension MihomoController: ProxyCoreControlling {}
 
-struct XrayControllerConfiguration: Sendable {
+struct ProxyCoreControllerConfiguration: Sendable {
     let executableURL: URL
     let configURL: URL
-    let workingDirectoryURL: URL
+    let homeURL: URL
     let environment: [String: String]
     let host: String
     let port: UInt16
 }
 
-typealias XrayControllerFactory = @Sendable (XrayControllerConfiguration) -> any XrayControlling
+typealias ProxyCoreControllerFactory = @Sendable (ProxyCoreControllerConfiguration) -> any ProxyCoreControlling
 
-extension AppBootstrapper: XrayTemplateReplacing {
-    func replaceTemplate(
+extension AppBootstrapper: ProxyProfileReplacing {
+    func replaceProfile(
         with data: Data,
         selectedIP: String?,
-        expectedTemplateData: Data?
+        expectedProfileData: Data?
     ) throws -> ProxyEndpoint {
-        if let expectedTemplateData {
-            let currentTemplateData = try Data(contentsOf: paths.templateConfig)
-            guard currentTemplateData == expectedTemplateData else {
+        if let expectedProfileData {
+            let currentProfileData = try Data(contentsOf: paths.profileConfig)
+            guard currentProfileData == expectedProfileData else {
                 throw AppModelError.templateChangedExternally
             }
         }
         do {
-            return try replaceTemplateIfUnchanged(
+            return try replaceProfileIfUnchanged(
                 with: data,
                 selectedIP: selectedIP,
-                expectedTemplateData: expectedTemplateData
+                expectedProfileData: expectedProfileData
             )
         } catch AppBootstrapperError.templateChangedExternally {
             throw AppModelError.templateChangedExternally
@@ -108,10 +109,6 @@ final class AppModel {
         routingModeTask != nil
     }
 
-    var requiresSelectedNodeForProxy: Bool {
-        state.localProxyConfiguration.routingMode != .direct
-    }
-
     var currentConfigurationTestUnavailableReason: String? {
         if isShuttingDown { return "应用正在退出" }
         guard state.launchPhase == .ready else {
@@ -125,6 +122,12 @@ final class AppModel {
         if state.templateOperationPhase != .idle { return "代理配置操作进行中" }
         if selectionTask != nil { return "正在应用节点，请稍后再试" }
         if activeRunner != nil { return "另一项测速正在进行" }
+        if state.localProxyConfiguration.routingMode == .direct {
+            return "直连模式不使用代理节点"
+        }
+        if !state.proxySupportsNodeSelection {
+            return "当前代理配置不支持直接测速节点"
+        }
 
         let selectedIP = state.preferences.selectedIP
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -207,7 +210,7 @@ final class AppModel {
         }
     }
 
-    /// CFST and Xray are independent capabilities. Keeping them separate lets
+    /// CFST and Mihomo are independent capabilities. Keeping them separate lets
     /// the UI offer node testing even when the proxy component is not installed.
     var hasCfstExecutable: Bool {
         resolvedExecutable(
@@ -217,15 +220,15 @@ final class AppModel {
         ) != nil
     }
 
-    var hasXrayExecutable: Bool {
+    var hasProxyCoreExecutable: Bool {
         let managedURL =
-            state.runtimeStatus?.xrayIsReady == true
-            ? state.runtimeStatus?.xrayURL
+            state.runtimeStatus?.mihomoIsReady == true
+            ? state.runtimeStatus?.mihomoURL
             : nil
         return resolvedExecutable(
-            preferredPath: state.preferences.xrayPath,
+            preferredPath: state.preferences.mihomoPath,
             managedURL: managedURL,
-            commandName: "xray"
+            commandName: "mihomo"
         ) != nil
     }
 
@@ -235,9 +238,9 @@ final class AppModel {
     @ObservationIgnored private let bootstrapper: AppBootstrapper
     @ObservationIgnored private let runtimeManager: RuntimeComponentManager
     @ObservationIgnored private let exitDetector: any ExitIPDetecting
-    @ObservationIgnored private let templateReplacer: any XrayTemplateReplacing
+    @ObservationIgnored private let profileReplacer: any ProxyProfileReplacing
     @ObservationIgnored private let systemProxyManager: any SystemProxyManaging
-    @ObservationIgnored private let xrayControllerFactory: XrayControllerFactory
+    @ObservationIgnored private let proxyCoreControllerFactory: ProxyCoreControllerFactory
 
     @ObservationIgnored private var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored private var runtimeTask: Task<Void, Never>?
@@ -252,17 +255,17 @@ final class AppModel {
     @ObservationIgnored private var exitIPEnrichmentTask: Task<Void, Never>?
     @ObservationIgnored private var activeExitDetectionID: UUID?
     @ObservationIgnored private var noticeTask: Task<Void, Never>?
-    @ObservationIgnored private var xrayStartTask: Task<Void, Never>?
-    @ObservationIgnored private var xrayStopTask: Task<Void, Never>?
+    @ObservationIgnored private var proxyStartTask: Task<Void, Never>?
+    @ObservationIgnored private var proxyStopTask: Task<Void, Never>?
     @ObservationIgnored private var systemProxyTask: Task<Void, Never>?
     @ObservationIgnored private var systemProxyCleanupTask: Task<Void, Never>?
     @ObservationIgnored private var routingModeTask: Task<Void, Never>?
     @ObservationIgnored private var activeRunner: CfstRunner?
     @ObservationIgnored private var activeSpeedTestID: UUID?
     @ObservationIgnored private var activeConfigurationTestID: UUID?
-    @ObservationIgnored private var activeXray: (any XrayControlling)?
-    @ObservationIgnored private var activeXrayID: UUID?
-    @ObservationIgnored private var xrayStopRequested = false
+    @ObservationIgnored private var activeProxyCore: (any ProxyCoreControlling)?
+    @ObservationIgnored private var activeProxyCoreID: UUID?
+    @ObservationIgnored private var proxyStopRequested = false
     @ObservationIgnored private var isShuttingDown = false
 
     init(
@@ -271,23 +274,23 @@ final class AppModel {
         bootstrapper: AppBootstrapper,
         runtimeManager: RuntimeComponentManager,
         exitDetector: any ExitIPDetecting,
-        templateReplacer: (any XrayTemplateReplacing)? = nil,
+        profileReplacer: (any ProxyProfileReplacing)? = nil,
         systemProxyManager: (any SystemProxyManaging)? = nil,
-        xrayControllerFactory: XrayControllerFactory? = nil
+        proxyCoreControllerFactory: ProxyCoreControllerFactory? = nil
     ) {
         self.paths = paths
         self.preferencesStore = preferencesStore
         self.bootstrapper = bootstrapper
         self.runtimeManager = runtimeManager
         self.exitDetector = exitDetector
-        self.templateReplacer = templateReplacer ?? bootstrapper
+        self.profileReplacer = profileReplacer ?? bootstrapper
         self.systemProxyManager = systemProxyManager ?? SystemProxyManager(paths: paths)
-        self.xrayControllerFactory =
-            xrayControllerFactory ?? { configuration in
-                XrayController(
+        self.proxyCoreControllerFactory =
+            proxyCoreControllerFactory ?? { configuration in
+                MihomoController(
                     executableURL: configuration.executableURL,
                     configURL: configuration.configURL,
-                    workingDirectoryURL: configuration.workingDirectoryURL,
+                    homeURL: configuration.homeURL,
                     environment: configuration.environment,
                     host: configuration.host,
                     port: configuration.port
@@ -330,9 +333,9 @@ final class AppModel {
             activeRunner == nil,
             state.templateOperationPhase == .idle,
             selectionTask == nil,
-            activeXray == nil,
-            xrayStartTask == nil,
-            xrayStopTask == nil
+            activeProxyCore == nil,
+            proxyStartTask == nil,
+            proxyStopTask == nil
         else { return }
         let operationID = UUID()
         activeRuntimeOperationID = operationID
@@ -373,9 +376,9 @@ final class AppModel {
             activeRunner == nil,
             state.templateOperationPhase == .idle,
             selectionTask == nil,
-            activeXray == nil,
-            xrayStartTask == nil,
-            xrayStopTask == nil,
+            activeProxyCore == nil,
+            proxyStartTask == nil,
+            proxyStopTask == nil,
             !urls.isEmpty
         else { return }
         let operationID = UUID()
@@ -463,7 +466,7 @@ final class AppModel {
         state.runtimeOperation = nil
     }
 
-    func importXrayTemplate(from url: URL) {
+    func importProxyProfile(from url: URL) {
         guard !isShuttingDown else { return }
         guard state.launchPhase != .loading else {
             showNotice("应用仍在准备，请稍后再试", style: .error)
@@ -476,7 +479,7 @@ final class AppModel {
             selectionTask == nil,
             runtimeTask == nil
         else { return }
-        switch state.xrayPhase {
+        switch state.proxyCorePhase {
         case .validating, .starting, .running, .stopping:
             showNotice("请先停止本地代理再更换连接配置", style: .error)
             return
@@ -500,15 +503,18 @@ final class AppModel {
                 }
             }
             do {
-                state.proxyEndpoint = try await bootstrapper.importTemplate(
+                state.proxyEndpoint = try await bootstrapper.importProfile(
                     from: url,
                     selectedIP: selectedIP
                 )
                 if let local = try? await bootstrapper.loadLocalProxyConfiguration() {
                     state.localProxyConfiguration = local
                 }
+                if let profileData = try? await bootstrapper.loadProfileConfiguration() {
+                    updateNodeSelectionCapability(from: profileData)
+                }
                 state.proxyConfigurationPhase = .ready
-                appendLog(source: .app, level: .success, message: "已导入代理连接模板")
+                appendLog(source: .app, level: .success, message: "已导入代理配置")
                 showNotice("代理配置已导入", style: .success)
             } catch {
                 state.templateOperationError = error.localizedDescription
@@ -518,7 +524,16 @@ final class AppModel {
         }
     }
 
-    func saveXrayTemplate(_ data: Data, expectedTemplateData: Data? = nil) async throws {
+    func loadProfileConfiguration() async throws -> Data {
+        try await Task.detached { [paths] in
+            try Data(contentsOf: paths.profileConfig)
+        }.value
+    }
+
+    func saveProfileConfiguration(
+        _ data: Data,
+        expectedProfileData: Data? = nil
+    ) async throws {
         guard state.launchPhase != .loading else {
             throw AppModelError.appNotReady
         }
@@ -536,9 +551,9 @@ final class AppModel {
             throw AppModelError.runtimeOperationInProgress
         }
         guard !isShuttingDown else { throw CancellationError() }
-        switch state.xrayPhase {
+        switch state.proxyCorePhase {
         case .validating, .starting, .running, .stopping:
-            throw AppModelError.xrayMustBeStopped
+            throw AppModelError.proxyMustBeStopped
         case .stopped, .failed:
             break
         }
@@ -546,12 +561,12 @@ final class AppModel {
         let selectedIP = state.preferences.selectedIP
         state.templateOperationError = nil
         state.templateOperationPhase = .saving
-        let task = Task<ProxyEndpoint, Error> { [templateReplacer] in
+        let task = Task<ProxyEndpoint, Error> { [profileReplacer] in
             try Task.checkCancellation()
-            let endpoint = try await templateReplacer.replaceTemplate(
+            let endpoint = try await profileReplacer.replaceProfile(
                 with: data,
                 selectedIP: selectedIP,
-                expectedTemplateData: expectedTemplateData
+                expectedProfileData: expectedProfileData
             )
             try Task.checkCancellation()
             return endpoint
@@ -574,6 +589,7 @@ final class AppModel {
             if let local = try? await bootstrapper.loadLocalProxyConfiguration() {
                 state.localProxyConfiguration = local
             }
+            updateNodeSelectionCapability(from: data)
             state.proxyConfigurationPhase = .ready
             appendLog(source: .app, level: .success, message: "已保存代理连接模板")
             showNotice("代理配置已保存", style: .success)
@@ -597,9 +613,9 @@ final class AppModel {
     func saveServerConfiguration(_ data: Data) async throws {
         guard state.launchPhase != .loading else { throw AppModelError.appNotReady }
         guard !isShuttingDown else { throw CancellationError() }
-        switch state.xrayPhase {
+        switch state.proxyCorePhase {
         case .validating, .starting, .running, .stopping:
-            throw AppModelError.xrayMustBeStopped
+            throw AppModelError.proxyMustBeStopped
         case .stopped, .failed:
             break
         }
@@ -614,6 +630,7 @@ final class AppModel {
         }.value
         guard !isShuttingDown else { throw CancellationError() }
         state.proxyEndpoint = endpoint
+        updateNodeSelectionCapability(from: data)
         state.proxyConfigurationPhase = .ready
         appendLog(source: .app, level: .success, message: "服务器连接配置已保存")
         showNotice("服务器连接配置已保存", style: .success)
@@ -622,9 +639,12 @@ final class AppModel {
     func saveLocalProxyConfiguration(_ configuration: LocalProxyConfiguration) async throws {
         guard state.launchPhase != .loading else { throw AppModelError.appNotReady }
         guard !isShuttingDown else { throw CancellationError() }
-        switch state.xrayPhase {
+        guard configuration.networkAccessMode != .virtualInterface else {
+            throw AppModelError.virtualInterfaceUnavailable
+        }
+        switch state.proxyCorePhase {
         case .validating, .starting, .running, .stopping:
-            throw AppModelError.xrayMustBeStopped
+            throw AppModelError.proxyMustBeStopped
         case .stopped, .failed:
             break
         }
@@ -642,6 +662,7 @@ final class AppModel {
         state.localProxyConfiguration = configuration
         state.proxyEndpoint = endpoint
         state.proxyConfigurationPhase = .ready
+        await refreshNodeSelectionCapability()
         if case .failed = state.systemProxyPhase {
             state.systemProxyPhase = .disabled
         }
@@ -660,7 +681,7 @@ final class AppModel {
             selectionTask == nil
         else { return }
         guard state.localProxyConfiguration.routingMode != mode else { return }
-        switch state.xrayPhase {
+        switch state.proxyCorePhase {
         case .validating, .starting, .stopping:
             return
         case .stopped, .running, .failed:
@@ -669,15 +690,11 @@ final class AppModel {
 
         let selectedIP = state.preferences.selectedIP
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard mode == .direct || !selectedIP.isEmpty else {
-            showNotice(AppModelError.missingSelectedIP.localizedDescription, style: .error)
-            return
-        }
 
         let previous = state.localProxyConfiguration
         var updated = previous
         updated.routingMode = mode
-        let shouldRestart = state.isXrayRunning
+        let shouldRestart = state.isProxyRunning
         state.templateOperationError = nil
         state.templateOperationPhase = .saving
         routingModeTask = Task { [weak self] in
@@ -695,10 +712,11 @@ final class AppModel {
                 state.localProxyConfiguration = updated
                 state.proxyEndpoint = endpoint
                 state.proxyConfigurationPhase = .ready
+                await refreshNodeSelectionCapability()
 
                 if shouldRestart {
-                    state.xrayPhase = .stopping
-                    try await restartActiveXray()
+                    state.proxyCorePhase = .stopping
+                    try await restartActiveProxy()
                 }
                 appendLog(
                     source: .app,
@@ -720,7 +738,7 @@ final class AppModel {
         }
     }
 
-    func setSystemProxyEnabled(_ enabled: Bool) {
+    func setNetworkAccessMode(_ mode: NetworkAccessMode) {
         guard
             !isShuttingDown,
             state.launchPhase == .ready,
@@ -729,76 +747,111 @@ final class AppModel {
             runtimeTask == nil,
             state.templateOperationPhase == .idle
         else { return }
-        switch state.xrayPhase {
+        switch state.proxyCorePhase {
         case .validating, .starting, .stopping:
             return
         case .stopped, .running, .failed:
             break
         }
+        guard mode != .virtualInterface else {
+            showNotice("虚拟网卡服务尚未就绪", style: .error)
+            return
+        }
 
         let previous = state.localProxyConfiguration
-        guard previous.systemProxyEnabled != enabled else { return }
+        guard previous.networkAccessMode != mode else { return }
         var updated = previous
-        updated.systemProxyEnabled = enabled
+        updated.networkAccessMode = mode
 
         systemProxyTask = Task { [weak self] in
             guard let self else { return }
             defer { systemProxyTask = nil }
+            var updatedPreferenceWasPersisted = false
             do {
-                try await bootstrapper.saveLocalProxyPreference(updated)
-                try Task.checkCancellation()
+                try await bootstrapper.saveLocalProxyPreference(
+                    updated,
+                    selectedIP: state.preferences.selectedIP
+                )
+                updatedPreferenceWasPersisted = true
                 state.localProxyConfiguration = updated
+                try Task.checkCancellation()
 
-                if enabled, state.isXrayRunning {
+                if mode == .systemProxy, state.isProxyRunning {
                     try await applySystemProxyIfRequested(endpoint: state.proxyEndpoint)
-                } else if !enabled {
+                } else if mode == .localProxy {
                     try await restoreSystemProxyIfNeeded()
                 } else {
                     state.systemProxyPhase = .disabled
                 }
                 let message =
-                    if enabled, state.isXrayRunning {
+                    if mode == .systemProxy, state.isProxyRunning {
                         "系统代理已启用"
-                    } else if enabled {
+                    } else if mode == .systemProxy {
                         "系统代理将在本地代理运行时启用"
                     } else {
-                        "系统代理已关闭"
+                        "已切换到本地代理模式"
                     }
                 showNotice(message, style: .success)
             } catch is CancellationError {
-                await rollbackSystemProxyPreference(to: previous)
+                if updatedPreferenceWasPersisted {
+                    _ = await rollbackSystemProxyPreference(to: previous)
+                }
             } catch {
-                await rollbackSystemProxyPreference(to: previous)
+                let rollbackError =
+                    updatedPreferenceWasPersisted
+                    ? await rollbackSystemProxyPreference(to: previous) : nil
+                let detail =
+                    if let rollbackError {
+                        "\(error.localizedDescription)；恢复原设置失败：\(rollbackError.localizedDescription)"
+                    } else {
+                        error.localizedDescription
+                    }
                 appendLog(
                     source: .app,
                     level: .error,
-                    message: "更新系统代理失败：\(error.localizedDescription)"
+                    message: "更新系统代理失败：\(detail)"
                 )
-                showNotice("更新系统代理失败：\(error.localizedDescription)", style: .error)
+                showNotice("更新系统代理失败：\(detail)", style: .error)
             }
         }
     }
 
-    private func rollbackSystemProxyPreference(to configuration: LocalProxyConfiguration) async {
+    func setSystemProxyEnabled(_ enabled: Bool) {
+        setNetworkAccessMode(enabled ? .systemProxy : .localProxy)
+    }
+
+    private func rollbackSystemProxyPreference(
+        to configuration: LocalProxyConfiguration
+    ) async -> (any Error)? {
         do {
-            try await bootstrapper.saveLocalProxyPreference(configuration)
+            try await bootstrapper.saveLocalProxyPreference(
+                configuration,
+                selectedIP: state.preferences.selectedIP
+            )
         } catch {
+            state.systemProxyPhase = .failed("恢复系统代理偏好失败：\(error.localizedDescription)")
             appendLog(
                 source: .app,
                 level: .error,
                 message: "恢复系统代理偏好失败：\(error.localizedDescription)"
             )
+            return error
         }
         state.localProxyConfiguration = configuration
-        if configuration.systemProxyEnabled, state.isXrayRunning {
+        if isShuttingDown {
+            await restoreSystemProxyAfterProxyFailure()
+            return nil
+        }
+        if configuration.networkAccessMode == .systemProxy, state.isProxyRunning {
             do {
                 try await applySystemProxyIfRequested(endpoint: state.proxyEndpoint)
             } catch {
                 state.systemProxyPhase = .failed(error.localizedDescription)
             }
-        } else if !configuration.systemProxyEnabled {
-            await restoreSystemProxyAfterXrayFailure()
+        } else if configuration.networkAccessMode != .systemProxy {
+            await restoreSystemProxyAfterProxyFailure()
         }
+        return nil
     }
 
     func selectIPSource(_ mode: IPSourceMode) {
@@ -848,8 +901,8 @@ final class AppModel {
         case .cfst where activeRunner != nil:
             showNotice("测速进行中，完成或停止后再修改 CFST 路径", style: .error)
             return
-        case .xray where activeXray != nil || xrayStartTask != nil || xrayStopTask != nil:
-            showNotice("本地代理运行中，停止后再修改 Xray 路径", style: .error)
+        case .mihomo where activeProxyCore != nil || proxyStartTask != nil || proxyStopTask != nil:
+            showNotice("本地代理运行中，停止后再修改 Mihomo 路径", style: .error)
             return
         default:
             break
@@ -858,8 +911,8 @@ final class AppModel {
         switch component {
         case .cfst:
             state.preferences.cfstPath = path
-        case .xray:
-            state.preferences.xrayPath = path
+        case .mihomo:
+            state.preferences.mihomoPath = path
         }
         state.runtimeOperationError = nil
         schedulePreferencesSave()
@@ -1042,12 +1095,16 @@ final class AppModel {
             showNotice("应用仍在准备，请稍后再试", style: .error)
             return
         }
+        guard state.proxySupportsNodeSelection else {
+            showNotice(AppModelError.nodeSelectionUnsupported.localizedDescription, style: .error)
+            return
+        }
         guard
             selectionTask == nil,
             state.templateOperationPhase == .idle,
             activeRunner == nil,
-            xrayStartTask == nil,
-            xrayStopTask == nil
+            proxyStartTask == nil,
+            proxyStopTask == nil
         else { return }
         switchingIP = ip
         selectionTask = Task { [weak self] in
@@ -1063,10 +1120,10 @@ final class AppModel {
             selectionTask = nil
         }
 
-        let shouldRestartXray =
-            state.isXrayRunning
+        let shouldRestartProxy =
+            state.isProxyRunning
             && state.localProxyConfiguration.routingMode != .direct
-        if shouldRestartXray {
+        if shouldRestartProxy {
             cancelExitIPDetection()
         }
         do {
@@ -1083,10 +1140,10 @@ final class AppModel {
         }
 
         appendLog(source: .app, level: .success, message: "已切换节点：\(ip)")
-        if shouldRestartXray, activeXray != nil {
-            state.xrayPhase = .stopping
+        if shouldRestartProxy, activeProxyCore != nil {
+            state.proxyCorePhase = .stopping
             do {
-                try await restartActiveXray()
+                try await restartActiveProxy()
             } catch {
                 if isShuttingDown || Task.isCancelled { return }
                 showNotice("节点已切换，但本地代理重新连接失败", style: .error)
@@ -1096,14 +1153,18 @@ final class AppModel {
         showNotice("已切换到 \(ip)", style: .success)
     }
 
-    func startXray() {
+    func startProxy() {
+        guard systemProxyCleanupTask == nil else {
+            showNotice("正在恢复系统代理，请稍候")
+            return
+        }
         guard
             !isShuttingDown,
             runtimeTask == nil,
             state.templateOperationPhase == .idle,
-            activeXray == nil,
-            xrayStartTask == nil,
-            xrayStopTask == nil,
+            activeProxyCore == nil,
+            proxyStartTask == nil,
+            proxyStopTask == nil,
             selectionTask == nil
         else { return }
         guard isProxyConfigurationReady else {
@@ -1113,11 +1174,11 @@ final class AppModel {
         }
         guard
             let executableURL = resolvedExecutable(
-                preferredPath: state.preferences.xrayPath,
-                managedURL: state.runtimeStatus?.xrayIsReady == true
-                    ? state.runtimeStatus?.xrayURL
+                preferredPath: state.preferences.mihomoPath,
+                managedURL: state.runtimeStatus?.mihomoIsReady == true
+                    ? state.runtimeStatus?.mihomoURL
                     : nil,
-                commandName: "xray"
+                commandName: "mihomo"
             )
         else {
             showNotice("请先安装代理运行组件", style: .error)
@@ -1125,100 +1186,93 @@ final class AppModel {
         }
 
         cancelExitIPDetection()
-        xrayStopRequested = false
-        state.xrayPhase = .validating
-        xrayStartTask = Task { [weak self] in
+        proxyStopRequested = false
+        state.proxyCorePhase = .validating
+        proxyStartTask = Task { [weak self] in
             guard let self else { return }
-            defer { xrayStartTask = nil }
-            var startedController: (any XrayControlling)?
+            defer { proxyStartTask = nil }
+            var startedController: (any ProxyCoreControlling)?
             do {
                 let selectedIP = state.preferences.selectedIP
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !requiresSelectedNodeForProxy || !selectedIP.isEmpty else {
-                    throw AppModelError.missingSelectedIP
-                }
                 let proxyEndpoint = try await bootstrapper.prepareConfigForLaunch(ip: selectedIP)
                 try Task.checkCancellation()
                 state.proxyEndpoint = proxyEndpoint
                 state.proxyConfigurationPhase = .ready
                 appendLog(source: .app, message: "已应用当前节点与代理连接配置")
 
-                var environment: [String: String] = [:]
-                if state.runtimeStatus?.xrayIsReady == true,
-                    executableURL.standardizedFileURL == state.runtimeStatus?.xrayURL?.standardizedFileURL,
-                    let assetURL = state.runtimeStatus?.geoIPURL
-                {
-                    environment["XRAY_LOCATION_ASSET"] = assetURL.deletingLastPathComponent().path
-                }
-                let controller = xrayControllerFactory(
-                    XrayControllerConfiguration(
+                let controller = proxyCoreControllerFactory(
+                    ProxyCoreControllerConfiguration(
                         executableURL: executableURL,
                         configURL: paths.generatedConfig,
-                        workingDirectoryURL: executableURL.deletingLastPathComponent(),
-                        environment: environment,
+                        homeURL: paths.mihomoHome,
+                        environment: [:],
                         host: proxyEndpoint.host,
                         port: UInt16(proxyEndpoint.port)
                     ))
                 startedController = controller
                 let controllerID = UUID()
-                activeXray = controller
-                activeXrayID = controllerID
-                appendLog(source: .xray, message: "正在检查连接配置并启动本地代理")
+                activeProxyCore = controller
+                activeProxyCoreID = controllerID
+                appendLog(source: .proxy, message: "正在检查连接配置并启动本地代理")
 
                 try await controller.start { [weak self] event in
-                    await self?.receiveXrayEvent(event, controllerID: controllerID)
+                    await self?.receiveProxyCoreEvent(event, controllerID: controllerID)
                 }
-                guard activeXrayID == controllerID else { return }
+                guard activeProxyCoreID == controllerID else { return }
                 try await applySystemProxyIfRequested(endpoint: proxyEndpoint)
+                guard activeProxyCoreID == controllerID, await controller.isRunning else {
+                    throw AppModelError.proxyExitedDuringStart
+                }
                 appendLog(
-                    source: .xray,
+                    source: .proxy,
                     level: .success,
                     message: "本地代理已启动，监听 \(proxyEndpoint.displayAddress)"
                 )
                 showNotice("本地代理已启动", style: .success)
                 refreshExitIPAfterNetworkChangeIfNeeded()
-            } catch XrayControllerError.cancelled where xrayStopRequested || isShuttingDown {
-                state.xrayPhase = .stopped
-            } catch is CancellationError where xrayStopRequested || isShuttingDown {
-                state.xrayPhase = .stopped
+            } catch MihomoControllerError.cancelled where proxyStopRequested || isShuttingDown {
+                state.proxyCorePhase = .stopped
+            } catch is CancellationError where proxyStopRequested || isShuttingDown {
+                state.proxyCorePhase = .stopped
             } catch {
                 if let startedController {
                     await startedController.stop()
                 }
-                await restoreSystemProxyAfterXrayFailure()
-                if let configError = error as? ConfigTemplateError {
+                await restoreSystemProxyAfterProxyFailure()
+                if let configError = error as? MihomoConfigurationError {
                     state.proxyConfigurationPhase = .needsSetup(configError.localizedDescription)
                 }
-                state.xrayPhase = .failed(error.localizedDescription)
-                appendLog(source: .xray, level: .error, message: error.localizedDescription)
+                state.proxyCorePhase = .failed(error.localizedDescription)
+                appendLog(source: .proxy, level: .error, message: error.localizedDescription)
                 let recoveryAction: AppNotice.Action? =
-                    error is ConfigTemplateError ? .openSettings : nil
+                    error is MihomoConfigurationError ? .openSettings : nil
                 showNotice(
                     "本地代理启动失败：\(error.localizedDescription)",
                     style: .error,
                     action: recoveryAction
                 )
-                activeXray = nil
-                activeXrayID = nil
+                activeProxyCore = nil
+                activeProxyCoreID = nil
             }
         }
     }
 
-    func stopXray() {
-        guard xrayStopTask == nil else { return }
-        let controller = activeXray
-        let startTask = xrayStartTask
+    func stopProxy() {
+        guard proxyStopTask == nil else { return }
+        let controller = activeProxyCore
+        let startTask = proxyStartTask
         let pendingSelectionTask = selectionTask
         guard controller != nil || startTask != nil || pendingSelectionTask != nil else { return }
 
         cancelExitIPDetection()
-        xrayStopRequested = true
-        state.xrayPhase = .stopping
-        xrayStopTask = Task { [weak self] in
+        proxyStopRequested = true
+        state.proxyCorePhase = .stopping
+        proxyStopTask = Task { [weak self] in
             guard let self else { return }
             defer {
-                xrayStopRequested = false
-                xrayStopTask = nil
+                proxyStopRequested = false
+                proxyStopTask = nil
             }
             do {
                 // Restore macOS while the local listener is still alive. If
@@ -1241,15 +1295,15 @@ final class AppModel {
                 // first restoration check.
                 try await restoreSystemProxyIfNeeded()
 
-                activeXray = nil
-                activeXrayID = nil
-                state.xrayPhase = .stopped
-                appendLog(source: .xray, level: .warning, message: "本地代理已停止")
+                activeProxyCore = nil
+                activeProxyCoreID = nil
+                state.proxyCorePhase = .stopped
+                appendLog(source: .proxy, level: .warning, message: "本地代理已停止")
                 showNotice("本地代理已停止")
                 refreshExitIPAfterNetworkChangeIfNeeded()
             } catch {
                 let controllerStillRunning = await controller?.isRunning == true
-                state.xrayPhase = controllerStillRunning ? .running : .failed(error.localizedDescription)
+                state.proxyCorePhase = controllerStillRunning ? .running : .failed(error.localizedDescription)
                 appendLog(
                     source: .app,
                     level: .error,
@@ -1263,24 +1317,24 @@ final class AppModel {
         }
     }
 
-    func restartXray() {
+    func restartProxy() {
         guard !isShuttingDown,
             runtimeTask == nil,
             state.templateOperationPhase == .idle,
-            state.isXrayRunning,
+            state.isProxyRunning,
             isProxyConfigurationReady,
-            activeXray != nil,
-            xrayStartTask == nil,
-            xrayStopTask == nil,
+            activeProxyCore != nil,
+            proxyStartTask == nil,
+            proxyStopTask == nil,
             selectionTask == nil
         else { return }
         cancelExitIPDetection()
-        state.xrayPhase = .stopping
-        xrayStartTask = Task { [weak self] in
+        state.proxyCorePhase = .stopping
+        proxyStartTask = Task { [weak self] in
             guard let self else { return }
-            defer { xrayStartTask = nil }
+            defer { proxyStartTask = nil }
             do {
-                try await restartActiveXray()
+                try await restartActiveProxy()
                 showNotice("本地代理已重新连接", style: .success)
             } catch {
                 showNotice("本地代理重新连接失败：\(error.localizedDescription)", style: .error)
@@ -1361,8 +1415,9 @@ final class AppModel {
         state.notice = nil
     }
 
-    func shutdown() async {
-        guard !isShuttingDown else { return }
+    @discardableResult
+    func shutdown() async -> Bool {
+        guard !isShuttingDown else { return false }
         isShuttingDown = true
 
         let pendingTasks = [
@@ -1376,8 +1431,8 @@ final class AppModel {
             detectTask,
             exitIPEnrichmentTask,
             noticeTask,
-            xrayStartTask,
-            xrayStopTask,
+            proxyStartTask,
+            proxyStopTask,
             systemProxyTask,
             systemProxyCleanupTask,
             routingModeTask,
@@ -1389,18 +1444,6 @@ final class AppModel {
         if let activeRunner {
             await activeRunner.cancel()
         }
-        do {
-            try await restoreSystemProxyIfNeeded()
-        } catch {
-            appendLog(
-                source: .app,
-                level: .error,
-                message: "退出前恢复系统代理失败：\(error.localizedDescription)"
-            )
-        }
-        if let activeXray {
-            await activeXray.stop()
-        }
 
         for task in pendingTasks {
             await task.value
@@ -1408,10 +1451,31 @@ final class AppModel {
         if let pendingTemplateSaveTask {
             _ = try? await pendingTemplateSaveTask.value
         }
+        do {
+            // Network tasks are fully settled before this final restore, so no
+            // cancelled rollback can re-enable a dead listener afterwards.
+            try await restoreSystemProxyIfNeeded()
+        } catch {
+            appendLog(
+                source: .app,
+                level: .error,
+                message: "退出前恢复系统代理失败：\(error.localizedDescription)"
+            )
+            isShuttingDown = false
+            showNotice(
+                "无法安全退出：系统代理恢复失败，请修复后重试。\(error.localizedDescription)",
+                style: .error
+            )
+            return false
+        }
+        if let activeProxyCore {
+            await activeProxyCore.stop()
+        }
         state.templateOperationPhase = .idle
         if state.launchPhase == .ready {
             try? await preferencesStore.save(state.preferences)
         }
+        return true
     }
 
     private func bootstrap() async {
@@ -1482,19 +1546,25 @@ final class AppModel {
             var proxyEndpoint = ProxyEndpoint()
             var localProxyConfiguration = LocalProxyConfiguration()
             var proxyConfigurationPhase: AppState.ProxyConfigurationPhase = .checking
+            var proxySupportsNodeSelection = false
             do {
                 let configuration = try await bootstrapper.synchronizeConfiguration(
                     selectedIP: preferences.selectedIP
                 )
                 proxyEndpoint = configuration.endpoint
                 localProxyConfiguration = configuration.local
+                proxySupportsNodeSelection = configuration.supportsNodeSelection
                 if let effectiveIP = configuration.effectiveIP {
                     preferences.selectedIP = effectiveIP
+                } else if configuration.local.routingMode != .direct,
+                    !configuration.supportsNodeSelection
+                {
+                    preferences.selectedIP = ""
                 }
                 if let issue = configuration.launchIssue {
                     proxyConfigurationPhase = .needsSetup(issue.localizedDescription)
-                    if issue == .connectionNotConfigured {
-                        appendLog(source: .app, message: "代理连接尚未配置，可在设置中导入或编辑模板")
+                    if issue == .missingProxySource {
+                        appendLog(source: .app, message: "代理连接尚未配置，可在设置中导入或编辑配置")
                     } else {
                         configurationWarning = issue.localizedDescription
                         appendLog(
@@ -1519,6 +1589,7 @@ final class AppModel {
             state.proxyEndpoint = proxyEndpoint
             state.localProxyConfiguration = localProxyConfiguration
             state.proxyConfigurationPhase = proxyConfigurationPhase
+            state.proxySupportsNodeSelection = proxySupportsNodeSelection
             state.systemProxyPhase = recoveredSystemProxyPhase
             refreshRuntimePhase()
             state.launchPhase = .ready
@@ -1571,16 +1642,16 @@ final class AppModel {
             managedURL: state.runtimeStatus?.cfstURL,
             commandName: "cfst"
         )
-        let managedXrayURL =
-            state.runtimeStatus?.xrayIsReady == true
-            ? state.runtimeStatus?.xrayURL
+        let managedMihomoURL =
+            state.runtimeStatus?.mihomoIsReady == true
+            ? state.runtimeStatus?.mihomoURL
             : nil
-        let xray = resolvedExecutable(
-            preferredPath: state.preferences.xrayPath,
-            managedURL: managedXrayURL,
-            commandName: "xray"
+        let mihomo = resolvedExecutable(
+            preferredPath: state.preferences.mihomoPath,
+            managedURL: managedMihomoURL,
+            commandName: "mihomo"
         )
-        state.runtimePhase = cfst != nil && xray != nil ? .ready : .missing
+        state.runtimePhase = cfst != nil && mihomo != nil ? .ready : .missing
     }
 
     private func resolvedExecutable(
@@ -1676,7 +1747,10 @@ final class AppModel {
     private func applySelection(_ ip: String) async throws {
         let normalized = ip.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
-        try await bootstrapper.writeConfig(ip: normalized)
+        guard try await bootstrapper.writeConfig(ip: normalized) else {
+            state.proxySupportsNodeSelection = false
+            throw AppModelError.nodeSelectionUnsupported
+        }
         state.preferences.selectedIP = normalized
         invalidateConfigurationTestResult()
         do {
@@ -1687,66 +1761,87 @@ final class AppModel {
         }
     }
 
-    private func restartActiveXray() async throws {
-        guard let controller = activeXray, let controllerID = activeXrayID else {
-            throw AppModelError.xrayNotActive
+    private func updateNodeSelectionCapability(from profileData: Data) {
+        let profileSupportsNodeSelection =
+            (try? MihomoServerConfiguration(data: profileData).hasReplaceablePrimaryServer) == true
+        let isDirect = state.localProxyConfiguration.routingMode == .direct
+        state.proxySupportsNodeSelection = !isDirect && profileSupportsNodeSelection
+        guard !isDirect, !profileSupportsNodeSelection, !state.preferences.selectedIP.isEmpty else {
+            return
         }
-        appendLog(source: .xray, message: "节点已变更，正在重新连接本地代理")
+        state.preferences.selectedIP = ""
+        invalidateConfigurationTestResult()
+        schedulePreferencesSave()
+    }
+
+    private func refreshNodeSelectionCapability() async {
+        guard let profileData = try? await bootstrapper.loadProfileConfiguration() else {
+            state.proxySupportsNodeSelection = false
+            return
+        }
+        updateNodeSelectionCapability(from: profileData)
+    }
+
+    private func restartActiveProxy() async throws {
+        guard let controller = activeProxyCore, let controllerID = activeProxyCoreID else {
+            throw AppModelError.proxyNotActive
+        }
+        appendLog(source: .proxy, message: "节点已变更，正在重新连接本地代理")
         do {
             try await controller.restart { [weak self] event in
-                await self?.receiveXrayEvent(event, controllerID: controllerID)
+                await self?.receiveProxyCoreEvent(event, controllerID: controllerID)
             }
-            guard activeXrayID == controllerID else {
-                throw AppModelError.xrayExitedDuringRestart
+            guard activeProxyCoreID == controllerID else {
+                throw AppModelError.proxyExitedDuringRestart
             }
-            appendLog(source: .xray, level: .success, message: "本地代理已应用新节点")
+            appendLog(source: .proxy, level: .success, message: "本地代理已应用新节点")
             refreshExitIPAfterNetworkChangeIfNeeded()
         } catch {
-            if activeXrayID == controllerID {
-                state.xrayPhase = .failed(error.localizedDescription)
+            if activeProxyCoreID == controllerID {
+                state.proxyCorePhase = .failed(error.localizedDescription)
                 appendLog(
-                    source: .xray,
+                    source: .proxy,
                     level: .error,
                     message: "本地代理重新连接失败：\(error.localizedDescription)"
                 )
-                activeXray = nil
-                activeXrayID = nil
+                activeProxyCore = nil
+                activeProxyCoreID = nil
             }
-            await restoreSystemProxyAfterXrayFailure()
+            await restoreSystemProxyAfterProxyFailure()
             throw error
         }
     }
 
-    private func receiveXrayEvent(_ event: XrayEvent, controllerID: UUID) {
-        guard activeXrayID == controllerID else { return }
+    private func receiveProxyCoreEvent(_ event: MihomoEvent, controllerID: UUID) {
+        guard activeProxyCoreID == controllerID else { return }
         switch event {
-        case .stateChanged(let xrayState):
-            switch xrayState {
+        case .stateChanged(let proxyState):
+            switch proxyState {
             case .stopped:
-                if case .failed = state.xrayPhase { return }
-                state.xrayPhase = .stopped
+                if case .failed = state.proxyCorePhase { return }
+                state.proxyCorePhase = .stopped
             case .validating:
-                state.xrayPhase = .validating
+                state.proxyCorePhase = .validating
             case .starting:
-                state.xrayPhase = .starting
+                state.proxyCorePhase = .starting
             case .running:
-                state.xrayPhase = .running
+                state.proxyCorePhase = .running
             case .stopping:
-                state.xrayPhase = .stopping
+                state.proxyCorePhase = .stopping
             }
         case .log(let line):
             let clean = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !clean.isEmpty {
-                appendLog(source: .xray, message: clean)
+                appendLog(source: .proxy, message: clean)
             }
         case .unexpectedExit(let status, let output):
             cancelExitIPDetection()
             let detail = output.isEmpty ? "状态码 \(status)" : output
-            state.xrayPhase = .failed("本地代理意外退出：\(detail)")
-            appendLog(source: .xray, level: .error, message: "本地代理意外退出：\(detail)")
+            state.proxyCorePhase = .failed("本地代理意外退出：\(detail)")
+            appendLog(source: .proxy, level: .error, message: "本地代理意外退出：\(detail)")
             showNotice("本地代理意外退出", style: .error)
-            activeXray = nil
-            activeXrayID = nil
+            activeProxyCore = nil
+            activeProxyCoreID = nil
             systemProxyCleanupTask?.cancel()
             systemProxyCleanupTask = Task { [weak self] in
                 guard let self else { return }
@@ -1766,8 +1861,11 @@ final class AppModel {
     }
 
     private func applySystemProxyIfRequested(endpoint: ProxyEndpoint) async throws {
-        guard state.localProxyConfiguration.systemProxyEnabled else {
-            state.systemProxyPhase = .disabled
+        guard state.localProxyConfiguration.networkAccessMode == .systemProxy else {
+            try await restoreSystemProxyIfNeeded()
+            if case .failed(let message) = state.systemProxyPhase {
+                throw AppModelError.systemProxyRecoveryRequired(message)
+            }
             return
         }
 
@@ -1782,7 +1880,7 @@ final class AppModel {
                 message: "系统代理已启用，使用 \(endpoint.displayAddress)"
             )
         } catch is CancellationError {
-            await restoreSystemProxyAfterXrayFailure()
+            await restoreSystemProxyAfterProxyFailure()
             throw CancellationError()
         } catch {
             state.systemProxyPhase = .failed(error.localizedDescription)
@@ -1830,7 +1928,7 @@ final class AppModel {
         }
     }
 
-    private func restoreSystemProxyAfterXrayFailure() async {
+    private func restoreSystemProxyAfterProxyFailure() async {
         do {
             try await restoreSystemProxyIfNeeded()
         } catch {
@@ -1888,7 +1986,7 @@ final class AppModel {
             automaticEndpoint: state.preferences.exitIPEndpoint
         )
         let route: AppState.ExitState.DetectionContext.Route =
-            if state.isXrayRunning {
+            if state.isProxyRunning {
                 .proxy(
                     endpoint: state.proxyEndpoint,
                     selectedIP: state.preferences.selectedIP
@@ -2014,27 +2112,33 @@ final class AppModel {
 
 enum AppModelError: LocalizedError, Equatable {
     case appNotReady
-    case missingSelectedIP
     case templateOperationInProgress
     case selectionInProgress
     case runtimeOperationInProgress
     case templateChangedExternally
-    case xrayMustBeStopped
-    case xrayNotActive
-    case xrayExitedDuringRestart
+    case proxyMustBeStopped
+    case proxyNotActive
+    case proxyExitedDuringStart
+    case proxyExitedDuringRestart
+    case nodeSelectionUnsupported
+    case systemProxyRecoveryRequired(String)
+    case virtualInterfaceUnavailable
     case configurationTestResultMismatch(expected: String, actual: String)
 
     var errorDescription: String? {
         switch self {
         case .appNotReady: "应用仍在准备，请稍后再试"
-        case .missingSelectedIP: "请先完成测速并选择一个节点"
         case .templateOperationInProgress: "另一项代理配置操作尚未完成"
         case .selectionInProgress: "正在应用节点，请等待切换完成后再保存代理配置"
         case .runtimeOperationInProgress: "运行组件操作进行中，请完成后再保存代理配置"
         case .templateChangedExternally: "代理配置已被其他操作修改，请重新载入后再保存"
-        case .xrayMustBeStopped: "请先停止本地代理再保存连接配置"
-        case .xrayNotActive: "本地代理当前未运行"
-        case .xrayExitedDuringRestart: "本地代理在重新连接后立即退出"
+        case .proxyMustBeStopped: "请先停止本地代理再保存连接配置"
+        case .proxyNotActive: "本地代理当前未运行"
+        case .proxyExitedDuringStart: "本地代理在系统网络设置完成前已退出"
+        case .proxyExitedDuringRestart: "本地代理在重新连接后立即退出"
+        case .nodeSelectionUnsupported: "当前代理配置不支持直接应用测速节点"
+        case .systemProxyRecoveryRequired(let message): "系统代理尚未安全恢复：\(message)"
+        case .virtualInterfaceUnavailable: "虚拟网卡服务尚未就绪"
         case .configurationTestResultMismatch(let expected, let actual):
             "CFST 返回的节点与当前配置不一致（期望 \(expected)，实际 \(actual)）"
         }

@@ -103,16 +103,21 @@ struct LocalProxySettingsView: View {
 
     private var networkAccessSection: some View {
         ConfigurationSection("网络接入", systemImage: "network") {
-            SettingRow(
-                "系统代理",
-                detail: configuration.systemProxyEnabled
-                    ? "本地代理运行时自动接入 macOS"
-                    : "不修改 macOS 系统代理"
-            ) {
-                Toggle("系统代理", isOn: $configuration.systemProxyEnabled)
-                    .labelsHidden()
-                    .disabled(isSaving)
+            Picker("网络接入", selection: $configuration.networkAccessMode) {
+                ForEach(NetworkAccessMode.allCases, id: \.self) { mode in
+                    Text(mode.displayName)
+                        .tag(mode)
+                        .disabled(mode == .virtualInterface)
+                }
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(isSaving)
+
+            Text(networkAccessDescription)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Text(systemProxyCurrentStateDescription)
                 .font(.caption)
@@ -158,9 +163,9 @@ struct LocalProxySettingsView: View {
                 isOn: $configuration.bypassPrivateNetworks
             )
             Divider()
-            SettingRow("日志级别", detail: "Xray 运行日志") {
-                Picker("Xray 日志级别", selection: $configuration.logLevel) {
-                    ForEach(XrayLogLevel.allCases, id: \.self) { level in
+            SettingRow("日志级别", detail: "代理内核运行日志") {
+                Picker("代理日志级别", selection: $configuration.logLevel) {
+                    ForEach(ProxyLogLevel.allCases, id: \.self) { level in
                         Text(level.displayName).tag(level)
                     }
                 }
@@ -240,12 +245,23 @@ struct LocalProxySettingsView: View {
     private var systemProxyCurrentStateDescription: String {
         let presentation = SystemProxyStatusPresentation(
             phase: model.state.systemProxyPhase,
-            isRequested: model.state.localProxyConfiguration.systemProxyEnabled
+            isRequested: model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
         )
         if case .failed(let message) = model.state.systemProxyPhase {
             return "当前状态：\(presentation.text)。\(message)"
         }
         return "当前状态：\(presentation.text)。"
+    }
+
+    private var networkAccessDescription: String {
+        switch configuration.networkAccessMode {
+        case .localProxy:
+            "仅提供本机 mixed 代理端口，不修改 macOS 网络设置。"
+        case .systemProxy:
+            "本地代理运行后自动配置 macOS 系统代理。"
+        case .virtualInterface:
+            "接管支持 TUN 的应用流量；需要安装并授权虚拟网卡服务。"
+        }
     }
 
     private func load() {

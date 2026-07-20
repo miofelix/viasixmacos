@@ -34,7 +34,7 @@ public extension ConfigTemplate {
             udpEnabled: settings?["udp"] as? Bool ?? true,
             sniffingEnabled: sniffing?["enabled"] as? Bool ?? false,
             bypassPrivateNetworks: bypassPrivate,
-            logLevel: XrayLogLevel(rawValue: (object["log"] as? [String: Any])?["loglevel"] as? String ?? "warning")
+            logLevel: ProxyLogLevel(rawValue: (object["log"] as? [String: Any])?["loglevel"] as? String ?? "warning")
                 ?? .warning,
             routingMode: routingMode
         ).validated()

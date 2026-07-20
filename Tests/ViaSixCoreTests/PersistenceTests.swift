@@ -3,7 +3,7 @@ import XCTest
 @testable import ViaSixCore
 
 final class PersistenceTests: XCTestCase {
-    func testDefaultResourcesInstallWithoutOverwritingUserTemplate() throws {
+    func testDefaultResourcesDoNotCreateOrOverwriteNativeProfile() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ViaSixTests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -12,15 +12,22 @@ final class PersistenceTests: XCTestCase {
         try DefaultResourceInstaller.install(into: paths)
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.ipv4List.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.ipv6List.path))
-        XCTAssertEqual(
-            ConfigTemplate.address(in: try Data(contentsOf: paths.templateConfig)),
-            "2001:db8::1"
-        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.profileConfig.path))
 
-        let custom = Data("custom-template".utf8)
-        try custom.write(to: paths.templateConfig, options: .atomic)
+        let custom = Data(
+            """
+            proxies:
+              - name: custom
+                type: ss
+                server: server.example
+                port: 8388
+                cipher: aes-128-gcm
+                password: secret
+            """.utf8
+        )
+        try custom.write(to: paths.profileConfig, options: .atomic)
         try DefaultResourceInstaller.install(into: paths)
-        XCTAssertEqual(try Data(contentsOf: paths.templateConfig), custom)
+        XCTAssertEqual(try Data(contentsOf: paths.profileConfig), custom)
     }
 
     func testPreferencesRoundTrip() async throws {
@@ -36,6 +43,7 @@ final class PersistenceTests: XCTestCase {
         changed.lastSuccessfulSpeedTestParameters = changed.parameters
         changed.exitIPEndpoint = "https://status.example.test/ip"
         changed.exitIPDetectionMode = .ipv4
+        changed.mihomoPath = "/opt/viasix/mihomo"
 
         try await store.save(changed)
         let loaded = try await store.load(defaults: defaults)
@@ -130,10 +138,18 @@ final class PersistenceTests: XCTestCase {
         let store = PreferencesStore(fileURL: paths.preferences)
         try await store.save(UserPreferences(parameters: .defaults(ipv6File: paths.ipv6List)))
 
-        for directory in [paths.root, paths.data, paths.runtime, paths.logs] {
+        for directory in [
+            paths.root,
+            paths.data,
+            paths.runtime,
+            paths.logs,
+            paths.mihomoHome,
+            paths.mihomoProviders,
+            paths.mihomoRules,
+        ] {
             XCTAssertEqual(try permissions(of: directory), 0o700)
         }
-        for file in [paths.preferences, paths.ipv4List, paths.ipv6List, paths.templateConfig] {
+        for file in [paths.preferences, paths.ipv4List, paths.ipv6List, paths.localProxyConfig] {
             XCTAssertEqual(try permissions(of: file), 0o600)
         }
     }
@@ -148,10 +164,30 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.ipSourceMode, .ipv6)
         XCTAssertEqual(decoded.selectedIP, "")
         XCTAssertEqual(decoded.cfstPath, "")
-        XCTAssertEqual(decoded.xrayPath, "")
+        XCTAssertEqual(decoded.mihomoPath, "")
         XCTAssertEqual(decoded.exitIPEndpoint, AppMetadata.defaultExitIPEndpoint)
         XCTAssertEqual(decoded.exitIPDetectionMode, .automatic)
         XCTAssertNil(decoded.lastSuccessfulSpeedTestParameters)
+    }
+
+    func testPreferencesNeverMigrateLegacyXrayExecutablePath() throws {
+        let parameters = SpeedTestParameters(ipFile: "/tmp/ipv6.txt")
+        let parametersData = try JSONEncoder().encode(parameters)
+        let parametersObject = try XCTUnwrap(JSONSerialization.jsonObject(with: parametersData))
+        let legacy = try JSONSerialization.data(withJSONObject: [
+            "parameters": parametersObject,
+            "xrayPath": "/Users/example/Runtime/xray",
+        ])
+
+        let decoded = try JSONDecoder().decode(UserPreferences.self, from: legacy)
+        XCTAssertEqual(decoded.mihomoPath, "")
+
+        let encoded = try JSONEncoder().encode(decoded)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        XCTAssertNil(object["xrayPath"])
+        XCTAssertEqual(object["mihomoPath"] as? String, "")
     }
 
     func testPreferencesMigrateLegacyAndUnknownEnumValuesWithoutDiscardingOtherFields() async throws {

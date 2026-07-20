@@ -64,7 +64,7 @@ struct ViaSixMacApp: App {
     }
 
     private var menuBarIcon: String {
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .running:
             "network.badge.shield.half.filled"
         case .validating, .starting, .stopping, .stopped:

@@ -25,11 +25,11 @@ struct MenuBarView: View {
         Divider()
 
         localProxyMenu
-        systemProxyMenu
+        networkAccessMenu
         Button("重新连接", systemImage: "arrow.clockwise") {
-            model.restartXray()
+            model.restartProxy()
         }
-        .disabled(!model.state.isXrayRunning || proxyRestartDisabled)
+        .disabled(!model.state.isProxyRunning || proxyRestartDisabled)
         speedTestMenu
 
         Divider()
@@ -53,7 +53,7 @@ struct MenuBarView: View {
     private var proxyStatus: some View {
         let presentation = SidebarProxyPresentation(
             launchPhase: model.state.launchPhase,
-            xrayPhase: model.state.xrayPhase,
+            proxyCorePhase: model.state.proxyCorePhase,
             endpoint: model.state.proxyEndpoint
         )
 
@@ -74,7 +74,9 @@ struct MenuBarView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
         }
-        if !model.state.preferences.selectedIP.isEmpty {
+        if model.state.localProxyConfiguration.routingMode != .direct,
+            !model.state.preferences.selectedIP.isEmpty
+        {
             Label {
                 Text("节点：\(model.state.preferences.selectedIP)")
                     .lineLimit(1)
@@ -155,12 +157,12 @@ struct MenuBarView: View {
             Label(localProxyStatusTitle, systemImage: localProxyStatusIcon)
                 .foregroundStyle(.secondary)
 
-            if let issue = model.proxyConfigurationIssue, !model.state.isXrayRunning {
+            if let issue = model.proxyConfigurationIssue, !model.state.isProxyRunning {
                 Text(issue)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
-            if case .failed(let message) = model.state.xrayPhase {
+            if case .failed(let message) = model.state.proxyCorePhase {
                 Text(message)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -177,19 +179,19 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var localProxyActions: some View {
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .stopped, .failed:
             Button("启动本地代理", systemImage: "play.fill") {
-                model.startXray()
+                model.startProxy()
             }
             .disabled(proxyStartDisabled)
         case .validating, .starting:
             Button("停止本地代理", systemImage: "stop.fill") {
-                model.stopXray()
+                model.stopProxy()
             }
         case .running:
             Button("停止本地代理", systemImage: "stop.fill") {
-                model.stopXray()
+                model.stopProxy()
             }
         case .stopping:
             Button("正在停止本地代理…", systemImage: "hourglass") {}
@@ -197,18 +199,22 @@ struct MenuBarView: View {
         }
     }
 
-    private var systemProxyMenu: some View {
+    private var networkAccessMenu: some View {
         let presentation = systemProxyPresentation
 
         return Menu {
             Toggle("使用系统代理", isOn: systemProxyRequestedBinding)
                 .disabled(systemProxyToggleDisabled)
 
+            Toggle("虚拟网卡模式", isOn: .constant(false))
+                .disabled(true)
+                .help("需要安装并授权虚拟网卡服务")
+
             Divider()
 
             Label(
-                "用户请求：\(model.state.localProxyConfiguration.systemProxyEnabled ? "已启用" : "未启用")",
-                systemImage: model.state.localProxyConfiguration.systemProxyEnabled
+                "接入方式：\(model.state.localProxyConfiguration.networkAccessMode.displayName)",
+                systemImage: model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
                     ? "checkmark.circle"
                     : "circle"
             )
@@ -226,11 +232,14 @@ struct MenuBarView: View {
                     .lineLimit(2)
             }
         } label: {
-            Label("系统代理：\(presentation.text)", systemImage: "desktopcomputer")
+            Label(
+                "网络设置：\(model.state.localProxyConfiguration.networkAccessMode.displayName)",
+                systemImage: "network"
+            )
         }
-        .accessibilityLabel("系统代理")
+        .accessibilityLabel("网络设置")
         .accessibilityValue(
-            "用户请求：\(model.state.localProxyConfiguration.systemProxyEnabled ? "已启用" : "未启用")，macOS：\(presentation.text)"
+            "接入方式：\(model.state.localProxyConfiguration.networkAccessMode.displayName)，macOS：\(presentation.text)"
         )
     }
 
@@ -255,7 +264,9 @@ struct MenuBarView: View {
                     .disabled(true)
             }
 
-            if !model.state.preferences.selectedIP.isEmpty {
+            if model.state.proxySupportsNodeSelection,
+                !model.state.preferences.selectedIP.isEmpty
+            {
                 switch model.state.configurationTest.phase {
                 case .idle, .failed:
                     Button("测试当前节点", systemImage: "scope") {
@@ -309,6 +320,9 @@ struct MenuBarView: View {
     }
 
     private var nodeMenuTitle: String {
+        if model.state.localProxyConfiguration.routingMode == .direct {
+            return "节点：直连模式"
+        }
         let selected = model.state.preferences.selectedIP
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !selected.isEmpty else { return "节点：未选择" }
@@ -319,7 +333,7 @@ struct MenuBarView: View {
     }
 
     private var localProxyStatusTitle: String {
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .stopped: "未启动"
         case .validating: "正在校验配置"
         case .starting: "正在启动"
@@ -330,7 +344,7 @@ struct MenuBarView: View {
     }
 
     private var localProxyStatusIcon: String {
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .running: "checkmark.circle.fill"
         case .validating, .starting, .stopping: "hourglass"
         case .failed: "exclamationmark.triangle.fill"
@@ -350,7 +364,7 @@ struct MenuBarView: View {
     private var systemProxyPresentation: SystemProxyStatusPresentation {
         SystemProxyStatusPresentation(
             phase: model.state.systemProxyPhase,
-            isRequested: model.state.localProxyConfiguration.systemProxyEnabled
+            isRequested: model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
         )
     }
 
@@ -364,7 +378,7 @@ struct MenuBarView: View {
         {
             return true
         }
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .validating, .starting, .stopping:
             return true
         case .stopped, .running, .failed:
@@ -374,6 +388,7 @@ struct MenuBarView: View {
 
     private var nodeSelectionDisabled: Bool {
         guard model.state.launchPhase == .ready else { return true }
+        guard model.state.proxySupportsNodeSelection else { return true }
         guard model.state.speedTestResultsAreCurrent else { return true }
         if model.switchingIP != nil
             || model.isCfstBusy
@@ -383,7 +398,7 @@ struct MenuBarView: View {
             return true
         }
         guard case .idle = model.state.speedTest.phase else { return true }
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .validating, .starting, .stopping:
             return true
         case .stopped, .running, .failed:
@@ -396,13 +411,12 @@ struct MenuBarView: View {
         if model.state.runtimeOperation != nil
             || model.isTemplateOperationBusy
             || model.switchingIP != nil
-            || !model.hasXrayExecutable
+            || !model.hasProxyCoreExecutable
             || !model.isProxyConfigurationReady
         {
             return true
         }
-        return model.requiresSelectedNodeForProxy
-            && model.state.preferences.selectedIP.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return false
     }
 
     private var proxyRestartDisabled: Bool {
@@ -429,9 +443,9 @@ struct MenuBarView: View {
 
     private var systemProxyRequestedBinding: Binding<Bool> {
         Binding {
-            model.state.localProxyConfiguration.systemProxyEnabled
+            model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
         } set: { enabled in
-            model.setSystemProxyEnabled(enabled)
+            model.setNetworkAccessMode(enabled ? .systemProxy : .localProxy)
         }
     }
 
@@ -444,7 +458,7 @@ struct MenuBarView: View {
         {
             return true
         }
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .validating, .starting, .stopping:
             return true
         case .stopped, .running, .failed:

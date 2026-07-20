@@ -47,13 +47,15 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
 
         let direct = try MihomoYAML.mapping(
             from: MihomoServerConfiguration.runtimeConfiguration(
-                server: nil,
+                server: server,
                 options: MihomoRuntimeOptions(routingMode: .direct)
             )
         )
         XCTAssertEqual(direct.string("mode"), "direct")
         XCTAssertEqual(direct["rules"] as? [String], ["MATCH,DIRECT"])
         XCTAssertNil(direct["proxies"])
+        XCTAssertNil(direct["proxy-providers"])
+        XCTAssertNil(direct["proxy-groups"])
     }
 
     func testTunModeUsesMihomoAutoRouteAndFakeIPDNS() throws {

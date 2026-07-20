@@ -66,8 +66,8 @@ cp \
     "$project_root/ThirdPartyLicenses/CloudflareSpeedTest-GPL-3.0.txt" \
     "$contents_dir/Resources/ThirdPartyLicenses/CloudflareSpeedTest-GPL-3.0.txt"
 cp \
-    "$project_root/ThirdPartyLicenses/Xray-core-MPL-2.0.txt" \
-    "$contents_dir/Resources/ThirdPartyLicenses/Xray-core-MPL-2.0.txt"
+    "$project_root/ThirdPartyLicenses/mihomo-GPL-3.0.txt" \
+    "$contents_dir/Resources/ThirdPartyLicenses/mihomo-GPL-3.0.txt"
 cp \
     "$project_root/ThirdPartyLicenses/Yams-MIT.txt" \
     "$contents_dir/Resources/ThirdPartyLicenses/Yams-MIT.txt"
@@ -82,11 +82,15 @@ if [[ ! -d "$resource_bundle" ]]; then
 fi
 
 # The app resolves packaged defaults through Bundle.main before SwiftPM's
-# development-only Bundle.module fallback, so copy the payload into the normal
-# macOS application resources directory.
-for resource in "$resource_bundle"/*(N); do
-    [[ "${resource:t}" == "Info.plist" ]] && continue
-    ditto "$resource" "$contents_dir/Resources/${resource:t}"
+# development-only Bundle.module fallback. Copy only the current resource
+# contract so an incremental SwiftPM bundle cannot reintroduce retired files.
+for resource_name in ip.txt ipv6.txt local-proxy.json; do
+    resource="$resource_bundle/$resource_name"
+    if [[ ! -f "$resource" || -L "$resource" ]]; then
+        print -u2 "ViaSixCore resource is missing or unsafe: $resource"
+        exit 1
+    fi
+    ditto "$resource" "$contents_dir/Resources/$resource_name"
 done
 
 helper_path="$contents_dir/Library/HelperTools/com.felix.viasix.tun-helper"

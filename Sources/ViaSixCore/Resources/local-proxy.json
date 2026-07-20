@@ -5,6 +5,6 @@
   "sniffingEnabled": true,
   "bypassPrivateNetworks": true,
   "logLevel": "warning",
-  "routingMode": "rule",
-  "systemProxyEnabled": false
+  "networkAccessMode": "localProxy",
+  "routingMode": "rule"
 }

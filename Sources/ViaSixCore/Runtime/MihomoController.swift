@@ -115,6 +115,15 @@ public actor MihomoController {
     private let stopTimeout: Duration
     private let portProbe: MihomoPortProbe
 
+    private static let safeExecutableSearchPath = "/usr/bin:/bin:/usr/sbin:/sbin"
+    private static let inheritedEnvironmentKeys = [
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TZ",
+    ]
+
     private var operationID: UUID?
     private var cancellationRequested = false
     private var eventHandler: MihomoEventHandler?
@@ -169,7 +178,8 @@ public actor MihomoController {
                 executableURL: executableURL,
                 arguments: ["-v"],
                 workingDirectoryURL: homeURL,
-                environmentOverrides: environment,
+                environmentOverrides: sanitizedEnvironment(),
+                inheritParentEnvironment: false,
                 timeout: timeout
             )
         } catch SupervisedCommandError.timedOut {
@@ -435,7 +445,8 @@ public actor MihomoController {
                 executableURL: executableURL,
                 arguments: arguments,
                 workingDirectoryURL: homeURL,
-                environmentOverrides: environment
+                environmentOverrides: sanitizedEnvironment(),
+                inheritParentEnvironment: false
             )
         } catch {
             throw MihomoControllerError.launchFailed(
@@ -462,6 +473,31 @@ public actor MihomoController {
             waitTask: waitTask,
             outputTask: outputTask
         )
+    }
+
+    private func sanitizedEnvironment() -> [String: String] {
+        Self.sanitizedEnvironment(
+            parent: ProcessInfo.processInfo.environment,
+            overrides: environment
+        )
+    }
+
+    static func sanitizedEnvironment(
+        parent: [String: String],
+        overrides: [String: String]
+    ) -> [String: String] {
+        var sanitized = ["PATH": safeExecutableSearchPath]
+        for key in inheritedEnvironmentKeys {
+            if let value = parent[key], !value.isEmpty {
+                sanitized[key] = value
+            }
+        }
+        for key in inheritedEnvironmentKeys {
+            if let value = overrides[key], !value.isEmpty {
+                sanitized[key] = value
+            }
+        }
+        return sanitized
     }
 
     private func ensureActiveOperation(_ id: UUID) throws {

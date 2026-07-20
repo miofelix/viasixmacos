@@ -16,8 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         isTerminating = true
         Task { @MainActor [weak self] in
-            await model.shutdown()
-            sender.reply(toApplicationShouldTerminate: true)
+            let canTerminate = await model.shutdown()
+            sender.reply(toApplicationShouldTerminate: canTerminate)
             self?.isTerminating = false
         }
         return .terminateLater

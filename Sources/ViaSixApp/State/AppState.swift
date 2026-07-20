@@ -62,7 +62,7 @@ struct AppState: Equatable, Sendable {
         case failed(String)
     }
 
-    enum XrayPhase: Equatable, Sendable {
+    enum ProxyCorePhase: Equatable, Sendable {
         case stopped
         case validating
         case starting
@@ -142,11 +142,12 @@ struct AppState: Equatable, Sendable {
     var runtimeOperation: RuntimeOperation?
     var runtimeOperationError: String?
     var proxyConfigurationPhase: ProxyConfigurationPhase = .checking
+    var proxySupportsNodeSelection = false
     var speedTest = SpeedTestState()
     var configurationTest = ConfigurationTestState()
-    var xrayPhase: XrayPhase = .stopped
+    var proxyCorePhase: ProxyCorePhase = .stopped
     /// Actual macOS proxy state, kept separate from the user's local
-    /// preference (`localProxyConfiguration.systemProxyEnabled`).
+    /// preference (`localProxyConfiguration.networkAccessMode`).
     var systemProxyPhase: SystemProxyPhase = .disabled
     var templateOperationPhase: TemplateOperationPhase = .idle
     var templateOperationError: String?
@@ -168,8 +169,8 @@ struct AppState: Equatable, Sendable {
         return results.first { $0.ip == preferences.selectedIP }
     }
 
-    var isXrayRunning: Bool {
-        xrayPhase == .running
+    var isProxyRunning: Bool {
+        proxyCorePhase == .running
     }
 }
 
@@ -210,7 +211,7 @@ struct AppLogEntry: Identifiable, Equatable, Sendable {
     enum Source: String, Sendable {
         case app = "应用"
         case speedTest = "测速"
-        case xray = "代理"
+        case proxy = "代理"
     }
 
     enum Level: Sendable {

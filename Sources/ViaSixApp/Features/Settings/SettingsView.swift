@@ -54,9 +54,9 @@ struct SettingsView: View {
                 Divider()
                     .padding(.leading, 52)
                 componentRow(
-                    component: .xray,
-                    url: resolvedDisplayURL(for: .xray),
-                    ready: componentReady(.xray)
+                    component: .mihomo,
+                    url: resolvedDisplayURL(for: .mihomo),
+                    ready: componentReady(.mihomo)
                 )
 
                 Divider()
@@ -125,9 +125,9 @@ struct SettingsView: View {
                             component: .cfst
                         )
                         executablePicker(
-                            title: "Xray 路径",
-                            value: model.state.preferences.xrayPath,
-                            component: .xray
+                            title: "Mihomo 路径",
+                            value: model.state.preferences.mihomoPath,
+                            component: .mihomo
                         )
 
                         Text("留空时使用 ViaSix 管理的组件，也会检查 Homebrew 与 PATH。")
@@ -195,17 +195,17 @@ struct SettingsView: View {
 
                 SettingRow(
                     "高级配置",
-                    detail: "直接编辑或导入 Xray JSON",
+                    detail: "直接编辑或导入 Mihomo YAML",
                     systemImage: "curlybraces.square"
                 ) {
                     Menu {
-                        Button("编辑服务器 JSON", systemImage: "curlybraces.square") {
+                        Button("编辑 Mihomo YAML", systemImage: "curlybraces.square") {
                             showsTemplateEditor = true
                         }
                         .disabled(!serverConfigurationExists)
 
-                        Button("导入完整 Xray JSON…", systemImage: "square.and.arrow.down") {
-                            importXrayTemplate()
+                        Button("导入代理配置…", systemImage: "square.and.arrow.down") {
+                            importProxyProfile()
                         }
                     } label: {
                         Label("高级", systemImage: "ellipsis.circle")
@@ -219,7 +219,7 @@ struct SettingsView: View {
             .padding(.bottom, VisualStyle.spacing12)
         }
         .sheet(isPresented: $showsTemplateEditor) {
-            XrayTemplateEditorView()
+            MihomoProfileEditorView()
                 .environment(model)
         }
         .sheet(item: $presentedServerEditorMode) { mode in
@@ -254,14 +254,14 @@ struct SettingsView: View {
                     .padding(.leading, 52)
 
                 SettingRow(
-                    "系统代理",
-                    detail: systemProxyConfigurationDetail,
+                    "网络接入",
+                    detail: networkAccessConfigurationDetail,
                     systemImage: "network"
                 ) {
                     StatusBadge(
-                        systemProxyPresentation.text,
-                        tone: systemProxyPresentation.appTone,
-                        systemImage: systemProxyStatusSystemImage
+                        model.state.localProxyConfiguration.networkAccessMode.displayName,
+                        tone: networkAccessTone,
+                        systemImage: networkAccessSystemImage
                     )
                 }
 
@@ -396,7 +396,7 @@ struct SettingsView: View {
     }
 
     private var serverConfigurationExists: Bool {
-        FileManager.default.fileExists(atPath: model.paths.serverConfig.path)
+        FileManager.default.fileExists(atPath: model.paths.profileConfig.path)
     }
 
     private var serverEditorDisabled: Bool {
@@ -428,17 +428,38 @@ struct SettingsView: View {
         }
     }
 
-    private var systemProxyConfigurationDetail: String {
-        model.state.localProxyConfiguration.systemProxyEnabled
-            ? "启动本地代理后接入 macOS 系统代理"
-            : "启动本地代理时不修改 macOS 系统代理"
+    private var networkAccessConfigurationDetail: String {
+        switch model.state.localProxyConfiguration.networkAccessMode {
+        case .localProxy:
+            "仅提供本机 mixed 代理端口"
+        case .systemProxy:
+            "本地代理运行后接入 macOS 系统代理"
+        case .virtualInterface:
+            "通过虚拟网卡接管应用流量"
+        }
     }
 
     private var systemProxyPresentation: SystemProxyStatusPresentation {
         SystemProxyStatusPresentation(
             phase: model.state.systemProxyPhase,
-            isRequested: model.state.localProxyConfiguration.systemProxyEnabled
+            isRequested: model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
         )
+    }
+
+    private var networkAccessTone: AppTone {
+        switch model.state.localProxyConfiguration.networkAccessMode {
+        case .localProxy: .neutral
+        case .systemProxy: systemProxyPresentation.appTone
+        case .virtualInterface: .accent
+        }
+    }
+
+    private var networkAccessSystemImage: String {
+        switch model.state.localProxyConfiguration.networkAccessMode {
+        case .localProxy: "dot.radiowaves.left.and.right"
+        case .systemProxy: systemProxyStatusSystemImage
+        case .virtualInterface: "point.3.filled.connected.trianglepath.dotted"
+        }
     }
 
     private var systemProxyStatusSystemImage: String {
@@ -473,11 +494,11 @@ struct SettingsView: View {
 
     private var runtimeInstallTitle: String {
         if model.state.runtimeOperationError != nil {
-            return model.hasCfstExecutable && model.hasXrayExecutable
+            return model.hasCfstExecutable && model.hasProxyCoreExecutable
                 ? "重试更新"
                 : "重试安装"
         }
-        return model.hasCfstExecutable && model.hasXrayExecutable
+        return model.hasCfstExecutable && model.hasProxyCoreExecutable
             ? "重新安装组件"
             : "安装组件"
     }
@@ -571,8 +592,8 @@ struct SettingsView: View {
         return switch component {
         case .cfst:
             model.isCfstBusy
-        case .xray:
-            switch model.state.xrayPhase {
+        case .mihomo:
+            switch model.state.proxyCorePhase {
             case .validating, .starting, .running, .stopping:
                 true
             case .stopped, .failed:
@@ -587,7 +608,7 @@ struct SettingsView: View {
         }
         return switch component {
         case .cfst: "测速进行中，停止后才能修改路径。"
-        case .xray: "本地代理运行中，停止后才能修改路径。"
+        case .mihomo: "本地代理运行中，停止后才能修改路径。"
         }
     }
 
@@ -596,13 +617,13 @@ struct SettingsView: View {
             switch component {
             case .cfst:
                 (model.state.preferences.cfstPath, model.state.runtimeStatus?.cfstURL, "cfst")
-            case .xray:
+            case .mihomo:
                 (
-                    model.state.preferences.xrayPath,
-                    model.state.runtimeStatus?.xrayIsReady == true
-                        ? model.state.runtimeStatus?.xrayURL
+                    model.state.preferences.mihomoPath,
+                    model.state.runtimeStatus?.mihomoIsReady == true
+                        ? model.state.runtimeStatus?.mihomoURL
                         : nil,
-                    "xray"
+                    "mihomo"
                 )
             }
 
@@ -641,7 +662,7 @@ struct SettingsView: View {
             break
         }
 
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .validating, .starting, .running, .stopping:
             return true
         case .stopped, .failed:
@@ -654,7 +675,7 @@ struct SettingsView: View {
         guard model.state.templateOperationPhase == .idle else { return true }
         guard model.switchingIP == nil else { return true }
         guard model.state.runtimeOperation == nil else { return true }
-        return switch model.state.xrayPhase {
+        return switch model.state.proxyCorePhase {
         case .validating, .starting, .running, .stopping:
             true
         case .stopped, .failed:
@@ -731,17 +752,21 @@ struct SettingsView: View {
         }
     }
 
-    private func importXrayTemplate() {
+    private func importProxyProfile() {
         let panel = NSOpenPanel()
         panel.title = "导入代理配置"
-        panel.message = "选择包含“proxy”出站连接的 Xray JSON 配置。"
+        panel.message = "选择 Mihomo YAML、分享配置，或可迁移的旧版 JSON。"
         panel.prompt = "导入"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.json]
+        panel.allowedContentTypes = [
+            UTType(filenameExtension: "yaml"),
+            UTType(filenameExtension: "yml"),
+            .json,
+        ].compactMap { $0 }
         if panel.runModal() == .OK, let url = panel.url {
-            model.importXrayTemplate(from: url)
+            model.importProxyProfile(from: url)
         }
     }
 }

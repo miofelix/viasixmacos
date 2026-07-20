@@ -13,9 +13,27 @@ final class SplitProxyConfigurationTests: XCTestCase {
         let local = try JSONDecoder().decode(LocalProxyConfiguration.self, from: legacy)
 
         XCTAssertEqual(local.routingMode, .rule)
-        XCTAssertFalse(local.systemProxyEnabled)
+        XCTAssertEqual(local.networkAccessMode, .localProxy)
         XCTAssertEqual(local.endpoint, ProxyEndpoint(host: "127.0.0.2", port: 18_080))
         XCTAssertFalse(local.udpEnabled)
+    }
+
+    func testLegacyLocalProxyFieldsMigrateToNeutralValues() throws {
+        let legacy = Data(
+            #"{"logLevel":"none","systemProxyEnabled":true}"#.utf8
+        )
+
+        let local = try JSONDecoder().decode(LocalProxyConfiguration.self, from: legacy)
+
+        XCTAssertEqual(local.logLevel, .silent)
+        XCTAssertEqual(local.networkAccessMode, .systemProxy)
+        let encoded = try JSONEncoder().encode(local)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        XCTAssertEqual(object["logLevel"] as? String, "silent")
+        XCTAssertEqual(object["networkAccessMode"] as? String, "systemProxy")
+        XCTAssertNil(object["systemProxyEnabled"])
     }
 
     func testLegacyTemplateSplitsServerAndLocalSettings() throws {

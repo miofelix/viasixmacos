@@ -60,27 +60,25 @@ final class RuntimeIntegrityTests: XCTestCase {
         XCTAssertFalse(status.isReady)
     }
 
-    func testInstalledStatusRejectsEmptyGeoAsset() async throws {
+    func testInstalledStatusRejectsEmptyMihomoExecutable() async throws {
         let root = makeRoot()
         let runtimeURL = root.appendingPathComponent("Runtime", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: runtimeURL, withIntermediateDirectories: true)
 
-        for payload in [RuntimePayloadFile.cfst, .xray] {
-            let url = runtimeURL.appendingPathComponent(payload.rawValue)
-            try executableScript(marker: payload.rawValue).write(to: url)
-            try makeExecutable(url)
-        }
-        try Data().write(to: runtimeURL.appendingPathComponent(RuntimePayloadFile.geoIP.rawValue))
-        try Data("valid geosite fixture".utf8)
-            .write(to: runtimeURL.appendingPathComponent(RuntimePayloadFile.geoSite.rawValue))
+        let cfstURL = runtimeURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue)
+        try executableScript(marker: RuntimePayloadFile.cfst.rawValue).write(to: cfstURL)
+        try makeExecutable(cfstURL)
+        let mihomoURL = runtimeURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue)
+        try Data().write(to: mihomoURL)
+        try makeExecutable(mihomoURL)
 
         let status = await RuntimeComponentManager(runtimeDirectory: runtimeURL).installedStatus()
 
-        XCTAssertEqual(status.invalidFiles, [.geoIP])
+        XCTAssertEqual(status.invalidFiles, [.mihomo])
         XCTAssertTrue(status.cfstIsReady)
-        XCTAssertNil(status.geoIPURL)
-        XCTAssertFalse(status.xrayIsReady)
+        XCTAssertNil(status.mihomoURL)
+        XCTAssertFalse(status.mihomoIsReady)
         XCTAssertFalse(status.isReady)
     }
 
@@ -142,7 +140,103 @@ final class RuntimeIntegrityTests: XCTestCase {
         XCTAssertTrue(leftovers.isEmpty, "Unexpected transaction leftovers: \(leftovers)")
     }
 
-    func testManifestCannotMakeXrayGeoAssetsOptional() async throws {
+    func testInstallingMihomoRemovesLegacyPayloadsAtCommit() async throws {
+        let root = makeRoot()
+        let runtimeURL = root.appendingPathComponent("Runtime", isDirectory: true)
+        let sourceURL = root.appendingPathComponent("Source", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: runtimeURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
+
+        let cfstURL = runtimeURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue)
+        try executableScript(marker: "existing-cfst").write(to: cfstURL)
+        try makeExecutable(cfstURL)
+        for legacyName in ["xray", "geoip.dat", "geosite.dat"] {
+            try Data("legacy-\(legacyName)".utf8)
+                .write(to: runtimeURL.appendingPathComponent(legacyName))
+        }
+
+        let replacementMihomo = executableScript(marker: "replacement-mihomo")
+        try replacementMihomo.write(
+            to: sourceURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue)
+        )
+
+        let manager = RuntimeComponentManager(runtimeDirectory: runtimeURL)
+        let status = try await manager.install(from: sourceURL)
+
+        XCTAssertTrue(status.isReady)
+        XCTAssertEqual(try Data(contentsOf: try XCTUnwrap(status.mihomoURL)), replacementMihomo)
+        for legacyName in ["xray", "geoip.dat", "geosite.dat"] {
+            XCTAssertFalse(
+                FileManager.default.fileExists(
+                    atPath: runtimeURL.appendingPathComponent(legacyName).path
+                )
+            )
+        }
+    }
+
+    func testFailedMihomoMigrationPreservesLegacyRuntime() async throws {
+        let root = makeRoot()
+        let runtimeURL = root.appendingPathComponent("Runtime", isDirectory: true)
+        let sourceURL = root.appendingPathComponent("Source", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: runtimeURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
+
+        let cfstURL = runtimeURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue)
+        let existingCFST = executableScript(marker: "existing-cfst")
+        try existingCFST.write(to: cfstURL)
+        try makeExecutable(cfstURL)
+        let legacyPayloads = Dictionary(
+            uniqueKeysWithValues: ["xray", "geoip.dat", "geosite.dat"].map {
+                ($0, Data("legacy-\($0)".utf8))
+            }
+        )
+        for (legacyName, data) in legacyPayloads {
+            try data.write(to: runtimeURL.appendingPathComponent(legacyName))
+        }
+
+        let wrongArchitecture =
+            RuntimeArchitecture.current == .arm64
+            ? RuntimeArchitecture.x8664
+            : .arm64
+        try thinMachO(for: wrongArchitecture).write(
+            to: sourceURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue)
+        )
+
+        let manager = RuntimeComponentManager(runtimeDirectory: runtimeURL)
+        do {
+            _ = try await manager.install(from: sourceURL)
+            XCTFail("Expected the incompatible Mihomo executable to be rejected")
+        } catch let error as RuntimeComponentError {
+            XCTAssertEqual(
+                error,
+                .incompatibleExecutableArchitecture(
+                    .mihomo,
+                    expected: .current,
+                    available: [wrongArchitecture]
+                )
+            )
+        }
+
+        XCTAssertEqual(try Data(contentsOf: cfstURL), existingCFST)
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: runtimeURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue).path
+            )
+        )
+        for (legacyName, expectedData) in legacyPayloads {
+            XCTAssertEqual(
+                try Data(contentsOf: runtimeURL.appendingPathComponent(legacyName)),
+                expectedData
+            )
+        }
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            .filter { $0.hasPrefix(".Runtime-install-") }
+        XCTAssertTrue(leftovers.isEmpty, "Unexpected transaction leftovers: \(leftovers)")
+    }
+
+    func testArchiveMustContainTheMihomoPayload() async throws {
         let root = makeRoot()
         let archiveURL = root.appendingPathComponent("archive")
         let runtimeURL = root.appendingPathComponent("Runtime", isDirectory: true)
@@ -163,18 +257,14 @@ final class RuntimeIntegrityTests: XCTestCase {
                 payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
             ),
             RuntimeAsset(
-                component: .xray,
+                component: .mihomo,
                 version: "test",
                 architecture: .current,
-                archiveName: "xray.zip",
-                archiveFormat: .zip,
-                downloadURL: URL(string: "https://example.invalid/xray.zip")!,
+                archiveName: "mihomo.gz",
+                archiveFormat: .gzip(output: .mihomo),
+                downloadURL: URL(string: "https://example.invalid/mihomo.gz")!,
                 sha256: digest,
-                payloadExpectations: [
-                    RuntimePayloadExpectation(file: .xray),
-                    RuntimePayloadExpectation(file: .geoIP),
-                    RuntimePayloadExpectation(file: .geoSite),
-                ]
+                payloadExpectations: [RuntimePayloadExpectation(file: .mihomo)]
             ),
         ])
         let manager = RuntimeComponentManager(
@@ -184,22 +274,22 @@ final class RuntimeIntegrityTests: XCTestCase {
                 RuntimeDownloadedFile(fileURL: archiveURL, statusCode: 200)
             },
             archiveExtractor: { _, _, destinationURL in
-                let payload: RuntimePayloadFile =
-                    destinationURL.lastPathComponent == RuntimeComponent.cfst.rawValue
-                    ? .cfst
-                    : .xray
-                try Data("#!/bin/sh\nexit 0\n".utf8)
-                    .write(to: destinationURL.appendingPathComponent(payload.rawValue))
+                guard destinationURL.lastPathComponent == RuntimeComponent.cfst.rawValue else {
+                    return
+                }
+                try Data("#!/bin/sh\nexit 0\n".utf8).write(
+                    to: destinationURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue)
+                )
             }
         )
 
         do {
             _ = try await manager.downloadAndInstall(architecture: .current)
-            XCTFail("Expected missing geo assets to be rejected")
+            XCTFail("Expected the missing Mihomo payload to be rejected")
         } catch let error as RuntimeComponentError {
             XCTAssertEqual(
                 error,
-                .missingArchivePayload(.xray, [.geoIP, .geoSite])
+                .missingArchivePayload(.mihomo, [.mihomo])
             )
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: runtimeURL.path))
@@ -222,14 +312,14 @@ final class RuntimeIntegrityTests: XCTestCase {
                 payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
             ),
             RuntimeAsset(
-                component: .xray,
+                component: .mihomo,
                 version: "test",
                 architecture: .current,
-                archiveName: "xray.zip",
-                archiveFormat: .zip,
-                downloadURL: URL(string: "https://example.invalid/xray.zip")!,
+                archiveName: "mihomo.gz",
+                archiveFormat: .gzip(output: .mihomo),
+                downloadURL: URL(string: "https://example.invalid/mihomo.gz")!,
                 sha256: digest,
-                payloadExpectations: [RuntimePayloadExpectation(file: .xray)]
+                payloadExpectations: []
             ),
         ])
         let manager = RuntimeComponentManager(
@@ -251,11 +341,11 @@ final class RuntimeIntegrityTests: XCTestCase {
             XCTAssertEqual(
                 error,
                 .invalidPayloadExpectations(
-                    .xray,
-                    expected: RuntimeComponent.xray.payloadFiles.sorted {
+                    .mihomo,
+                    expected: RuntimeComponent.mihomo.payloadFiles.sorted {
                         $0.rawValue < $1.rawValue
                     },
-                    actual: [.xray]
+                    actual: []
                 )
             )
         }
@@ -463,18 +553,14 @@ final class RuntimeIntegrityTests: XCTestCase {
                 payloadExpectations: [cfstExpectation]
             ),
             RuntimeAsset(
-                component: .xray,
-                version: "pinned-xray",
+                component: .mihomo,
+                version: "pinned-mihomo",
                 architecture: .current,
-                archiveName: "xray.zip",
-                archiveFormat: .zip,
-                downloadURL: URL(string: "https://downloads.example.invalid/pinned/xray.zip")!,
+                archiveName: "mihomo.gz",
+                archiveFormat: .gzip(output: .mihomo),
+                downloadURL: URL(string: "https://downloads.example.invalid/pinned/mihomo.gz")!,
                 sha256: digest,
-                payloadExpectations: [
-                    RuntimePayloadExpectation(file: .xray),
-                    RuntimePayloadExpectation(file: .geoIP),
-                    RuntimePayloadExpectation(file: .geoSite),
-                ]
+                payloadExpectations: [RuntimePayloadExpectation(file: .mihomo)]
             ),
         ])
     }
@@ -571,11 +657,9 @@ private func writeIntegrityPayloads(
     switch component {
     case .cfst:
         try cfstData.write(to: destinationURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue))
-    case .xray:
-        for payload in [RuntimePayloadFile.xray, .geoIP, .geoSite] {
-            try integrityRuntimeFixtureData(for: payload, marker: "replacement")
-                .write(to: destinationURL.appendingPathComponent(payload.rawValue))
-        }
+    case .mihomo:
+        try integrityRuntimeFixtureData(for: .mihomo, marker: "replacement")
+            .write(to: destinationURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue))
     }
 }
 

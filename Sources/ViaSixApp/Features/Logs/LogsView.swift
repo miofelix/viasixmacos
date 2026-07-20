@@ -490,7 +490,7 @@ private enum LogSourceFilter: String, CaseIterable, Identifiable, Hashable {
     case all
     case app
     case speedTest
-    case xray
+    case proxy
 
     var id: Self { self }
 
@@ -499,13 +499,13 @@ private enum LogSourceFilter: String, CaseIterable, Identifiable, Hashable {
         case .all: "全部来源"
         case .app: "应用"
         case .speedTest: "测速"
-        case .xray: "代理"
+        case .proxy: "代理"
         }
     }
 
     func includes(_ source: AppLogEntry.Source) -> Bool {
         switch (self, source) {
-        case (.all, _), (.app, .app), (.speedTest, .speedTest), (.xray, .xray):
+        case (.all, _), (.app, .app), (.speedTest, .speedTest), (.proxy, .proxy):
             true
         default:
             false
@@ -586,7 +586,7 @@ private struct LogRow: View {
         switch entry.source {
         case .app: .secondary
         case .speedTest: .purple
-        case .xray: VisualStyle.accent
+        case .proxy: VisualStyle.accent
         }
     }
 

@@ -219,12 +219,13 @@ extension NodesView {
 
     var applySelectionDisabled: Bool {
         guard let candidateSelection else { return true }
+        guard model.state.proxySupportsNodeSelection else { return true }
         guard model.state.speedTestResultsAreCurrent else { return true }
         guard case .idle = model.state.speedTest.phase else { return true }
         if candidateSelection == model.state.preferences.selectedIP { return true }
         if model.switchingIP != nil || model.isCfstBusy || model.isTemplateOperationBusy { return true }
 
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .validating, .starting, .stopping:
             return true
         case .stopped, .running, .failed:
@@ -236,11 +237,14 @@ extension NodesView {
         guard let candidateSelection else { return "应用节点" }
         if model.switchingIP == candidateSelection { return "正在应用" }
         if candidateSelection == model.state.preferences.selectedIP { return "已应用" }
-        return model.state.isXrayRunning ? "应用并重连" : "应用节点"
+        return model.state.isProxyRunning ? "应用并重连" : "应用节点"
     }
 
     var applySelectionHelp: String {
         guard let candidateSelection else { return "请先选择一个候选节点" }
+        guard model.state.proxySupportsNodeSelection else {
+            return "当前代理配置不支持直接应用测速节点"
+        }
         guard model.state.speedTestResultsAreCurrent else { return "测速参数已变更，请重新测速" }
         switch model.state.speedTest.phase {
         case .running: return "候选节点测速正在进行"
@@ -254,12 +258,12 @@ extension NodesView {
         if model.switchingIP != nil { return "正在应用节点" }
         if model.isCfstBusy { return "测速进行中，暂时不能应用节点" }
         if model.isTemplateOperationBusy { return "代理配置操作进行中" }
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .validating: return "正在校验代理配置"
         case .starting: return "本地代理正在启动"
         case .stopping: return "本地代理正在停止"
         case .stopped, .running, .failed:
-            return model.state.isXrayRunning ? "应用节点并重新连接" : "应用所选节点"
+            return model.state.isProxyRunning ? "应用节点并重新连接" : "应用所选节点"
         }
     }
 
@@ -356,7 +360,7 @@ extension NodesView {
 
     func requestCandidateApplication() {
         guard let candidateSelection, !applySelectionDisabled else { return }
-        if model.state.isXrayRunning {
+        if model.state.isProxyRunning {
             reconnectConfirmationIP = candidateSelection
         } else {
             model.selectIP(candidateSelection)

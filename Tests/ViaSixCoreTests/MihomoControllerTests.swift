@@ -40,7 +40,9 @@ final class MihomoControllerTests: XCTestCase {
             URL(fileURLWithPath: workingDirectory).resolvingSymlinksInPath().path,
             URL(fileURLWithPath: fixture.homeURL.path).resolvingSymlinksInPath().path
         )
-        XCTAssertEqual(try fixture.contents(of: fixture.environmentURL), "expected-value")
+        XCTAssertEqual(try fixture.contents(of: fixture.environmentURL), "UTC")
+        XCTAssertEqual(try fixture.contents(of: fixture.dangerousEnvironmentURL), "|||")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.shellHookMarkerURL.path))
 
         let events = await recorder.events
         XCTAssertTrue(events.contains(.stateChanged(.validating)))
@@ -75,6 +77,45 @@ final class MihomoControllerTests: XCTestCase {
             """
         )
         XCTAssertEqual(try fixture.invocations(), ["-v"])
+    }
+
+    func testEnvironmentSanitizerDropsMihomoControlVariablesAndUsesSafePath() {
+        let sanitized = MihomoController.sanitizedEnvironment(
+            parent: [
+                "PATH": "/tmp/attacker",
+                "TMPDIR": "/private/tmp/safe",
+                "CLASH_CONFIG_STRING": "untrusted",
+                "BASH_ENV": "/tmp/parent-hook",
+                "ENV": "/tmp/parent-env",
+                "SHELLOPTS": "xtrace",
+                "SSL_CERT_FILE": "/tmp/untrusted-ca.pem",
+                "SSL_CERT_DIR": "/tmp/untrusted-certs",
+            ],
+            overrides: [
+                "PATH": "/tmp/override",
+                "CLASH_POST_UP": "touch /tmp/owned",
+                "BASH_ENV": "/tmp/override-hook",
+                "ENV": "/tmp/override-env",
+                "BASHOPTS": "extdebug",
+                "PS4": "$(touch /tmp/owned)",
+                "SSL_CERT_FILE": "/tmp/override-ca.pem",
+                "SSL_CERT_DIR": "/tmp/override-certs",
+                "TZ": "UTC",
+            ]
+        )
+
+        XCTAssertEqual(sanitized["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin")
+        XCTAssertEqual(sanitized["TMPDIR"], "/private/tmp/safe")
+        XCTAssertEqual(sanitized["TZ"], "UTC")
+        XCTAssertNil(sanitized["CLASH_CONFIG_STRING"])
+        XCTAssertNil(sanitized["CLASH_POST_UP"])
+        XCTAssertNil(sanitized["BASH_ENV"])
+        XCTAssertNil(sanitized["ENV"])
+        XCTAssertNil(sanitized["SHELLOPTS"])
+        XCTAssertNil(sanitized["BASHOPTS"])
+        XCTAssertNil(sanitized["PS4"])
+        XCTAssertNil(sanitized["SSL_CERT_FILE"])
+        XCTAssertNil(sanitized["SSL_CERT_DIR"])
     }
 
     func testNonzeroValidationFailureIncludesMergedOutput() async throws {
@@ -357,7 +398,16 @@ final class MihomoControllerTests: XCTestCase {
             executableURL: fixture.executableURL,
             configURL: fixture.configURL,
             homeURL: homeURL ?? fixture.homeURL,
-            environment: ["MIHOMO_TEST_VALUE": "expected-value"],
+            environment: [
+                "CLASH_CONFIG_STRING": "untrusted",
+                "CLASH_POST_UP": "touch /tmp/owned",
+                "BASH_ENV": fixture.shellHookURL.path,
+                "ENV": fixture.shellHookURL.path,
+                "SHELLOPTS": "xtrace",
+                "BASHOPTS": "extdebug",
+                "PS4": "$(touch /tmp/owned)",
+                "TZ": "UTC",
+            ],
             validationTimeout: validationTimeout,
             startupTimeout: .seconds(2),
             readinessStability: .milliseconds(20),
@@ -426,6 +476,9 @@ private final class MihomoControllerFixture: @unchecked Sendable {
     let readyFileURL: URL
     let processIDsURL: URL
     let environmentURL: URL
+    let dangerousEnvironmentURL: URL
+    let shellHookURL: URL
+    let shellHookMarkerURL: URL
     let workingDirectoryURL: URL
 
     init(behavior: String, validationDiagnostic: String? = nil) throws {
@@ -441,6 +494,9 @@ private final class MihomoControllerFixture: @unchecked Sendable {
         readyFileURL = homeURL.appendingPathComponent("ready")
         processIDsURL = homeURL.appendingPathComponent("pids.txt")
         environmentURL = homeURL.appendingPathComponent("environment.txt")
+        dangerousEnvironmentURL = homeURL.appendingPathComponent("dangerous-environment.txt")
+        shellHookURL = homeURL.appendingPathComponent("shell-hook.sh")
+        shellHookMarkerURL = homeURL.appendingPathComponent("shell-hook-ran")
         workingDirectoryURL = homeURL.appendingPathComponent("working-directory.txt")
 
         try FileManager.default.createDirectory(at: homeURL, withIntermediateDirectories: true)
@@ -457,6 +513,11 @@ private final class MihomoControllerFixture: @unchecked Sendable {
                 encoding: .utf8
             )
         }
+        try "#!/bin/sh\n/usr/bin/touch '\(shellHookMarkerURL.path)'\n".write(
+            to: shellHookURL,
+            atomically: true,
+            encoding: .utf8
+        )
         try Self.script.write(to: executableURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755],
@@ -490,7 +551,10 @@ private final class MihomoControllerFixture: @unchecked Sendable {
         behavior=$(cat behavior.txt)
         printf '%s\n' "$*" >> invocations.txt
         printf '%s\n' "$PWD" > working-directory.txt
-        printf '%s\n' "$MIHOMO_TEST_VALUE" > environment.txt
+        printf '%s\n' "$TZ" > environment.txt
+        printf '%s|%s|%s|%s\n' \
+          "$CLASH_CONFIG_STRING" "$CLASH_POST_UP" "$BASH_ENV" "$ENV" \
+          > dangerous-environment.txt
 
         if [ "$1" = "-v" ]; then
           printf 'Mihomo Meta v1.19.29 darwin arm64 with go1.26.5 Sat Jul 18 12:19:57 UTC 2026\n'

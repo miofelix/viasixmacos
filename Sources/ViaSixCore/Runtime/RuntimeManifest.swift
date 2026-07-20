@@ -18,51 +18,47 @@ public enum RuntimeArchitecture: String, CaseIterable, Codable, Hashable, Sendab
 
 public enum RuntimeComponent: String, CaseIterable, Codable, Hashable, Sendable {
     case cfst
-    case xray
+    case mihomo
 
     public var displayName: String {
         switch self {
         case .cfst: "CloudflareSpeedTest"
-        case .xray: "Xray-core"
+        case .mihomo: "Mihomo"
         }
     }
 
     public var repositoryURL: URL {
         switch self {
         case .cfst: URL(string: "https://github.com/XIU2/CloudflareSpeedTest")!
-        case .xray: URL(string: "https://github.com/XTLS/Xray-core")!
+        case .mihomo: URL(string: "https://github.com/MetaCubeX/mihomo")!
         }
     }
 
     var payloadFiles: [RuntimePayloadFile] {
         switch self {
         case .cfst: [.cfst]
-        case .xray: [.xray, .geoIP, .geoSite]
+        case .mihomo: [.mihomo]
         }
     }
 }
 
 public enum RuntimePayloadFile: String, CaseIterable, Codable, Hashable, Sendable {
     case cfst
-    case xray
-    case geoIP = "geoip.dat"
-    case geoSite = "geosite.dat"
+    case mihomo
 
     public var component: RuntimeComponent {
         switch self {
         case .cfst:
             .cfst
-        case .xray, .geoIP, .geoSite:
-            .xray
+        case .mihomo:
+            .mihomo
         }
     }
 
     public var requiresExecutablePermission: Bool {
         switch self {
-        case .cfst, .xray:
+        case .cfst, .mihomo:
             true
-        case .geoIP, .geoSite:
-            false
         }
     }
 }
@@ -121,7 +117,7 @@ public struct RuntimeAsset: Codable, Equatable, Hashable, Sendable {
 
 public struct RuntimeManifest: Equatable, Sendable {
     public static let cfstVersion = "2.3.5"
-    public static let xrayVersion = "26.3.27"
+    public static let mihomoVersion = "1.19.29"
 
     public let assets: [RuntimeAsset]
 
@@ -183,35 +179,41 @@ public struct RuntimeManifest: Equatable, Sendable {
                 ]
             ),
             RuntimeAsset(
-                component: .xray,
-                version: xrayVersion,
+                component: .mihomo,
+                version: mihomoVersion,
                 architecture: .arm64,
-                archiveName: "Xray-macos-arm64-v8a.zip",
-                archiveFormat: .zip,
+                archiveName: "mihomo-darwin-arm64-v1.19.29.gz",
+                archiveFormat: .gzip(output: .mihomo),
                 downloadURL: URL(
-                    string: "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-macos-arm64-v8a.zip"
+                    string:
+                        "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.29/mihomo-darwin-arm64-v1.19.29.gz"
                 )!,
-                sha256: "2e93a67e8aa1936ecefb307e120830fcbd4c643ab9b1c46a2d0838d5f8409eaf",
+                sha256: "4dc25df9e899f14161911302a8ee5fc9e202ed9c976fc405bf82c50ff27466ca",
                 payloadExpectations: [
-                    RuntimePayloadExpectation(file: .xray),
-                    RuntimePayloadExpectation(file: .geoIP),
-                    RuntimePayloadExpectation(file: .geoSite),
+                    RuntimePayloadExpectation(
+                        file: .mihomo,
+                        byteCount: 43_229_330,
+                        sha256: "ec66e3e883bdc3fca06753784e324e08921e13239f8e945587cb1bfbf4c6b936"
+                    )
                 ]
             ),
             RuntimeAsset(
-                component: .xray,
-                version: xrayVersion,
+                component: .mihomo,
+                version: mihomoVersion,
                 architecture: .x8664,
-                archiveName: "Xray-macos-64.zip",
-                archiveFormat: .zip,
+                archiveName: "mihomo-darwin-amd64-v1-v1.19.29.gz",
+                archiveFormat: .gzip(output: .mihomo),
                 downloadURL: URL(
-                    string: "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-macos-64.zip"
+                    string:
+                        "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.29/mihomo-darwin-amd64-v1-v1.19.29.gz"
                 )!,
-                sha256: "f5b0471d3459eff1b82e48af0aeac186abcc3298210070afbbbd8437a4e8b203",
+                sha256: "addf68bf604e05cce5334e949bb8915dd68b25744669b320f7d4c1e240ab92a0",
                 payloadExpectations: [
-                    RuntimePayloadExpectation(file: .xray),
-                    RuntimePayloadExpectation(file: .geoIP),
-                    RuntimePayloadExpectation(file: .geoSite),
+                    RuntimePayloadExpectation(
+                        file: .mihomo,
+                        byteCount: 47_015_456,
+                        sha256: "a139a209965e34ef30fac77ea9bfa9e6ab63c01cad6f94804131fd7f4a552c02"
+                    )
                 ]
             ),
         ]

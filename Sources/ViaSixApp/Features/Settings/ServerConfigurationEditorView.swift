@@ -1,5 +1,6 @@
 import SwiftUI
 import ViaSixCore
+import ViaSixMihomoConfig
 
 enum ServerConfigurationInputMode: String, CaseIterable, Identifiable {
     case manual
@@ -19,8 +20,9 @@ struct ServerConfigurationEditorView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
-    @State private var profile = XrayServerProfile()
-    @State private var originalProfile: XrayServerProfile?
+    @State private var profile = MihomoProxyProfile()
+    @State private var originalProfile: MihomoProxyProfile?
+    @State private var originalData: Data?
     @State private var inputMode: ServerConfigurationInputMode
     @State private var serverPortText = "443"
     @State private var shareLink = ""
@@ -51,7 +53,7 @@ struct ServerConfigurationEditorView: View {
         .frame(minWidth: 700, minHeight: editorMinimumHeight)
         .background(VisualStyle.pageBackground)
         .animation(VisualStyle.standardAnimation, value: editorMinimumHeight)
-        .task { load() }
+        .task { await load() }
         .onChange(of: profile.protocolName) { _, protocolName in
             applyProtocolDefaults(for: protocolName)
         }
@@ -170,12 +172,16 @@ struct ServerConfigurationEditorView: View {
     private var serverFields: some View {
         fieldRow("协议") {
             Picker("协议", selection: $profile.protocolName) {
-                ForEach(XrayServerProtocol.allCases, id: \.self) { protocolName in
+                ForEach(MihomoProxyProtocol.allCases, id: \.self) { protocolName in
                     Text(protocolName.displayName).tag(protocolName)
                 }
             }
             .labelsHidden()
             .frame(width: 180)
+        }
+        fieldRow("节点名称") {
+            TextField("用于在代理组中识别此节点", text: $profile.name)
+                .textFieldStyle(.roundedBorder)
         }
         fieldRow("服务器地址") {
             TextField("域名或 IP", text: $profile.serverAddress)
@@ -187,9 +193,15 @@ struct ServerConfigurationEditorView: View {
                 .frame(width: 120)
         }
         fieldRow(credentialTitle) {
-            TextField(credentialPlaceholder, text: $profile.userID)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.body, design: .monospaced))
+            if profile.protocolName == .trojan || profile.protocolName == .shadowsocks {
+                SecureField(credentialPlaceholder, text: $profile.credential)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+            } else {
+                TextField(credentialPlaceholder, text: $profile.credential)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+            }
         }
 
         switch profile.protocolName {
@@ -210,7 +222,7 @@ struct ServerConfigurationEditorView: View {
                     .frame(width: 120)
             }
             fieldRow("加密方式") {
-                TextField("auto", text: $profile.vmessSecurity)
+                TextField("auto", text: $profile.vmessCipher)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 180)
             }
@@ -222,13 +234,17 @@ struct ServerConfigurationEditorView: View {
         case .trojan:
             EmptyView()
         }
+
+        fieldRow("UDP") {
+            Toggle("允许此节点转发 UDP", isOn: $profile.udpEnabled)
+        }
     }
 
     @ViewBuilder
     private var transportFields: some View {
         fieldRow("传输方式") {
             Picker("传输方式", selection: $profile.transport) {
-                ForEach(XrayTransport.allCases, id: \.self) { transport in
+                ForEach(MihomoTransport.allCases, id: \.self) { transport in
                     Text(transport.displayName).tag(transport)
                 }
             }
@@ -236,8 +252,10 @@ struct ServerConfigurationEditorView: View {
             .frame(width: 180)
         }
 
-        if profile.transport == .websocket {
-            fieldRow("WebSocket Host") {
+        if profile.transport == .websocket || profile.transport == .http
+            || profile.transport == .h2
+        {
+            fieldRow(transportHostTitle) {
                 TextField("通常与 Server Name 相同", text: $profile.host)
                     .textFieldStyle(.roundedBorder)
             }
@@ -257,7 +275,7 @@ struct ServerConfigurationEditorView: View {
     private var securityFields: some View {
         fieldRow("安全方式") {
             Picker("安全方式", selection: $profile.security) {
-                ForEach(XrayTransportSecurity.allCases, id: \.self) { security in
+                ForEach(MihomoTransportSecurity.allCases, id: \.self) { security in
                     Text(security.displayName).tag(security)
                 }
             }
@@ -292,10 +310,6 @@ struct ServerConfigurationEditorView: View {
                 TextField("可选", text: $profile.realityShortID)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
-            }
-            fieldRow("Spider X") {
-                TextField("可选", text: $profile.realitySpiderX)
-                    .textFieldStyle(.roundedBorder)
             }
         }
     }
@@ -360,6 +374,15 @@ struct ServerConfigurationEditorView: View {
         profile.protocolName == .trojan || profile.protocolName == .shadowsocks
             ? "服务器密码"
             : "服务器提供的 UUID"
+    }
+
+    private var transportHostTitle: String {
+        switch profile.transport {
+        case .websocket: "WebSocket Host"
+        case .http: "HTTP Host"
+        case .h2: "HTTP/2 Host"
+        case .grpc, .tcp: "Host"
+        }
     }
 
     private var serverAddressSummary: String {
@@ -427,32 +450,34 @@ struct ServerConfigurationEditorView: View {
         .frame(minHeight: VisualStyle.controlHeight)
     }
 
-    private func load() {
-        guard FileManager.default.fileExists(atPath: model.paths.serverConfig.path) else {
-            profile = XrayServerProfile()
+    private func load() async {
+        guard FileManager.default.fileExists(atPath: model.paths.profileConfig.path) else {
+            profile = MihomoProxyProfile()
             serverPortText = String(profile.serverPort)
             originalProfile = profile
+            originalData = nil
             loadError = nil
             isLoading = false
             return
         }
 
         do {
-            let data = try Data(contentsOf: model.paths.serverConfig)
-            profile = try ConfigTemplate.serverProfile(in: data)
+            let data = try await model.loadProfileConfiguration()
+            originalData = data
+            profile = try MihomoGuidedProfileDraft.editableProfile(from: data)
             applyProtocolDefaults(for: profile.protocolName)
             serverPortText = String(profile.serverPort)
             originalProfile = profile
             loadError = nil
         } catch {
             loadError =
-                "当前服务器配置包含表单无法识别的结构。可以使用高级 JSON 保留全部字段，或明确选择重新配置。\n\n\(error.localizedDescription)"
+                "当前代理配置无法使用表单编辑。包含多个节点或 Proxy Provider 时，请使用高级 YAML 编辑器；也可以明确选择重新配置。\n\n\(error.localizedDescription)"
         }
         isLoading = false
     }
 
     private func beginReplacement(using mode: ServerConfigurationInputMode) {
-        profile = XrayServerProfile()
+        profile = MihomoProxyProfile()
         serverPortText = String(profile.serverPort)
         originalProfile = profile
         shareLink = ""
@@ -465,7 +490,7 @@ struct ServerConfigurationEditorView: View {
     private func parseShareLink() {
         shareLinkError = nil
         do {
-            profile = try ServerShareLinkParser.profile(from: shareLink)
+            profile = try MihomoShareLinkParser.profile(from: shareLink)
             applyProtocolDefaults(for: profile.protocolName)
             serverPortText = String(profile.serverPort)
             saveError = nil
@@ -477,7 +502,7 @@ struct ServerConfigurationEditorView: View {
         }
     }
 
-    private func applyProtocolDefaults(for protocolName: XrayServerProtocol) {
+    private func applyProtocolDefaults(for protocolName: MihomoProxyProtocol) {
         if protocolName == .shadowsocks {
             profile.transport = .tcp
             profile.security = .none
@@ -486,6 +511,10 @@ struct ServerConfigurationEditorView: View {
             }
         } else if protocolName == .trojan, profile.security == .none {
             profile.security = .tls
+        } else if protocolName == .vless,
+            profile.encryption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            profile.encryption = "none"
         }
     }
 
@@ -497,13 +526,25 @@ struct ServerConfigurationEditorView: View {
         }
         profile.serverPort = port
         do {
-            let data = try ConfigTemplate.serverConfiguration(for: profile)
+            if profile.protocolName == .shadowsocks,
+                profile.encryption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                saveError = "请输入 Shadowsocks 加密算法。"
+                return
+            }
+            let data = try profile.serverConfiguration().formattedData()
             isSaving = true
             Task { @MainActor in
                 do {
-                    try await model.saveServerConfiguration(data)
+                    try await model.saveProfileConfiguration(
+                        data,
+                        expectedProfileData: originalData
+                    )
                     isSaving = false
                     dismiss()
+                } catch AppModelError.templateChangedExternally {
+                    isSaving = false
+                    saveError = "磁盘中的代理配置已发生变化，请重新打开后再保存。"
                 } catch {
                     isSaving = false
                     saveError = error.localizedDescription
@@ -520,5 +561,29 @@ struct ServerConfigurationEditorView: View {
         } else {
             dismiss()
         }
+    }
+}
+
+enum MihomoGuidedProfileDraftError: LocalizedError, Equatable {
+    case requiresAdvancedEditor
+
+    var errorDescription: String? {
+        switch self {
+        case .requiresAdvancedEditor:
+            "当前配置包含表单不会显示的节点、Provider、代理组或规则"
+        }
+    }
+}
+
+struct MihomoGuidedProfileDraft {
+    static func editableProfile(from data: Data) throws -> MihomoProxyProfile {
+        let configuration = try MihomoServerConfiguration(data: data)
+        let profile = try configuration.primaryProfile()
+        let canonicalData = try configuration.formattedData()
+        let guidedData = try profile.serverConfiguration().formattedData()
+        guard canonicalData == guidedData else {
+            throw MihomoGuidedProfileDraftError.requiresAdvancedEditor
+        }
+        return profile
     }
 }

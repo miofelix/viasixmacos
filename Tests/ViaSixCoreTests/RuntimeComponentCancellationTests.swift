@@ -39,9 +39,9 @@ final class RuntimeComponentCancellationTests: XCTestCase {
                 .downloading(.cfst),
                 .verifying(.cfst),
                 .extracting(.cfst),
-                .downloading(.xray),
-                .verifying(.xray),
-                .extracting(.xray),
+                .downloading(.mihomo),
+                .verifying(.mihomo),
+                .extracting(.mihomo),
                 .committing,
             ]
         )
@@ -103,7 +103,7 @@ final class RuntimeComponentCancellationTests: XCTestCase {
         )
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755],
-            ofItemAtPath: runtimeURL.appendingPathComponent(RuntimePayloadFile.xray.rawValue).path
+            ofItemAtPath: runtimeURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue).path
         )
 
         let archiveData = Data("tampered archive".utf8)
@@ -162,18 +162,14 @@ final class RuntimeComponentCancellationTests: XCTestCase {
                 payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
             ),
             RuntimeAsset(
-                component: .xray,
+                component: .mihomo,
                 version: "test",
                 architecture: .arm64,
-                archiveName: "xray.zip",
-                archiveFormat: .zip,
-                downloadURL: URL(string: "https://example.invalid/xray.zip")!,
+                archiveName: "mihomo.gz",
+                archiveFormat: .gzip(output: .mihomo),
+                downloadURL: URL(string: "https://example.invalid/mihomo.gz")!,
                 sha256: digest,
-                payloadExpectations: [
-                    RuntimePayloadExpectation(file: .xray),
-                    RuntimePayloadExpectation(file: .geoIP),
-                    RuntimePayloadExpectation(file: .geoSite),
-                ]
+                payloadExpectations: [RuntimePayloadExpectation(file: .mihomo)]
             ),
         ])
         let manager = RuntimeComponentManager(
@@ -249,18 +245,14 @@ final class RuntimeComponentCancellationTests: XCTestCase {
                 payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
             ),
             RuntimeAsset(
-                component: .xray,
+                component: .mihomo,
                 version: "test",
                 architecture: .arm64,
-                archiveName: "xray.zip",
-                archiveFormat: .zip,
-                downloadURL: URL(string: "https://example.invalid/xray.zip")!,
+                archiveName: "mihomo.gz",
+                archiveFormat: .gzip(output: .mihomo),
+                downloadURL: URL(string: "https://example.invalid/mihomo.gz")!,
                 sha256: sha256,
-                payloadExpectations: [
-                    RuntimePayloadExpectation(file: .xray),
-                    RuntimePayloadExpectation(file: .geoIP),
-                    RuntimePayloadExpectation(file: .geoSite),
-                ]
+                payloadExpectations: [RuntimePayloadExpectation(file: .mihomo)]
             ),
         ])
     }
@@ -301,11 +293,9 @@ private func writeRuntimePayloads(to destinationURL: URL) throws {
     if component == RuntimeComponent.cfst.rawValue {
         try runtimeFixtureData(for: .cfst, marker: "downloaded")
             .write(to: destinationURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue))
-    } else if component == RuntimeComponent.xray.rawValue {
-        for payload in [RuntimePayloadFile.xray, .geoIP, .geoSite] {
-            try runtimeFixtureData(for: payload, marker: "downloaded")
-                .write(to: destinationURL.appendingPathComponent(payload.rawValue))
-        }
+    } else if component == RuntimeComponent.mihomo.rawValue {
+        try runtimeFixtureData(for: .mihomo, marker: "downloaded")
+            .write(to: destinationURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue))
     } else {
         throw POSIXError(.EINVAL)
     }
@@ -314,7 +304,7 @@ private func writeRuntimePayloads(to destinationURL: URL) throws {
         ofItemAtPath: destinationURL.appendingPathComponent(
             component == RuntimeComponent.cfst.rawValue
                 ? RuntimePayloadFile.cfst.rawValue
-                : RuntimePayloadFile.xray.rawValue
+                : RuntimePayloadFile.mihomo.rawValue
         ).path
     )
 }

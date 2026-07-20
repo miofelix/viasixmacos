@@ -3,69 +3,103 @@ import XCTest
 @testable import ViaSixCore
 
 final class DefaultResourceInstallerTests: XCTestCase {
-    func testInstallMigratesExactLegacyTemplateAndRemovesGeneratedConfig() throws {
+    func testInstallCreatesOnlyLocalDefaultsAndNetworkData() throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+
+        try DefaultResourceInstaller.install(into: paths)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.ipv4List.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.ipv6List.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.localProxyConfig.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.profileConfig.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.legacyServerConfig.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.legacyTemplateConfig.path))
+
+        let local = try JSONDecoder().decode(
+            LocalProxyConfiguration.self,
+            from: Data(contentsOf: paths.localProxyConfig)
+        )
+        XCTAssertEqual(local.networkAccessMode, .localProxy)
+        XCTAssertEqual(local.logLevel, .warning)
+    }
+
+    func testInstallUpgradesOnlyExactLegacyLocalDefaults() throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
         try paths.prepare()
-        let legacyTemplate = try TestConfigFixtures.syntheticLegacyTemplate()
-        try legacyTemplate.write(to: paths.templateConfig)
-        try Data("stale generated config".utf8).write(to: paths.generatedConfig)
+        let legacy = Data(
+            """
+            {
+              "listenAddress": "127.0.0.1",
+              "port": 11451,
+              "udpEnabled": true,
+              "sniffingEnabled": true,
+              "bypassPrivateNetworks": true,
+              "logLevel": "none",
+              "routingMode": "rule",
+              "systemProxyEnabled": true
+            }
+            """.utf8
+        )
+        try legacy.write(to: paths.localProxyConfig)
 
         try DefaultResourceInstaller.install(
             into: paths,
             legacyDigests: .init(
-                ipv4: "unused-for-this-test",
-                template: RuntimeSHA256.hexDigest(of: legacyTemplate)
+                ipv4: "not-installed",
+                localProxy: RuntimeSHA256.hexDigest(of: legacy)
             )
         )
 
-        let installed = try Data(contentsOf: paths.templateConfig)
-        let installedText = String(decoding: installed, as: UTF8.self)
-        XCTAssertNotEqual(installed, legacyTemplate)
-        XCTAssertFalse(installedText.contains(TestConfigFixtures.syntheticLegacyUserID))
-        XCTAssertFalse(installedText.contains(TestConfigFixtures.syntheticLegacyServerName))
-        XCTAssertTrue(installedText.contains(ConfigTemplate.placeholderUserID))
-        XCTAssertTrue(installedText.contains(ConfigTemplate.placeholderServerName))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.generatedConfig.path))
+        let installed = try Data(contentsOf: paths.localProxyConfig)
+        XCTAssertNotEqual(installed, legacy)
+        let local = try JSONDecoder().decode(LocalProxyConfiguration.self, from: installed)
+        XCTAssertEqual(local.networkAccessMode, .localProxy)
+        XCTAssertEqual(local.logLevel, .warning)
+        XCTAssertFalse(String(decoding: installed, as: UTF8.self).contains("systemProxyEnabled"))
     }
 
-    func testInstallPreservesCustomizedTemplateAndGeneratedConfig() throws {
+    func testInstallPreservesCustomizedLocalConfigurationAndLegacyInputs() throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
         try paths.prepare()
-        let customizedTemplate = try TestConfigFixtures.connectionTemplate(
-            userID: "2ea73587-acfa-4475-91ec-dcf25729644f",
-            serverName: "customer.example.net",
-            path: "/customer"
+        let customized = try JSONEncoder.pretty.encode(
+            LocalProxyConfiguration(
+                port: 20_280,
+                logLevel: .debug,
+                routingMode: .global,
+                networkAccessMode: .systemProxy
+            )
         )
-        let generatedConfig = Data("customer generated config".utf8)
-        try customizedTemplate.write(to: paths.templateConfig)
-        try generatedConfig.write(to: paths.generatedConfig)
+        let legacyServer = Data("custom legacy server".utf8)
+        try customized.write(to: paths.localProxyConfig)
+        try legacyServer.write(to: paths.legacyServerConfig)
 
         try DefaultResourceInstaller.install(into: paths)
 
-        XCTAssertEqual(try Data(contentsOf: paths.templateConfig), customizedTemplate)
-        XCTAssertEqual(try Data(contentsOf: paths.generatedConfig), generatedConfig)
+        XCTAssertEqual(try Data(contentsOf: paths.localProxyConfig), customized)
+        XCTAssertEqual(try Data(contentsOf: paths.legacyServerConfig), legacyServer)
     }
 
     func testReplaceIfMatchingLegacyReplacesContentAndRemovesDerivedFiles() throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
         try paths.prepare()
+        let legacy = Data("legacy".utf8)
         let replacement = Data("replacement".utf8)
-        let legacyTemplate = try TestConfigFixtures.syntheticLegacyTemplate()
-        try legacyTemplate.write(to: paths.templateConfig)
+        try legacy.write(to: paths.localProxyConfig)
         try Data("derived".utf8).write(to: paths.generatedConfig)
 
         let replaced = try DefaultResourceInstaller.replaceIfMatchingLegacy(
-            at: paths.templateConfig,
-            expectedSHA256: RuntimeSHA256.hexDigest(of: legacyTemplate),
+            at: paths.localProxyConfig,
+            expectedSHA256: RuntimeSHA256.hexDigest(of: legacy),
             replacement: replacement,
             removingDerivedFiles: [paths.generatedConfig]
         )
 
         XCTAssertTrue(replaced)
-        XCTAssertEqual(try Data(contentsOf: paths.templateConfig), replacement)
+        XCTAssertEqual(try Data(contentsOf: paths.localProxyConfig), replacement)
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.generatedConfig.path))
     }
 
@@ -73,27 +107,29 @@ final class DefaultResourceInstallerTests: XCTestCase {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
         try paths.prepare()
-        let customizedTemplate = Data("customized".utf8)
-        let generatedConfig = Data("derived".utf8)
-        try customizedTemplate.write(to: paths.templateConfig)
-        try generatedConfig.write(to: paths.generatedConfig)
+        let customized = Data("customized".utf8)
+        let generated = Data("derived".utf8)
+        try customized.write(to: paths.localProxyConfig)
+        try generated.write(to: paths.generatedConfig)
 
         let replaced = try DefaultResourceInstaller.replaceIfMatchingLegacy(
-            at: paths.templateConfig,
-            expectedSHA256: RuntimeSHA256.hexDigest(of: Data("different legacy value".utf8)),
+            at: paths.localProxyConfig,
+            expectedSHA256: RuntimeSHA256.hexDigest(of: Data("different".utf8)),
             replacement: Data("replacement".utf8),
             removingDerivedFiles: [paths.generatedConfig]
         )
 
         XCTAssertFalse(replaced)
-        XCTAssertEqual(try Data(contentsOf: paths.templateConfig), customizedTemplate)
-        XCTAssertEqual(try Data(contentsOf: paths.generatedConfig), generatedConfig)
+        XCTAssertEqual(try Data(contentsOf: paths.localProxyConfig), customized)
+        XCTAssertEqual(try Data(contentsOf: paths.generatedConfig), generated)
     }
 
     private func makePaths() -> AppPaths {
         AppPaths(
-            root: FileManager.default.temporaryDirectory
-                .appendingPathComponent("DefaultResourceInstallerTests-\(UUID().uuidString)", isDirectory: true)
+            root: FileManager.default.temporaryDirectory.appendingPathComponent(
+                "DefaultResourceInstallerTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
         )
     }
 }

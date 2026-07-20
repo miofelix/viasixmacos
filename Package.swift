@@ -57,7 +57,11 @@ let package = Package(
         ),
         .executableTarget(
             name: "ViaSixApp",
-            dependencies: ["ViaSixCore", "ViaSixPrivilegedProtocol"],
+            dependencies: [
+                "ViaSixCore",
+                "ViaSixMihomoConfig",
+                "ViaSixPrivilegedProtocol",
+            ],
             linkerSettings: [
                 .linkedFramework("ServiceManagement")
             ]
@@ -76,7 +80,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ViaSixAppTests",
-            dependencies: ["ViaSixApp", "ViaSixCore"]
+            dependencies: ["ViaSixApp", "ViaSixCore", "ViaSixMihomoConfig"]
         ),
         .testTarget(
             name: "ViaSixPrivilegedProtocolTests",

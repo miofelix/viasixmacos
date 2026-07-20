@@ -4,11 +4,11 @@ import Foundation
 public enum DefaultResourceInstaller {
     struct LegacyResourceDigests: Equatable, Sendable {
         let ipv4: String
-        let template: String
+        let localProxy: String
 
         fileprivate static let shipped = Self(
             ipv4: "449ea35cc7c80700cf647d39f5061545758bc7564eeeb5e7caa3cbba933f7da4",
-            template: "0641c1251d6f0521a5d56fbe8438fef3b297aace27a9e321ad33ea5b8d04812a"
+            localProxy: "466d1b4d16bc88c8e9286587269c9db8daa437a12fd896a085562cda15b6972e"
         )
     }
 
@@ -30,24 +30,11 @@ public enum DefaultResourceInstaller {
             using: fileManager
         )
         try copyIfMissing(resource: "ipv6", extension: "txt", to: paths.ipv6List, using: fileManager)
-        try copyIfMissing(
-            resource: "server",
-            extension: "json",
-            to: paths.serverConfig,
-            using: fileManager
-        )
-        try copyIfMissing(
+        try installBundledResource(
             resource: "local-proxy",
             extension: "json",
             to: paths.localProxyConfig,
-            using: fileManager
-        )
-        try installBundledResource(
-            resource: "template",
-            extension: "json",
-            to: paths.templateConfig,
-            legacySHA256: legacyDigests.template,
-            removingDerivedFiles: [paths.generatedConfig],
+            legacySHA256: legacyDigests.localProxy,
             using: fileManager
         )
     }

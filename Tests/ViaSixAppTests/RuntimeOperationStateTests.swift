@@ -112,18 +112,14 @@ final class RuntimeOperationStateTests: XCTestCase {
                 payloadExpectations: [RuntimePayloadExpectation(file: .cfst)]
             ),
             RuntimeAsset(
-                component: .xray,
+                component: .mihomo,
                 version: "test",
                 architecture: .arm64,
-                archiveName: "xray.zip",
-                archiveFormat: .zip,
-                downloadURL: URL(string: "https://example.invalid/xray.zip")!,
+                archiveName: "mihomo.gz",
+                archiveFormat: .gzip(output: .mihomo),
+                downloadURL: URL(string: "https://example.invalid/mihomo.gz")!,
                 sha256: sha256,
-                payloadExpectations: [
-                    RuntimePayloadExpectation(file: .xray),
-                    RuntimePayloadExpectation(file: .geoIP),
-                    RuntimePayloadExpectation(file: .geoSite),
-                ]
+                payloadExpectations: [RuntimePayloadExpectation(file: .mihomo)]
             ),
         ])
     }
@@ -162,10 +158,8 @@ private func writeRuntimePayloads(to destinationURL: URL) throws {
             .write(to: destinationURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue))
         return
     }
-    for payload in [RuntimePayloadFile.xray, .geoIP, .geoSite] {
-        try runtimeFixtureData(for: payload, marker: "downloaded")
-            .write(to: destinationURL.appendingPathComponent(payload.rawValue))
-    }
+    try runtimeFixtureData(for: .mihomo, marker: "downloaded")
+        .write(to: destinationURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue))
 }
 
 private func runtimeFixtureData(

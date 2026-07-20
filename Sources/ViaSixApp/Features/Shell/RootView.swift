@@ -246,9 +246,9 @@ struct RootView: View {
     private func performSidebarAction() {
         switch sidebarPresentation.action {
         case .stopProxy:
-            model.stopXray()
+            model.stopProxy()
         case .startProxy:
-            model.startXray()
+            model.startProxy()
         case .none:
             break
         }
@@ -257,7 +257,7 @@ struct RootView: View {
     private var sidebarPresentation: SidebarProxyPresentation {
         SidebarProxyPresentation(
             launchPhase: model.state.launchPhase,
-            xrayPhase: model.state.xrayPhase,
+            proxyCorePhase: model.state.proxyCorePhase,
             endpoint: model.state.proxyEndpoint
         )
     }
@@ -265,14 +265,12 @@ struct RootView: View {
     private var sidebarProxyControlDisabled: Bool {
         guard model.state.launchPhase == .ready else { return true }
         if model.state.runtimeOperation != nil || model.isTemplateOperationBusy { return true }
-        switch model.state.xrayPhase {
+        switch model.state.proxyCorePhase {
         case .running, .validating, .starting:
             return false
         case .stopped, .failed:
             return model.switchingIP != nil
-                || !model.hasXrayExecutable
-                || (model.requiresSelectedNodeForProxy
-                    && model.state.preferences.selectedIP.isEmpty)
+                || !model.hasProxyCoreExecutable
                 || !model.isProxyConfigurationReady
         case .stopping:
             return true
@@ -294,20 +292,16 @@ struct RootView: View {
         if model.isTemplateOperationBusy {
             return "代理配置操作进行中"
         }
-        return switch model.state.xrayPhase {
+        return switch model.state.proxyCorePhase {
         case .running, .validating, .starting:
             "停止本地代理"
         case .stopping:
             "正在停止本地代理"
         case .stopped, .failed:
-            if !model.hasXrayExecutable {
-                "请先在设置中安装 Xray-core"
+            if !model.hasProxyCoreExecutable {
+                "请先在设置中安装 Mihomo"
             } else if let issue = model.proxyConfigurationIssue {
                 "请先在设置中修复代理配置：\(issue)"
-            } else if model.requiresSelectedNodeForProxy
-                && model.state.preferences.selectedIP.isEmpty
-            {
-                "请先选择节点"
             } else {
                 "启动本地代理"
             }

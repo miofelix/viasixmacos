@@ -6,7 +6,7 @@ import XCTest
 final class RuntimeManifestTests: XCTestCase {
     func testPinnedVersionsAndAssetsForEveryArchitecture() throws {
         XCTAssertEqual(RuntimeManifest.cfstVersion, "2.3.5")
-        XCTAssertEqual(RuntimeManifest.xrayVersion, "26.3.27")
+        XCTAssertEqual(RuntimeManifest.mihomoVersion, "1.19.29")
         XCTAssertEqual(RuntimeManifest.current.assets.count, 4)
         XCTAssertEqual(Set(RuntimeArchitecture.allCases), [.arm64, .x8664])
 
@@ -15,6 +15,7 @@ final class RuntimeManifestTests: XCTestCase {
                 component: RuntimeComponent,
                 architecture: RuntimeArchitecture,
                 archiveName: String,
+                archiveFormat: RuntimeArchiveFormat,
                 url: String,
                 sha256: String,
                 payloadExpectations: [RuntimePayloadExpectation]
@@ -23,6 +24,7 @@ final class RuntimeManifestTests: XCTestCase {
                     .cfst,
                     .arm64,
                     "cfst_darwin_arm64.zip",
+                    .zip,
                     "https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.5/cfst_darwin_arm64.zip",
                     "0623f6d24c939e3d3716f556f4d39c7b8781cf6600ee838a1b64e6b2fe4609dc",
                     [
@@ -37,6 +39,7 @@ final class RuntimeManifestTests: XCTestCase {
                     .cfst,
                     .x8664,
                     "cfst_darwin_amd64.zip",
+                    .zip,
                     "https://github.com/XIU2/CloudflareSpeedTest/releases/download/v2.3.5/cfst_darwin_amd64.zip",
                     "66ce3ae89430e851cab9710d54b6d91324e0aae255f0c92a91072d57724561d5",
                     [
@@ -48,27 +51,33 @@ final class RuntimeManifestTests: XCTestCase {
                     ]
                 ),
                 (
-                    .xray,
+                    .mihomo,
                     .arm64,
-                    "Xray-macos-arm64-v8a.zip",
-                    "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-macos-arm64-v8a.zip",
-                    "2e93a67e8aa1936ecefb307e120830fcbd4c643ab9b1c46a2d0838d5f8409eaf",
+                    "mihomo-darwin-arm64-v1.19.29.gz",
+                    .gzip(output: .mihomo),
+                    "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.29/mihomo-darwin-arm64-v1.19.29.gz",
+                    "4dc25df9e899f14161911302a8ee5fc9e202ed9c976fc405bf82c50ff27466ca",
                     [
-                        RuntimePayloadExpectation(file: .xray),
-                        RuntimePayloadExpectation(file: .geoIP),
-                        RuntimePayloadExpectation(file: .geoSite),
+                        RuntimePayloadExpectation(
+                            file: .mihomo,
+                            byteCount: 43_229_330,
+                            sha256: "ec66e3e883bdc3fca06753784e324e08921e13239f8e945587cb1bfbf4c6b936"
+                        )
                     ]
                 ),
                 (
-                    .xray,
+                    .mihomo,
                     .x8664,
-                    "Xray-macos-64.zip",
-                    "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-macos-64.zip",
-                    "f5b0471d3459eff1b82e48af0aeac186abcc3298210070afbbbd8437a4e8b203",
+                    "mihomo-darwin-amd64-v1-v1.19.29.gz",
+                    .gzip(output: .mihomo),
+                    "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.29/mihomo-darwin-amd64-v1-v1.19.29.gz",
+                    "addf68bf604e05cce5334e949bb8915dd68b25744669b320f7d4c1e240ab92a0",
                     [
-                        RuntimePayloadExpectation(file: .xray),
-                        RuntimePayloadExpectation(file: .geoIP),
-                        RuntimePayloadExpectation(file: .geoSite),
+                        RuntimePayloadExpectation(
+                            file: .mihomo,
+                            byteCount: 47_015_456,
+                            sha256: "a139a209965e34ef30fac77ea9bfa9e6ab63c01cad6f94804131fd7f4a552c02"
+                        )
                     ]
                 ),
             ]
@@ -81,7 +90,7 @@ final class RuntimeManifestTests: XCTestCase {
                 )
             )
             XCTAssertEqual(asset.archiveName, expected.archiveName)
-            XCTAssertEqual(asset.archiveFormat, .zip)
+            XCTAssertEqual(asset.archiveFormat, expected.archiveFormat)
             XCTAssertEqual(asset.downloadURL.absoluteString, expected.url)
             XCTAssertEqual(asset.sha256, expected.sha256)
             XCTAssertEqual(asset.payloadExpectations, expected.payloadExpectations)
@@ -93,7 +102,7 @@ final class RuntimeManifestTests: XCTestCase {
     func testAssetsForArchitectureAreCompleteAndOrdered() {
         for architecture in RuntimeArchitecture.allCases {
             let assets = RuntimeManifest.current.assets(for: architecture)
-            XCTAssertEqual(assets.map(\.component), [.cfst, .xray])
+            XCTAssertEqual(assets.map(\.component), [.cfst, .mihomo])
             XCTAssertTrue(assets.allSatisfy { $0.architecture == architecture })
         }
     }
@@ -120,7 +129,7 @@ final class RuntimeManifestTests: XCTestCase {
     func testRuntimeModelsAreSendable() {
         assertSendable(RuntimeArchitecture.arm64)
         assertSendable(RuntimeComponent.cfst)
-        assertSendable(RuntimePayloadFile.xray)
+        assertSendable(RuntimePayloadFile.mihomo)
         assertSendable(RuntimePayloadExpectation(file: .cfst))
         assertSendable(RuntimeArchiveFormat.gzip(output: .cfst))
         assertSendable(RuntimeManifest.current)
@@ -137,40 +146,36 @@ final class RuntimeManifestTests: XCTestCase {
     }
 
     func testArchiveFormatsRoundTripThroughCodable() throws {
-        for format in [RuntimeArchiveFormat.zip, .gzip(output: .cfst)] {
+        for format in [RuntimeArchiveFormat.zip, .gzip(output: .mihomo)] {
             let encoded = try JSONEncoder().encode(format)
             XCTAssertEqual(try JSONDecoder().decode(RuntimeArchiveFormat.self, from: encoded), format)
         }
     }
 
-    func testManagedXrayRequiresBothGeoAssetsBeforeItIsReady() {
+    func testManagedMihomoRequiresAnExecutableBeforeItIsReady() {
         let runtimeDirectory = URL(fileURLWithPath: "/tmp/runtime")
-        let xrayURL = runtimeDirectory.appendingPathComponent("xray")
-        let geoIPURL = runtimeDirectory.appendingPathComponent("geoip.dat")
+        let mihomoURL = runtimeDirectory.appendingPathComponent("mihomo")
         let incomplete = RuntimeInstallationStatus(
             runtimeDirectory: runtimeDirectory,
             discoveredFiles: RuntimeDiscoveredFiles(files: [
-                .xray: xrayURL,
-                .geoIP: geoIPURL,
+                .mihomo: mihomoURL
             ]),
-            executableFiles: [.xray]
+            executableFiles: []
         )
 
-        XCTAssertFalse(incomplete.xrayIsReady)
+        XCTAssertFalse(incomplete.mihomoIsReady)
         XCTAssertFalse(incomplete.isReady)
 
         let complete = RuntimeInstallationStatus(
             runtimeDirectory: runtimeDirectory,
             discoveredFiles: RuntimeDiscoveredFiles(files: [
                 .cfst: runtimeDirectory.appendingPathComponent("cfst"),
-                .xray: xrayURL,
-                .geoIP: geoIPURL,
-                .geoSite: runtimeDirectory.appendingPathComponent("geosite.dat"),
+                .mihomo: mihomoURL,
             ]),
-            executableFiles: [.cfst, .xray]
+            executableFiles: [.cfst, .mihomo]
         )
         XCTAssertTrue(complete.cfstIsReady)
-        XCTAssertTrue(complete.xrayIsReady)
+        XCTAssertTrue(complete.mihomoIsReady)
         XCTAssertTrue(complete.isReady)
     }
 
@@ -197,7 +202,7 @@ final class RuntimeManifestTests: XCTestCase {
         let installedStatus = try await manager.install(from: root.appendingPathComponent("Source"))
         XCTAssertTrue(installedStatus.isReady)
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: try XCTUnwrap(installedStatus.cfstURL).path))
-        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: try XCTUnwrap(installedStatus.xrayURL).path))
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: try XCTUnwrap(installedStatus.mihomoURL).path))
 
         let replacementSource = root.appendingPathComponent("Replacement", isDirectory: true)
         try FileManager.default.createDirectory(at: replacementSource, withIntermediateDirectories: true)
@@ -211,8 +216,8 @@ final class RuntimeManifestTests: XCTestCase {
             runtimeFixtureData(for: .cfst, marker: "replacement")
         )
         XCTAssertEqual(
-            try Data(contentsOf: try XCTUnwrap(updatedStatus.xrayURL)),
-            runtimeFixtureData(for: .xray, marker: "first")
+            try Data(contentsOf: try XCTUnwrap(updatedStatus.mihomoURL)),
+            runtimeFixtureData(for: .mihomo, marker: "first")
         )
     }
 

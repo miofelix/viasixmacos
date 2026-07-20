@@ -35,6 +35,22 @@ public struct MihomoServerConfiguration: Equatable, Sendable {
 
     public var data: Data { canonicalData }
 
+    /// Whether ViaSix can safely apply a speed-test result by replacing the
+    /// first inline proxy's `server` value. Provider-only profiles remain
+    /// launchable, but their remote contents are intentionally not rewritten.
+    public var hasReplaceablePrimaryServer: Bool {
+        rawMapping().mappings("proxies")?.contains(where: {
+            $0.string("server")?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }) == true
+    }
+
+    /// Distinguishes provider-backed profiles without exposing their raw YAML
+    /// representation to callers.
+    public var isProviderOnly: Bool {
+        let root = rawMapping()
+        return !hasReplaceablePrimaryServer && !(root.mapping("proxy-providers") ?? [:]).isEmpty
+    }
+
     public func formattedData() throws -> Data {
         try MihomoYAML.data(from: rawMapping())
     }
@@ -212,8 +228,13 @@ public struct MihomoServerConfiguration: Equatable, Sendable {
             ],
         ]
 
-        for key in retainedServerKeys where server[key] != nil {
-            runtime[key] = server[key]
+        // Direct mode must be independent from every remote proxy and provider.
+        // Besides reducing attack surface, this guarantees that selecting
+        // direct cannot trigger subscription refreshes or outbound handshakes.
+        if options.routingMode != .direct {
+            for key in retainedServerKeys where server[key] != nil {
+                runtime[key] = server[key]
+            }
         }
 
         if var proxies = runtime.mappings("proxies") {
