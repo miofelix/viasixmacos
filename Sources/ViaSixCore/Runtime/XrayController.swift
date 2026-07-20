@@ -92,6 +92,7 @@ public actor XrayController {
     private let environment: [String: String]
     private let validationTimeout: Duration
     private let startupTimeout: Duration
+    private let readinessStability: Duration
     private let probeInterval: Duration
     private let stopTimeout: Duration
     private let portProbe: XrayPortProbe
@@ -123,6 +124,7 @@ public actor XrayController {
         port: UInt16 = 11_451,
         validationTimeout: Duration = .seconds(3),
         startupTimeout: Duration = .seconds(5),
+        readinessStability: Duration = .milliseconds(100),
         probeInterval: Duration = .milliseconds(50),
         stopTimeout: Duration = .seconds(2),
         portProbe: XrayPortProbe? = nil
@@ -138,6 +140,7 @@ public actor XrayController {
         self.port = port
         self.validationTimeout = validationTimeout
         self.startupTimeout = startupTimeout
+        self.readinessStability = readinessStability
         self.probeInterval = probeInterval
         self.stopTimeout = stopTimeout
         self.portProbe =
@@ -237,16 +240,21 @@ public actor XrayController {
 
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: startupTimeout)
+        var readinessDeadline: ContinuousClock.Instant?
         while true {
             try ensureActiveOperation(id)
 
             if let termination = runtime.terminationBox.value {
                 SupervisedProcessControl.killRemainingGroupIfNeeded(runtime.processGroup)
                 let output = await runtime.outputTask.value
+                let portStillInUse = await portProbe(host, port)
                 try ensureActiveOperation(id)
                 activeProcess = nil
                 if let readError = output.readError {
                     throw XrayControllerError.outputReadFailed(readError)
+                }
+                if portStillInUse {
+                    throw XrayControllerError.portInUse(host: host, port: port)
                 }
                 throw XrayControllerError.exitedBeforeReady(
                     status: termination.status,
@@ -259,18 +267,30 @@ public actor XrayController {
                 if let termination = runtime.terminationBox.value {
                     SupervisedProcessControl.killRemainingGroupIfNeeded(runtime.processGroup)
                     let output = await runtime.outputTask.value
+                    let portStillInUse = await portProbe(host, port)
                     try ensureActiveOperation(id)
                     activeProcess = nil
+                    if portStillInUse {
+                        throw XrayControllerError.portInUse(host: host, port: port)
+                    }
                     throw XrayControllerError.exitedBeforeReady(
                         status: termination.status,
                         output: output.output.trimmingCharacters(in: .whitespacesAndNewlines)
                     )
                 }
 
-                await transition(to: .running(pid: runtime.pid), handler: onEvent)
-                try ensureActiveOperation(id)
-                watchForUnexpectedExit(of: runtime, operationID: id, handler: onEvent)
-                return
+                if let readinessDeadline {
+                    if clock.now >= readinessDeadline {
+                        await transition(to: .running(pid: runtime.pid), handler: onEvent)
+                        try ensureActiveOperation(id)
+                        watchForUnexpectedExit(of: runtime, operationID: id, handler: onEvent)
+                        return
+                    }
+                } else {
+                    readinessDeadline = clock.now.advanced(by: readinessStability)
+                }
+            } else {
+                readinessDeadline = nil
             }
 
             if clock.now >= deadline {

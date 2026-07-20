@@ -374,6 +374,34 @@ final class XrayControllerTests: XCTestCase {
         XCTAssertTrue(lines[0].contains("run -test -config"))
     }
 
+    func testRuntimeExitDuringPortReadinessIsReportedAsPortConflict() async throws {
+        let fixture = try XrayControllerFixture(behavior: "unexpected-exit")
+        defer { fixture.remove() }
+
+        let probe = SequencedPortProbe(values: [false, true, true, true])
+        let controller = XrayController(
+            executableURL: fixture.executableURL,
+            configURL: fixture.configURL,
+            workingDirectoryURL: fixture.directoryURL,
+            environment: ["XRAY_LOCATION_ASSET": fixture.assetDirectoryURL.path],
+            validationTimeout: .seconds(1),
+            startupTimeout: .seconds(2),
+            readinessStability: .seconds(1),
+            probeInterval: .milliseconds(20),
+            portProbe: { _, _ in await probe.next() }
+        )
+
+        do {
+            try await controller.start()
+            XCTFail("Expected a port conflict when the runtime exits during readiness")
+        } catch let error as XrayControllerError {
+            XCTAssertEqual(error, .portInUse(host: "127.0.0.1", port: 11_451))
+        }
+
+        let state = await controller.state
+        XCTAssertEqual(state, .stopped)
+    }
+
     func testDefaultPortProbeSupportsIPv4AndLocalhost() throws {
         let listener = try LoopbackTCPListener(family: AF_INET)
 
@@ -612,6 +640,21 @@ private actor XrayFixturePortProbe {
             return false
         }
         return Darwin.kill(firstPID, 0) == 0 || errno == EPERM
+    }
+}
+
+private actor SequencedPortProbe {
+    private var values: [Bool]
+
+    init(values: [Bool]) {
+        self.values = values
+    }
+
+    func next() -> Bool {
+        if values.count > 1 {
+            return values.removeFirst()
+        }
+        return values.first ?? false
     }
 }
 
