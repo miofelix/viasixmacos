@@ -7,8 +7,12 @@ extension NodesView {
             resultsHeader
 
             ZStack {
-                Table(model.state.results, selection: $candidateSelection) {
-                    TableColumn("IP") { result in
+                Table(
+                    sortedResults,
+                    selection: $candidateSelection,
+                    sortOrder: $resultSortOrder
+                ) {
+                    TableColumn("IP", sortUsing: NodeResultSortComparator(.ip)) { result in
                         HStack(spacing: 7) {
                             if result.ip == model.state.preferences.selectedIP {
                                 Image(systemName: "checkmark.circle.fill")
@@ -23,38 +27,38 @@ extension NodesView {
                     }
                     .width(min: 150, ideal: 220)
 
-                    TableColumn("已发") { result in
+                    TableColumn("已发", sortUsing: NodeResultSortComparator(.sent)) { result in
                         Text(metric(result.sent))
                             .monospacedDigit()
                     }
                     .width(min: 42, ideal: 52)
 
-                    TableColumn("已收") { result in
+                    TableColumn("已收", sortUsing: NodeResultSortComparator(.received)) { result in
                         Text(metric(result.received))
                             .monospacedDigit()
                     }
                     .width(min: 42, ideal: 52)
 
-                    TableColumn("丢包") { result in
+                    TableColumn("丢包", sortUsing: NodeResultSortComparator(.loss)) { result in
                         Text(metric(result.loss))
                             .monospacedDigit()
                     }
                     .width(min: 54, ideal: 66)
 
-                    TableColumn("延迟 (ms)") { result in
+                    TableColumn("延迟 (ms)", sortUsing: NodeResultSortComparator(.latency)) { result in
                         Text(metric(result.latency))
                             .monospacedDigit()
                     }
                     .width(min: 68, ideal: 82)
 
-                    TableColumn("速度 (MB/s)") { result in
+                    TableColumn("速度 (MB/s)", sortUsing: NodeResultSortComparator(.speed)) { result in
                         Text(metric(result.speed))
                             .fontWeight(.medium)
                             .monospacedDigit()
                     }
                     .width(min: 78, ideal: 94)
 
-                    TableColumn("节点地区") { result in
+                    TableColumn("节点地区", sortUsing: NodeResultSortComparator(.region)) { result in
                         Text(metric(result.region))
                             .padding(.trailing, VisualStyle.scrollbarClearance)
                     }
@@ -75,6 +79,10 @@ extension NodesView {
         }
         .padding(22)
         .cardStyle()
+    }
+
+    private var sortedResults: [SpeedTestResult] {
+        NodeResultSorting.sorted(model.state.results, using: resultSortOrder)
     }
 
     private var resultsHeader: some View {

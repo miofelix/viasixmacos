@@ -11,6 +11,7 @@ struct NodesView: View {
     @State var copiedCandidateIP: String?
     @State var reconnectConfirmationIP: String?
     @State var showsResetConfirmation = false
+    @State var resultSortOrder: [NodeResultSortComparator] = []
 
     var body: some View {
         ScrollView {

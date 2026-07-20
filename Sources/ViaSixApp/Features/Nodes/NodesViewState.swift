@@ -56,6 +56,9 @@ extension NodesView {
         if isCfstBusyElsewhere {
             return "连接页正在测试当前节点"
         }
+        if model.state.runtimePhase == .installing {
+            return "正在安装运行组件"
+        }
         return switch model.state.speedTest.phase {
         case .idle:
             model.state.results.isEmpty ? "准备就绪" : "上次结果可用"
