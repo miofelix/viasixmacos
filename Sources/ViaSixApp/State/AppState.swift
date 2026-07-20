@@ -152,13 +152,24 @@ struct AppNotice: Identifiable, Equatable, Sendable {
         case error
     }
 
+    enum Action: Equatable, Sendable {
+        case openSettings
+    }
+
     let id: UUID
     let message: String
     let style: Style
+    let action: Action?
 
-    init(id: UUID = UUID(), message: String, style: Style = .info) {
+    init(
+        id: UUID = UUID(),
+        message: String,
+        style: Style = .info,
+        action: Action? = nil
+    ) {
         self.id = id
         self.message = message
         self.style = style
+        self.action = action
     }
 }

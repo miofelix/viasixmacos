@@ -178,7 +178,11 @@ struct RootView: View {
     }
 
     private var sidebarProxyControlDisabled: Bool {
-        guard model.state.launchPhase == .ready, !sidebarProxyIsTransitioning else { return true }
+        guard
+            model.state.launchPhase == .ready,
+            model.state.runtimePhase != .installing,
+            !sidebarProxyIsTransitioning
+        else { return true }
         switch model.state.xrayPhase {
         case .running:
             return false
@@ -199,7 +203,10 @@ struct RootView: View {
     }
 
     private var sidebarActionHelp: String {
-        switch model.state.xrayPhase {
+        if model.state.runtimePhase == .installing {
+            return "运行组件安装中"
+        }
+        return switch model.state.xrayPhase {
         case .running, .validating, .starting:
             "停止本地代理"
         case .stopped, .failed, .stopping:
@@ -225,6 +232,13 @@ private struct NoticeView: View {
             Text(notice.message)
                 .font(.callout.weight(.medium))
                 .lineLimit(2)
+            if notice.action == .openSettings {
+                SettingsLink {
+                    Text("打开设置")
+                        .font(.callout.weight(.medium))
+                }
+                .buttonStyle(.borderless)
+            }
             Button(action: dismiss) {
                 Image(systemName: "xmark")
                     .font(.caption)

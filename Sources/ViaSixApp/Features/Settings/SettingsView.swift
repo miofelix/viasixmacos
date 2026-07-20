@@ -375,7 +375,7 @@ struct SettingsView: View {
                 .disabled(value.isEmpty || editingDisabled)
             }
             if editingDisabled {
-                Text("组件运行中，停止后才能修改路径。")
+                Text(componentPathEditingMessage(component))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -387,7 +387,8 @@ struct SettingsView: View {
     }
 
     private func componentPathEditingDisabled(_ component: RuntimeComponent) -> Bool {
-        switch component {
+        if model.state.runtimePhase == .installing { return true }
+        return switch component {
         case .cfst:
             model.isCfstBusy
         case .xray:
@@ -397,6 +398,16 @@ struct SettingsView: View {
             case .stopped, .failed:
                 false
             }
+        }
+    }
+
+    private func componentPathEditingMessage(_ component: RuntimeComponent) -> String {
+        if model.state.runtimePhase == .installing {
+            return "运行组件安装中，完成后才能修改路径。"
+        }
+        return switch component {
+        case .cfst: "测速进行中，停止后才能修改路径。"
+        case .xray: "本地代理运行中，停止后才能修改路径。"
         }
     }
 

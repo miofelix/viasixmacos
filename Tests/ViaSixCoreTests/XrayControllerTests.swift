@@ -100,6 +100,46 @@ final class XrayControllerTests: XCTestCase {
         XCTAssertTrue(invocations.contains("run -test -config"))
     }
 
+    func testValidationTimeoutKillsOwnedProcessGroupAndReturnsDedicatedError() async throws {
+        let fixture = try XrayControllerFixture(behavior: "validation-timeout")
+        defer { fixture.remove() }
+
+        let controller = makeController(
+            fixture: fixture,
+            validationTimeout: .milliseconds(500),
+            stopTimeout: .milliseconds(50)
+        ) { _, _ in
+            XCTFail("Port must not be probed after validation times out")
+            return false
+        }
+
+        let startTask = Task {
+            try await controller.start()
+        }
+        try await waitUntilFileExists(fixture.processIDsURL)
+        let processIDs = try fixture.runtimeProcessIDs()
+        XCTAssertEqual(processIDs.count, 2)
+
+        do {
+            try await startTask.value
+            XCTFail("Expected validation timeout")
+        } catch let error as XrayControllerError {
+            XCTAssertEqual(error, .validationTimedOut)
+            XCTAssertEqual(error.localizedDescription, "Xray 配置校验超时，已停止校验进程。")
+        }
+
+        let stoppedState = await controller.state
+        XCTAssertEqual(stoppedState, .stopped)
+        for processID in processIDs {
+            try await waitUntilProcessIsGone(processID)
+        }
+        let invocations = try String(contentsOf: fixture.invocationsURL, encoding: .utf8)
+            .components(separatedBy: .newlines)
+            .filter { !$0.isEmpty }
+        XCTAssertEqual(invocations.count, 1)
+        XCTAssertTrue(invocations[0].contains("run -test -config"))
+    }
+
     func testUnexpectedRuntimeExitIsReportedAndClearsRunningState() async throws {
         let fixture = try XrayControllerFixture(behavior: "unexpected-exit")
         defer { fixture.remove() }
@@ -279,6 +319,7 @@ final class XrayControllerTests: XCTestCase {
 
     private func makeController(
         fixture: XrayControllerFixture,
+        validationTimeout: Duration = .seconds(1),
         stopTimeout: Duration = .milliseconds(250),
         portProbe: @escaping XrayPortProbe
     ) -> XrayController {
@@ -287,6 +328,7 @@ final class XrayControllerTests: XCTestCase {
             configURL: fixture.configURL,
             workingDirectoryURL: fixture.directoryURL,
             environment: ["XRAY_LOCATION_ASSET": fixture.assetDirectoryURL.path],
+            validationTimeout: validationTimeout,
             startupTimeout: .seconds(2),
             probeInterval: .milliseconds(10),
             stopTimeout: stopTimeout,
@@ -538,6 +580,14 @@ private final class XrayControllerFixture: @unchecked Sendable {
             printf 'invalid stdout\n'
             printf 'invalid stderr\n' >&2
             exit 9
+          fi
+          if [ "$behavior" = "validation-timeout" ]; then
+            trap '' TERM
+            (trap '' TERM; sleep 30) &
+            child=$!
+            printf '%s %s\n' "$$" "$child" > pids.txt
+            wait "$child"
+            exit 0
           fi
           printf 'validation stdout\n'
           printf 'validation stderr\n' >&2

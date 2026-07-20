@@ -189,6 +189,52 @@ final class AppModelTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testXrayStartRejectsDefaultConnectionTemplateWithSettingsRecovery() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let store = PreferencesStore(fileURL: paths.preferences)
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+
+        let executableURL = paths.root.appendingPathComponent("xray-test")
+        let invocationMarkerURL = paths.root.appendingPathComponent("xray-invoked.txt")
+        try #"""
+        #!/bin/sh
+        touch xray-invoked.txt
+        exit 0
+        """#.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executableURL.path
+        )
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                selectedIP: "2606::6",
+                xrayPath: executableURL.path
+            ))
+
+        let model = makeModel(paths: paths, store: store, bootstrapper: bootstrapper)
+        model.start()
+        try await waitUntilReady(model)
+        XCTAssertTrue(model.hasXrayExecutable)
+
+        model.startXray()
+        try await waitUntil {
+            if case .failed = model.state.xrayPhase { return true }
+            return false
+        }
+
+        guard case .failed(let message) = model.state.xrayPhase else {
+            return XCTFail("Expected the placeholder connection to be rejected")
+        }
+        XCTAssertEqual(message, ConfigTemplateError.connectionNotConfigured.localizedDescription)
+        XCTAssertEqual(model.state.notice?.action, .openSettings)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: invocationMarkerURL.path))
+        XCTAssertTrue(model.state.logs.contains { $0.message == message })
+        await model.shutdown()
+    }
+
     func testSaveXrayTemplateWaitsForSuccessfulWrite() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }

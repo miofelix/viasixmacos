@@ -11,6 +11,7 @@ public enum CfstRunnerError: Error, Equatable, LocalizedError, Sendable {
     case launchFailed(path: String, reason: String)
     case outputReadFailed(String)
     case userCancelled
+    case activityTimedOut
     case nonZeroExit(status: Int32, output: String)
     case resultFileMissing(String)
     case resultReadFailed(path: String, reason: String)
@@ -32,6 +33,8 @@ public enum CfstRunnerError: Error, Equatable, LocalizedError, Sendable {
             "读取 CFST 输出失败：\(reason)"
         case .userCancelled:
             "测速已取消"
+        case .activityTimedOut:
+            "CFST 长时间没有输出进度，已停止测速。"
         case .nonZeroExit(let status, let output):
             output.isEmpty
                 ? "CFST 异常退出（状态码 \(status)）"
@@ -64,12 +67,14 @@ public actor CfstRunner {
         var userCancelled = false
     }
 
+    private let activityTimeoutOverride: Duration?
     private var activeRun: ActiveRun?
 
     public init(
         executableURL: URL,
         resultURL: URL? = nil,
-        workingDirectoryURL: URL? = nil
+        workingDirectoryURL: URL? = nil,
+        activityTimeout: Duration? = nil
     ) {
         let executableURL = executableURL.standardizedFileURL
         self.executableURL = executableURL
@@ -80,6 +85,7 @@ public actor CfstRunner {
         self.workingDirectoryURL =
             (workingDirectoryURL ?? executableURL.deletingLastPathComponent())
             .standardizedFileURL
+        self.activityTimeoutOverride = activityTimeout
     }
 
     public var isRunning: Bool { activeRun != nil }
@@ -100,6 +106,8 @@ public actor CfstRunner {
         defer { try? FileManager.default.removeItem(at: temporaryResultURL) }
 
         let arguments = try parameters.commandLineArguments(resultURL: temporaryResultURL)
+        let activityTimeout =
+            activityTimeoutOverride ?? Self.defaultActivityTimeout(for: parameters)
         try validateExecutable()
         guard !Task.isCancelled else { throw CfstRunnerError.userCancelled }
 
@@ -125,17 +133,41 @@ public actor CfstRunner {
         )
         defer { activeRun = nil }
 
+        let activity = CfstActivityTracker()
+        let terminationBox = CfstTerminationBox()
         let outputTask = Task.detached(priority: nil) {
-            try await Self.readOutput(from: process.output, onEvent: onEvent)
+            try await Self.readOutput(
+                from: process.output,
+                onEvent: onEvent,
+                onActivity: { await activity.mark() }
+            )
         }
         let waitTask = Task.detached(priority: nil) {
             let termination = SupervisedProcessControl.waitForProcess(process.pid)
             process.lifetime.close()
+            terminationBox.store(termination)
             return termination
         }
 
         return try await withTaskCancellationHandler {
-            let termination = await waitTask.value
+            let completion = try await waitForCompletion(
+                of: process,
+                waitTask: waitTask,
+                terminationBox: terminationBox,
+                activity: activity,
+                activityTimeout: activityTimeout
+            )
+
+            let termination: SupervisedProcessTermination
+            let timedOut: Bool
+            switch completion {
+            case .terminated(let value):
+                termination = value
+                timedOut = false
+            case .timedOut(let value):
+                termination = value
+                timedOut = true
+            }
             SupervisedProcessControl.killRemainingGroupIfNeeded(process.processGroup)
             let outputResult: Result<String, Error>
             do {
@@ -147,6 +179,10 @@ public actor CfstRunner {
             let wasCancelled = activeRun?.userCancelled == true || Task.isCancelled
             if wasCancelled {
                 throw CfstRunnerError.userCancelled
+            }
+
+            if timedOut {
+                throw CfstRunnerError.activityTimedOut
             }
 
             let output: String
@@ -190,6 +226,46 @@ public actor CfstRunner {
         // the whole group, preventing helper subprocesses from being orphaned.
         run.lifetime.close()
         _ = Darwin.kill(-run.processGroup, SIGKILL)
+    }
+
+    private func waitForCompletion(
+        of process: SupervisedProcess,
+        waitTask: Task<SupervisedProcessTermination, Never>,
+        terminationBox: CfstTerminationBox,
+        activity: CfstActivityTracker,
+        activityTimeout: Duration
+    ) async throws -> CfstRunOutcome {
+        while true {
+            if let termination = terminationBox.value {
+                return .terminated(termination)
+            }
+            if await activity.isInactive(for: activityTimeout) {
+                if let termination = terminationBox.value {
+                    return .terminated(termination)
+                }
+                process.lifetime.close()
+                _ = Darwin.kill(-process.processGroup, SIGKILL)
+                return .timedOut(await waitTask.value)
+            }
+
+            do {
+                try await Task.sleep(for: .milliseconds(50))
+            } catch {
+                _ = await waitTask.value
+                throw CfstRunnerError.userCancelled
+            }
+        }
+    }
+
+    nonisolated static func defaultActivityTimeout(for parameters: SpeedTestParameters) -> Duration {
+        let longestExpectedDownload =
+            parameters.disableDownload || parameters.downloadCount == 0
+            ? 0
+            : parameters.downloadTime
+        // A single download can legitimately be silent for its configured
+        // duration. Keep a five-minute floor for the scan and a two-minute
+        // cushion around longer downloads.
+        return .seconds(max(300, longestExpectedDownload + 120))
     }
 
     private func validateExecutable() throws {
@@ -247,7 +323,8 @@ public actor CfstRunner {
 
     private nonisolated static func readOutput(
         from output: SupervisedProcessOutput,
-        onEvent: CfstEventHandler
+        onEvent: CfstEventHandler,
+        onActivity: @escaping @Sendable () async -> Void
     ) async throws -> String {
         defer { Darwin.close(output.fileDescriptor) }
 
@@ -261,6 +338,7 @@ public actor CfstRunner {
                 Darwin.read(output.fileDescriptor, bytes.baseAddress, bytes.count)
             }
             if byteCount > 0 {
+                await onActivity()
                 let data = Data(buffer.prefix(byteCount))
                 if diagnosticOutput.count < diagnosticLimit {
                     diagnosticOutput.append(data.prefix(diagnosticLimit - diagnosticOutput.count))
@@ -284,5 +362,44 @@ public actor CfstRunner {
         }
 
         return String(decoding: diagnosticOutput, as: UTF8.self)
+    }
+}
+
+private enum CfstRunOutcome: Sendable {
+    case terminated(SupervisedProcessTermination)
+    case timedOut(SupervisedProcessTermination)
+}
+
+private actor CfstActivityTracker {
+    private let clock = ContinuousClock()
+    private var lastActivity: ContinuousClock.Instant
+
+    init() {
+        lastActivity = clock.now
+    }
+
+    func mark() {
+        lastActivity = clock.now
+    }
+
+    func isInactive(for timeout: Duration) -> Bool {
+        clock.now >= lastActivity.advanced(by: timeout)
+    }
+}
+
+private final class CfstTerminationBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: SupervisedProcessTermination?
+
+    var value: SupervisedProcessTermination? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedValue
+    }
+
+    func store(_ value: SupervisedProcessTermination) {
+        lock.lock()
+        storedValue = value
+        lock.unlock()
     }
 }

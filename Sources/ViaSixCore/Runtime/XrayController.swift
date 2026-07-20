@@ -28,6 +28,7 @@ public enum XrayControllerError: Error, Equatable, LocalizedError, Sendable {
     case validationFailed(status: Int32, output: String)
     case outputReadFailed(String)
     case portInUse(host: String, port: UInt16)
+    case validationTimedOut
     case exitedBeforeReady(status: Int32, output: String)
     case startupTimedOut(host: String, port: UInt16)
     case cancelled
@@ -54,6 +55,8 @@ public enum XrayControllerError: Error, Equatable, LocalizedError, Sendable {
             "读取 Xray 输出失败：\(reason)"
         case .portInUse(let host, let port):
             "本地代理端口已被占用：\(host):\(port)"
+        case .validationTimedOut:
+            "Xray 配置校验超时，已停止校验进程。"
         case .exitedBeforeReady(let status, let output):
             output.isEmpty
                 ? "Xray 在代理端口就绪前退出（状态码 \(status)）。"
@@ -87,6 +90,7 @@ public actor XrayController {
     }
 
     private let environment: [String: String]
+    private let validationTimeout: Duration
     private let startupTimeout: Duration
     private let probeInterval: Duration
     private let stopTimeout: Duration
@@ -105,6 +109,7 @@ public actor XrayController {
         environment: [String: String] = [:],
         host: String = "127.0.0.1",
         port: UInt16 = 11_451,
+        validationTimeout: Duration = .seconds(3),
         startupTimeout: Duration = .seconds(5),
         probeInterval: Duration = .milliseconds(50),
         stopTimeout: Duration = .seconds(2),
@@ -119,6 +124,7 @@ public actor XrayController {
         self.environment = environment
         self.host = host
         self.port = port
+        self.validationTimeout = validationTimeout
         self.startupTimeout = startupTimeout
         self.probeInterval = probeInterval
         self.stopTimeout = stopTimeout
@@ -186,7 +192,7 @@ public actor XrayController {
         )
         activeProcess = validation
 
-        let validationTermination = await validation.waitTask.value
+        let validationTermination = try await waitForValidationTermination(validation)
         SupervisedProcessControl.killRemainingGroupIfNeeded(validation.processGroup)
         let validationOutput = await validation.outputTask.value
         try ensureActiveOperation(id)
@@ -261,6 +267,32 @@ public actor XrayController {
 
             do {
                 try await Task.sleep(for: probeInterval)
+            } catch {
+                throw XrayControllerError.cancelled
+            }
+        }
+    }
+
+    /// Waits for `xray run -test` to finish without allowing a broken or
+    /// third-party executable to hold the launch state forever. The timeout
+    /// is classified deterministically; the caller's normal failure cleanup
+    /// then terminates and reaps the complete supervised process group.
+    private func waitForValidationTermination(
+        _ process: ManagedXrayProcess
+    ) async throws -> SupervisedProcessTermination {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: validationTimeout)
+
+        while true {
+            if let termination = process.terminationBox.value {
+                return termination
+            }
+            if clock.now >= deadline {
+                throw XrayControllerError.validationTimedOut
+            }
+
+            do {
+                try await Task.sleep(for: .milliseconds(20))
             } catch {
                 throw XrayControllerError.cancelled
             }

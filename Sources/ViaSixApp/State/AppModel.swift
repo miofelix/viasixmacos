@@ -392,6 +392,10 @@ final class AppModel {
 
     func setCustomExecutable(_ component: RuntimeComponent, url: URL?) {
         guard !isShuttingDown else { return }
+        guard runtimeTask == nil else {
+            showNotice("运行组件安装中，完成后再修改可执行文件路径", style: .error)
+            return
+        }
         switch component {
         case .cfst where activeRunner != nil:
             showNotice("测速进行中，完成或停止后再修改 CFST 路径", style: .error)
@@ -414,7 +418,12 @@ final class AppModel {
     }
 
     func startSpeedTest() {
-        guard !isShuttingDown, activeRunner == nil, state.templateOperationPhase == .idle else { return }
+        guard
+            !isShuttingDown,
+            runtimeTask == nil,
+            activeRunner == nil,
+            state.templateOperationPhase == .idle
+        else { return }
         do {
             _ = try state.preferences.parameters.validated()
         } catch {
@@ -478,7 +487,12 @@ final class AppModel {
     }
 
     func startCurrentConfigurationTest() {
-        guard !isShuttingDown, activeRunner == nil, state.templateOperationPhase == .idle else { return }
+        guard
+            !isShuttingDown,
+            runtimeTask == nil,
+            activeRunner == nil,
+            state.templateOperationPhase == .idle
+        else { return }
         let selectedIP = state.preferences.selectedIP
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !selectedIP.isEmpty else {
@@ -605,6 +619,7 @@ final class AppModel {
     func startXray() {
         guard
             !isShuttingDown,
+            runtimeTask == nil,
             state.templateOperationPhase == .idle,
             activeXray == nil,
             xrayStartTask == nil,
@@ -675,7 +690,13 @@ final class AppModel {
             } catch {
                 state.xrayPhase = .failed(error.localizedDescription)
                 appendLog(source: .xray, level: .error, message: error.localizedDescription)
-                showNotice("本地代理启动失败：\(error.localizedDescription)", style: .error)
+                let recoveryAction: AppNotice.Action? =
+                    error is ConfigTemplateError ? .openSettings : nil
+                showNotice(
+                    "本地代理启动失败：\(error.localizedDescription)",
+                    style: .error,
+                    action: recoveryAction
+                )
                 activeXray = nil
                 activeXrayID = nil
             }
@@ -714,6 +735,7 @@ final class AppModel {
 
     func restartXray() {
         guard !isShuttingDown,
+            runtimeTask == nil,
             state.templateOperationPhase == .idle,
             state.isXrayRunning,
             activeXray != nil,
@@ -912,7 +934,11 @@ final class AppModel {
                 showNotice(preferencesRecoveryWarning)
             }
             if let configurationWarning {
-                showNotice("代理配置需要重新导入或修复：\(configurationWarning)", style: .error)
+                showNotice(
+                    "代理配置需要重新导入或修复：\(configurationWarning)",
+                    style: .error,
+                    action: .openSettings
+                )
             }
         } catch {
             guard !Task.isCancelled, !isShuttingDown else { return }
@@ -1197,11 +1223,15 @@ final class AppModel {
         }
     }
 
-    private func showNotice(_ message: String, style: AppNotice.Style = .info) {
+    private func showNotice(
+        _ message: String,
+        style: AppNotice.Style = .info,
+        action: AppNotice.Action? = nil
+    ) {
         guard !isShuttingDown else { return }
         noticeTask?.cancel()
         noticeTask = nil
-        let notice = AppNotice(message: message, style: style)
+        let notice = AppNotice(message: message, style: style, action: action)
         state.notice = notice
 
         // Errors stay visible until dismissed so failures from the menu bar or

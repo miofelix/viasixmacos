@@ -163,6 +163,91 @@ final class CfstRunnerTests: XCTestCase {
         XCTAssertFalse(isRunning)
     }
 
+    func testActivityTimeoutKillsProcessGroupAndPreservesLastResult() async throws {
+        let fixture = try CfstRunnerFixture(
+            script: #"""
+                #!/bin/sh
+                output=""
+                while [ "$#" -gt 0 ]; do
+                  if [ "$1" = "-o" ]; then output="$2"; shift 2; else shift; fi
+                done
+                printf '%s\n' "$output" > output-path.txt
+                sleep 30 &
+                child=$!
+                printf '%s %s\n' "$$" "$child" > pids.txt
+                wait "$child"
+                """#)
+        defer { fixture.remove() }
+
+        try fixture.writeCanonicalResult(ip: "old-ip")
+
+        let runner = CfstRunner(
+            executableURL: fixture.executableURL,
+            activityTimeout: .milliseconds(750)
+        )
+        let runTask = Task {
+            try await runner.run(parameters: .init(ipRange: "2606:4700::/32"))
+        }
+
+        try await waitUntilFileExists(fixture.processIDsURL)
+        let processIDs = try String(contentsOf: fixture.processIDsURL, encoding: .utf8)
+            .split(whereSeparator: \.isWhitespace)
+            .compactMap { pid_t($0) }
+        XCTAssertEqual(processIDs.count, 2)
+
+        do {
+            _ = try await runTask.value
+            XCTFail("Expected activity timeout")
+        } catch let error as CfstRunnerError {
+            XCTAssertEqual(error, .activityTimedOut)
+            XCTAssertEqual(error.localizedDescription, "CFST 长时间没有输出进度，已停止测速。")
+        }
+
+        for processID in processIDs {
+            try await waitUntilProcessIsGone(processID)
+        }
+        XCTAssertEqual(try fixture.canonicalResultIPs(), ["old-ip"])
+        try fixture.assertTemporaryResultWasRemoved()
+        let isRunning = await runner.isRunning
+        XCTAssertFalse(isRunning)
+    }
+
+    func testPeriodicOutputResetsActivityTimeout() async throws {
+        let fixture = try CfstRunnerFixture(
+            script: #"""
+                #!/bin/sh
+                output=""
+                while [ "$#" -gt 0 ]; do
+                  if [ "$1" = "-o" ]; then output="$2"; shift 2; else shift; fi
+                done
+                printf 'phase one\n'
+                sleep 0.35
+                printf 'phase two\n'
+                sleep 0.35
+                printf 'IP,Sent,Recv,Loss,Latency,Speed,Region\n2606:4700::2,4,4,0,9,20,HKG\n' > "$output"
+                """#)
+        defer { fixture.remove() }
+
+        let runner = CfstRunner(
+            executableURL: fixture.executableURL,
+            activityTimeout: .milliseconds(500)
+        )
+        let results = try await runner.run(parameters: .init(ipRange: "2606:4700::/32"))
+
+        XCTAssertEqual(results.map(\.ip), ["2606:4700::2"])
+    }
+
+    func testDefaultActivityTimeoutAllowsConfiguredLongDownloads() {
+        var parameters = SpeedTestParameters(ipRange: "2606:4700::/32")
+        XCTAssertEqual(CfstRunner.defaultActivityTimeout(for: parameters), .seconds(300))
+
+        parameters.downloadTime = 3_600
+        XCTAssertEqual(CfstRunner.defaultActivityTimeout(for: parameters), .seconds(3_720))
+
+        parameters.disableDownload = true
+        XCTAssertEqual(CfstRunner.defaultActivityTimeout(for: parameters), .seconds(300))
+    }
+
     func testClosingParentLifetimePipeStopsCFSTGroupAndClosesOutput() async throws {
         let fixture = try CfstRunnerFixture(
             script: #"""

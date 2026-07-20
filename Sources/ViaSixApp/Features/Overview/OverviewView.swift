@@ -598,6 +598,9 @@ struct OverviewView: View {
     }
 
     private var proxyReadinessHint: String {
+        if model.state.runtimePhase == .installing {
+            return "运行组件安装中，完成后即可启动本地代理。"
+        }
         if selectedIP.isEmpty {
             return "先选择一个节点，才能启动本地代理。"
         }
@@ -676,7 +679,10 @@ struct OverviewView: View {
     private var configurationTestButtonDisabled: Bool {
         if case .stopping = model.state.configurationTest.phase { return true }
         if isConfigurationTestRunning { return false }
-        return selectedIP.isEmpty || !model.hasCfstExecutable || model.isCfstBusy
+        return model.state.runtimePhase == .installing
+            || selectedIP.isEmpty
+            || !model.hasCfstExecutable
+            || model.isCfstBusy
     }
 
     private var runtimeStatusTitle: String {
