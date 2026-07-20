@@ -150,6 +150,12 @@ final class AppDocumentViewerTests: XCTestCase {
             ),
             "Xray-core · MPL-2.0"
         )
+        XCTAssertEqual(
+            DocumentDisplayTitle.resolve(
+                URL(fileURLWithPath: "/tmp/Yams-MIT.txt")
+            ),
+            "Yams · MIT"
+        )
     }
 
     func testPlainTextDocumentsDoNotUseMarkdownBlockParsing() {

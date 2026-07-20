@@ -1,6 +1,18 @@
 # 第三方声明
 
-ViaSix 可以下载并执行以下独立命令行程序。第三方二进制不存放在本源码仓库中，并继续受各自许可证约束。自动安装会选择上游最新正式版本；下列版本是源码审计基线，其许可证原文会随应用包提供离线副本，可通过下方各组件的语义化链接在 ViaSix 内查看。实际安装版本及对应源码以相应 GitHub Release 为准。
+ViaSix 使用以下第三方库，并可以下载、执行独立命令行程序。它们继续受各自许可证约束。下列固定版本或源码审计基线的许可证原文会随应用包提供离线副本，可通过下方各组件的语义化链接在 ViaSix 内查看。实际安装的外部组件版本及对应源码以相应 GitHub Release 为准。
+
+## Yams
+
+- 项目：jpsim/Yams
+- 固定版本：6.2.2
+- 源码：https://github.com/jpsim/Yams/tree/6.2.2
+- 固定提交：`a27b21e0c81c5bf42049b897a62aaf387e80f279`
+- 许可证：MIT License
+- 上游许可证：https://github.com/jpsim/Yams/blob/6.2.2/LICENSE
+- 离线原文：[Yams · MIT](ThirdPartyLicenses/Yams-MIT.txt)
+
+Yams 作为 Swift Package 固定到上述版本，用于读取和生成 Mihomo 原生 YAML 配置。
 
 ## CloudflareSpeedTest
 

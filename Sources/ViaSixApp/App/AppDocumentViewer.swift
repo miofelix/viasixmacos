@@ -304,6 +304,7 @@ enum DocumentDisplayTitle {
         case "ThirdPartyLicenses": return "离线许可证原文"
         case "CloudflareSpeedTest-GPL-3.0": return "CloudflareSpeedTest · GPL-3.0"
         case "Xray-core-MPL-2.0": return "Xray-core · MPL-2.0"
+        case "Yams-MIT": return "Yams · MIT"
         default: return name
         }
     }

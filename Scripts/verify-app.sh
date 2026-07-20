@@ -93,7 +93,8 @@ cmp -s "$project_root/LICENSE" "$contents_dir/Resources/LICENSE" \
 
 for license_specification in \
     "CloudflareSpeedTest-GPL-3.0.txt 3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986" \
-    "Xray-core-MPL-2.0.txt 1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+    "Xray-core-MPL-2.0.txt 1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5" \
+    "Yams-MIT.txt 0354b0ea403d2e78059c5ae0510a2cfae9f8eb306fcef094ac9fff5b47e20bed"
 do
     license_name=${license_specification%% *}
     expected_digest=${license_specification#* }

@@ -60,6 +60,7 @@ lint-licenses:
 	@grep -Fqx "Copyright (c) 2026 ViaSix contributors" LICENSE
 	@test "$$(shasum -a 256 ThirdPartyLicenses/CloudflareSpeedTest-GPL-3.0.txt | awk '{print $$1}')" = "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
 	@test "$$(shasum -a 256 ThirdPartyLicenses/Xray-core-MPL-2.0.txt | awk '{print $$1}')" = "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+	@test "$$(shasum -a 256 ThirdPartyLicenses/Yams-MIT.txt | awk '{print $$1}')" = "0354b0ea403d2e78059c5ae0510a2cfae9f8eb306fcef094ac9fff5b47e20bed"
 
 lint: format-check lint-scripts lint-metadata lint-docs lint-licenses
 

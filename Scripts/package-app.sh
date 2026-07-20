@@ -68,6 +68,9 @@ cp \
 cp \
     "$project_root/ThirdPartyLicenses/Xray-core-MPL-2.0.txt" \
     "$contents_dir/Resources/ThirdPartyLicenses/Xray-core-MPL-2.0.txt"
+cp \
+    "$project_root/ThirdPartyLicenses/Yams-MIT.txt" \
+    "$contents_dir/Resources/ThirdPartyLicenses/Yams-MIT.txt"
 "$project_root/Scripts/generate-icon.sh" \
     "$project_root/Packaging/AppIcon.svg" \
     "$contents_dir/Resources/AppIcon.icns"
