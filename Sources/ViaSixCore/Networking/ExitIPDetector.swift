@@ -299,48 +299,70 @@ public enum ExitIPGeolocationResponseParser {
             throw ExitIPDetectionError.invalidResponse
         }
 
-        guard let ip = normalizedIPAddress(expectedIP), addressesMatch(response.ip, ip) else {
+        guard response.success != false,
+            let ip = normalizedIPAddress(expectedIP),
+            addressesMatch(response.ip, ip)
+        else {
             throw ExitIPDetectionError.invalidResponse
         }
 
         let location = joinedUniqueValues(
-            [response.country, response.region, response.city],
+            [
+                response.country,
+                response.region,
+                response.city,
+                response.postalCode.map { "邮编 \($0)" },
+            ],
             separator: " · "
         )
         let provider = firstNonEmptyValue([
+            response.connection?.isp,
+            response.connection?.organization,
             response.organization,
             response.isp,
             response.asnOrganization,
         ])
+        let asn = response.asn ?? response.connection?.asn
         let details = joinedUniqueValues(
-            [provider, response.asn.map { $0.hasPrefix("AS") ? $0 : "AS\($0)" }, response.timezone],
+            [provider, asn.map { $0.hasPrefix("AS") ? $0 : "AS\($0)" }, response.timezone],
             separator: " · "
         )
         return ExitIPInfo(ip: ip, location: location, details: details)
     }
 
     private struct APIResponse: Decodable {
+        let success: Bool?
         let ip: String
         let country: String?
         let region: String?
         let city: String?
+        let postalCode: String?
         let organization: String?
         let isp: String?
         let asnOrganization: String?
         let asn: String?
         let timezone: String?
+        let connection: Connection?
 
         private enum CodingKeys: String, CodingKey {
-            case ip, country, region, city, organization, isp, asn, timezone
+            case success, ip, country, region, city, postal
+            case postalCode = "postal_code"
+            case organization, isp, asn, timezone, connection
             case asnOrganization = "asn_organization"
         }
 
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
+            self.success = try values.decodeIfPresent(Bool.self, forKey: .success)
             self.ip = try values.decode(String.self, forKey: .ip)
             self.country = try values.decodeIfPresent(String.self, forKey: .country)
             self.region = try values.decodeIfPresent(String.self, forKey: .region)
             self.city = try values.decodeIfPresent(String.self, forKey: .city)
+            self.postalCode =
+                (try? values.decode(String.self, forKey: .postal))
+                ?? (try? values.decode(String.self, forKey: .postalCode))
+                ?? Self.decodeIntegerString(values, forKey: .postal)
+                ?? Self.decodeIntegerString(values, forKey: .postalCode)
             self.organization = try values.decodeIfPresent(String.self, forKey: .organization)
             self.isp = try values.decodeIfPresent(String.self, forKey: .isp)
             self.asnOrganization = try values.decodeIfPresent(
@@ -352,7 +374,52 @@ public enum ExitIPGeolocationResponseParser {
             } else {
                 self.asn = try values.decodeIfPresent(String.self, forKey: .asn)
             }
-            self.timezone = try values.decodeIfPresent(String.self, forKey: .timezone)
+            self.timezone = try Self.decodeTimezone(values)
+            self.connection = try values.decodeIfPresent(Connection.self, forKey: .connection)
+        }
+
+        private static func decodeIntegerString(
+            _ values: KeyedDecodingContainer<CodingKeys>,
+            forKey key: CodingKeys
+        ) -> String? {
+            guard let value = try? values.decode(Int.self, forKey: key) else { return nil }
+            return String(value)
+        }
+
+        private static func decodeTimezone(
+            _ values: KeyedDecodingContainer<CodingKeys>
+        ) throws -> String? {
+            if let value = try? values.decode(String.self, forKey: .timezone) {
+                return value
+            }
+            return try values.decodeIfPresent(Timezone.self, forKey: .timezone)?.id
+        }
+
+        private struct Timezone: Decodable {
+            let id: String?
+        }
+
+        struct Connection: Decodable {
+            let organization: String?
+            let isp: String?
+            let asn: String?
+
+            private enum CodingKeys: String, CodingKey {
+                case organization = "org"
+                case isp
+                case asn
+            }
+
+            init(from decoder: Decoder) throws {
+                let values = try decoder.container(keyedBy: CodingKeys.self)
+                self.organization = try values.decodeIfPresent(String.self, forKey: .organization)
+                self.isp = try values.decodeIfPresent(String.self, forKey: .isp)
+                if let value = try? values.decode(Int.self, forKey: .asn) {
+                    self.asn = String(value)
+                } else {
+                    self.asn = try values.decodeIfPresent(String.self, forKey: .asn)
+                }
+            }
         }
     }
 }

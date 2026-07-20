@@ -43,6 +43,17 @@ final class ExitIPResponseParserTests: XCTestCase {
         )
     }
 
+    func testDefaultGeolocationEndpointAcceptsIPv4AndIPv6Literals() {
+        XCTAssertEqual(
+            AppMetadata.exitIPGeolocationURL(for: "1.1.1.1")?.absoluteString,
+            "https://ipwho.is/1.1.1.1?lang=zh-CN"
+        )
+        XCTAssertEqual(
+            AppMetadata.exitIPGeolocationURL(for: "2606:4700:4700::1111")?.absoluteString,
+            "https://ipwho.is/2606:4700:4700::1111?lang=zh-CN"
+        )
+    }
+
     func testRejectsWhitespaceOnlyResponse() {
         XCTAssertThrowsError(try ExitIPResponseParser.parse(Data(" \n".utf8)))
     }
@@ -74,6 +85,34 @@ final class ExitIPResponseParserTests: XCTestCase {
                 details: "China Telecom · AS4134 · Asia/Shanghai"
             )
         )
+    }
+
+    func testParsesDetailedIPWhoGeolocationResponse() throws {
+        let data = Data(
+            #"{"success":true,"ip":"1.1.1.1","country":"澳大利亚","region":"昆士兰州","city":"布里斯班","postal":"4000","timezone":{"id":"Australia/Brisbane","utc":"+10:00"},"connection":{"org":"Apnic Research And Development","isp":"Cloudflare, Inc.","asn":13335}}"#
+                .utf8
+        )
+
+        XCTAssertEqual(
+            try ExitIPGeolocationResponseParser.parse(data, expectedIP: "1.1.1.1"),
+            ExitIPInfo(
+                ip: "1.1.1.1",
+                location: "澳大利亚 · 昆士兰州 · 布里斯班 · 邮编 4000",
+                details: "Cloudflare, Inc. · AS13335 · Australia/Brisbane"
+            )
+        )
+    }
+
+    func testRejectsUnsuccessfulIPWhoGeolocationResponse() {
+        let data = Data(
+            #"{"success":false,"message":"Rate limit exceeded","ip":"1.1.1.1"}"#.utf8
+        )
+
+        XCTAssertThrowsError(
+            try ExitIPGeolocationResponseParser.parse(data, expectedIP: "1.1.1.1")
+        ) { error in
+            XCTAssertEqual(error as? ExitIPDetectionError, .invalidResponse)
+        }
     }
 
     func testGeolocationParserAcceptsMissingOptionalFields() throws {
