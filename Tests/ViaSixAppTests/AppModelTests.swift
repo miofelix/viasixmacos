@@ -1171,7 +1171,7 @@ final class AppModelTests: XCTestCase {
         )
         XCTAssertEqual(model.state.proxyEndpoint, ProxyEndpoint(host: "127.0.0.2", port: 18_081))
         XCTAssertEqual(model.state.templateOperationPhase, .idle)
-        XCTAssertTrue(model.state.logs.contains { $0.message == "已保存代理连接模板" })
+        XCTAssertTrue(model.state.logs.contains { $0.message == "代理配置已保存" })
         await model.shutdown()
     }
 
@@ -1193,7 +1193,7 @@ final class AppModelTests: XCTestCase {
             )
             XCTFail("Expected the externally changed profile to be preserved")
         } catch {
-            XCTAssertEqual(error as? AppModelError, .templateChangedExternally)
+            XCTAssertEqual(error as? AppModelError, .profileChangedExternally)
         }
 
         XCTAssertEqual(try Data(contentsOf: paths.profileConfig), externalProfile)

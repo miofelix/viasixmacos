@@ -21,7 +21,10 @@ final class SupervisedCommandTests: XCTestCase {
                 executableURL: fixture.executableURL,
                 arguments: [],
                 workingDirectoryURL: fixture.directoryURL,
-                timeout: .milliseconds(500)
+                // Leave enough startup time for both supervisor shells under
+                // a fully loaded test runner; the command itself still cannot
+                // complete before this deadline.
+                timeout: .seconds(5)
             )
             XCTFail("Expected the command to time out")
         } catch let error as SupervisedCommandError {

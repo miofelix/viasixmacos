@@ -387,10 +387,92 @@ final class MihomoControllerTests: XCTestCase {
         await controller.stop()
     }
 
+    func testReleasingControllerKillsItsOwnedRealTCPListener() async throws {
+        let port = try unusedLoopbackPort()
+        let fixture = try MihomoControllerFixture(behavior: "real-listener", runtimePort: port)
+        defer { fixture.remove() }
+        var controller: MihomoController? = makeController(
+            fixture: fixture,
+            port: port,
+            stopTimeout: .milliseconds(100)
+        ) { host, port in
+            MihomoController.probeTCPPort(host: host, port: port)
+        }
+
+        try await controller?.start()
+        try await waitUntilFileExists(fixture.processIDsURL)
+        let processIDs = try fixture.runtimeProcessIDs()
+        XCTAssertEqual(processIDs.count, 2)
+        XCTAssertTrue(MihomoController.probeTCPPort(host: "127.0.0.1", port: port))
+
+        controller = nil
+        try await waitUntilPortIsClosed(port)
+        for processID in processIDs {
+            try await waitUntilProcessIsGone(processID)
+        }
+    }
+
+    func testOccupiedPortPreventsRuntimeLaunch() async throws {
+        let fixture = try MihomoControllerFixture(behavior: "normal")
+        defer { fixture.remove() }
+        let controller = makeController(fixture: fixture) { _, _ in true }
+
+        do {
+            try await controller.start()
+            XCTFail("Expected occupied-port error")
+        } catch let error as MihomoControllerError {
+            XCTAssertEqual(error, .portInUse(host: "127.0.0.1", port: 11_451))
+        }
+
+        XCTAssertEqual(try fixture.invocations().count, 1)
+        XCTAssertTrue(try fixture.invocations()[0].hasPrefix("-t "))
+    }
+
+    func testRuntimeExitDuringReadinessReportsPortConflict() async throws {
+        let fixture = try MihomoControllerFixture(behavior: "unexpected-exit")
+        defer { fixture.remove() }
+        let probe = SequencedMihomoPortProbe(values: [false, true, true])
+        let controller = makeController(
+            fixture: fixture,
+            readinessStability: .seconds(1),
+            probeInterval: .milliseconds(20)
+        ) { _, _ in
+            await probe.next()
+        }
+
+        do {
+            try await controller.start()
+            XCTFail("Expected a port conflict when Mihomo exits during readiness")
+        } catch let error as MihomoControllerError {
+            XCTAssertEqual(error, .portInUse(host: "127.0.0.1", port: 11_451))
+        }
+
+        let state = await controller.state
+        XCTAssertEqual(state, .stopped)
+    }
+
+    func testDefaultPortProbeSupportsIPv4AndLocalhost() throws {
+        let listener = try LoopbackTCPListener(family: AF_INET)
+
+        XCTAssertTrue(MihomoController.probeTCPPort(host: "127.0.0.1", port: listener.port))
+        XCTAssertTrue(MihomoController.probeTCPPort(host: "localhost", port: listener.port))
+    }
+
+    func testDefaultPortProbeSupportsIPv6() throws {
+        let listener = try LoopbackTCPListener(family: AF_INET6)
+
+        XCTAssertTrue(MihomoController.probeTCPPort(host: "::1", port: listener.port))
+    }
+
     private func makeController(
         fixture: MihomoControllerFixture,
         homeURL: URL? = nil,
+        host: String = "127.0.0.1",
+        port: UInt16 = 11_451,
         validationTimeout: Duration = .seconds(1),
+        startupTimeout: Duration = .seconds(2),
+        readinessStability: Duration = .milliseconds(20),
+        probeInterval: Duration = .milliseconds(10),
         stopTimeout: Duration = .milliseconds(250),
         portProbe: @escaping MihomoPortProbe
     ) -> MihomoController {
@@ -408,10 +490,12 @@ final class MihomoControllerTests: XCTestCase {
                 "PS4": "$(touch /tmp/owned)",
                 "TZ": "UTC",
             ],
+            host: host,
+            port: port,
             validationTimeout: validationTimeout,
-            startupTimeout: .seconds(2),
-            readinessStability: .milliseconds(20),
-            probeInterval: .milliseconds(10),
+            startupTimeout: startupTimeout,
+            readinessStability: readinessStability,
+            probeInterval: probeInterval,
             stopTimeout: stopTimeout,
             portProbe: portProbe
         )
@@ -431,6 +515,19 @@ final class MihomoControllerTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("PID \(pid) is still alive")
+    }
+
+    private func waitUntilPortIsClosed(_ port: UInt16) async throws {
+        for _ in 0..<300 {
+            if !MihomoController.probeTCPPort(host: "127.0.0.1", port: port) { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("TCP port \(port) remained open after supervised group exit")
+    }
+
+    private func unusedLoopbackPort() throws -> UInt16 {
+        let listener = try LoopbackTCPListener(family: AF_INET)
+        return listener.port
     }
 }
 
@@ -467,6 +564,21 @@ private actor MihomoFixturePortProbe {
     }
 }
 
+private actor SequencedMihomoPortProbe {
+    private var values: [Bool]
+
+    init(values: [Bool]) {
+        self.values = values
+    }
+
+    func next() -> Bool {
+        if values.count > 1 {
+            return values.removeFirst()
+        }
+        return values.first ?? false
+    }
+}
+
 private final class MihomoControllerFixture: @unchecked Sendable {
     let directoryURL: URL
     let executableURL: URL
@@ -481,7 +593,11 @@ private final class MihomoControllerFixture: @unchecked Sendable {
     let shellHookMarkerURL: URL
     let workingDirectoryURL: URL
 
-    init(behavior: String, validationDiagnostic: String? = nil) throws {
+    init(
+        behavior: String,
+        validationDiagnostic: String? = nil,
+        runtimePort: UInt16? = nil
+    ) throws {
         directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "ViaSix-MihomoControllerTests-\(UUID().uuidString)",
@@ -509,6 +625,13 @@ private final class MihomoControllerFixture: @unchecked Sendable {
         if let validationDiagnostic {
             try validationDiagnostic.write(
                 to: homeURL.appendingPathComponent("validation-diagnostic.txt"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+        if let runtimePort {
+            try String(runtimePort).write(
+                to: homeURL.appendingPathComponent("port.txt"),
                 atomically: true,
                 encoding: .utf8
             )
@@ -595,6 +718,15 @@ private final class MihomoControllerFixture: @unchecked Sendable {
           exit 7
         fi
 
+        if [ "$behavior" = "real-listener" ]; then
+          port=$(cat port.txt)
+          /usr/bin/nc -lk 127.0.0.1 "$port" >/dev/null 2>&1 &
+          child=$!
+          printf '%s %s\n' "$$" "$child" > pids.txt
+          wait "$child"
+          exit $?
+        fi
+
         if [ "$behavior" = "ignore-term" ]; then
           trap '' TERM
         else
@@ -606,4 +738,99 @@ private final class MihomoControllerFixture: @unchecked Sendable {
         wait "$child"
         rm -f ready
         """#
+}
+
+private final class LoopbackTCPListener {
+    let port: UInt16
+
+    private let fileDescriptor: Int32
+
+    init(family: Int32) throws {
+        let descriptor = Darwin.socket(family, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { throw Self.lastPOSIXError() }
+
+        do {
+            port = try Self.bindLoopback(descriptor, family: family)
+            guard Darwin.listen(descriptor, 4) == 0 else {
+                throw Self.lastPOSIXError()
+            }
+            fileDescriptor = descriptor
+        } catch {
+            Darwin.close(descriptor)
+            throw error
+        }
+    }
+
+    deinit {
+        Darwin.close(fileDescriptor)
+    }
+
+    private static func bindLoopback(_ descriptor: Int32, family: Int32) throws -> UInt16 {
+        switch family {
+        case AF_INET:
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            guard
+                "127.0.0.1".withCString({ inet_pton(AF_INET, $0, &address.sin_addr) }) == 1
+            else {
+                throw lastPOSIXError()
+            }
+            let bindStatus = withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.bind(
+                        descriptor,
+                        $0,
+                        socklen_t(MemoryLayout<sockaddr_in>.size)
+                    )
+                }
+            }
+            guard bindStatus == 0 else { throw lastPOSIXError() }
+
+            var addressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let nameStatus = withUnsafeMutablePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.getsockname(descriptor, $0, &addressLength)
+                }
+            }
+            guard nameStatus == 0 else { throw lastPOSIXError() }
+            return UInt16(bigEndian: address.sin_port)
+
+        case AF_INET6:
+            var address = sockaddr_in6()
+            address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+            address.sin6_family = sa_family_t(AF_INET6)
+            guard
+                "::1".withCString({ inet_pton(AF_INET6, $0, &address.sin6_addr) }) == 1
+            else {
+                throw lastPOSIXError()
+            }
+            let bindStatus = withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.bind(
+                        descriptor,
+                        $0,
+                        socklen_t(MemoryLayout<sockaddr_in6>.size)
+                    )
+                }
+            }
+            guard bindStatus == 0 else { throw lastPOSIXError() }
+
+            var addressLength = socklen_t(MemoryLayout<sockaddr_in6>.size)
+            let nameStatus = withUnsafeMutablePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.getsockname(descriptor, $0, &addressLength)
+                }
+            }
+            guard nameStatus == 0 else { throw lastPOSIXError() }
+            return UInt16(bigEndian: address.sin6_port)
+
+        default:
+            throw POSIXError(.EAFNOSUPPORT)
+        }
+    }
+
+    private static func lastPOSIXError() -> POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
 }

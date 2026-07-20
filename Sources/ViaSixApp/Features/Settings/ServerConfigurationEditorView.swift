@@ -542,7 +542,7 @@ struct ServerConfigurationEditorView: View {
                     )
                     isSaving = false
                     dismiss()
-                } catch AppModelError.templateChangedExternally {
+                } catch AppModelError.profileChangedExternally {
                     isSaving = false
                     saveError = "磁盘中的代理配置已发生变化，请重新打开后再保存。"
                 } catch {

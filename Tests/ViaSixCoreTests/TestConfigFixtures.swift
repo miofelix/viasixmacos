@@ -56,4 +56,22 @@ enum TestConfigFixtures {
             path: "/legacy-fixture"
         )
     }
+
+    static func proxyOutbound(from template: Data) throws -> Data {
+        guard
+            let root = try JSONSerialization.jsonObject(with: template) as? [String: Any],
+            let outbounds = root["outbounds"] as? [[String: Any]],
+            let proxy = outbounds.first(where: { $0["tag"] as? String == "proxy" })
+        else {
+            throw TestConfigFixtureError.missingProxyOutbound
+        }
+        return try JSONSerialization.data(
+            withJSONObject: proxy,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+    }
+}
+
+private enum TestConfigFixtureError: Error {
+    case missingProxyOutbound
 }

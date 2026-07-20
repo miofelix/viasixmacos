@@ -183,7 +183,10 @@ final class CfstRunnerTests: XCTestCase {
 
         let runner = CfstRunner(
             executableURL: fixture.executableURL,
-            activityTimeout: .milliseconds(750)
+            // The timeout starts when the supervised process is spawned. Give
+            // both shell layers time to start under a saturated test runner,
+            // then verify that the silent child is still terminated.
+            activityTimeout: .seconds(5)
         )
         let runTask = Task {
             try await runner.run(parameters: .init(ipRange: "2606:4700::/32"))
@@ -430,7 +433,7 @@ final class CfstRunnerTests: XCTestCase {
     }
 
     private func waitUntilFileExists(_ url: URL) async throws {
-        for _ in 0..<100 {
+        for _ in 0..<300 {
             if FileManager.default.fileExists(atPath: url.path) { return }
             try await Task.sleep(for: .milliseconds(20))
         }

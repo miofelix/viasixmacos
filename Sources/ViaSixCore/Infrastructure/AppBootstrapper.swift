@@ -6,7 +6,6 @@ public enum AppBootstrapperError: LocalizedError, Equatable, Sendable {
     case configurationRecoveryFailed(String)
     case invalidConfigurationFile(URL)
     case profileChangedExternally
-    case templateChangedExternally
     case virtualInterfaceRequiresPrivilegedService
 
     public var errorDescription: String? {
@@ -17,7 +16,7 @@ public enum AppBootstrapperError: LocalizedError, Equatable, Sendable {
             "上次代理配置更新未完成，自动恢复失败：\(message)"
         case .invalidConfigurationFile(let url):
             "代理配置路径不是普通文件：\(url.path)"
-        case .profileChangedExternally, .templateChangedExternally:
+        case .profileChangedExternally:
             "代理配置在编辑期间发生变化，请重新载入后再保存"
         case .virtualInterfaceRequiresPrivilegedService:
             "虚拟网卡模式必须由受信任的系统服务启动"
@@ -55,6 +54,8 @@ private struct ConfigurationSources: Sendable {
 }
 
 public actor AppBootstrapper {
+    private static let legacyConfigurationMaximumBytes = 8 * 1_024 * 1_024
+
     public let paths: AppPaths
     private let configurationFileWriter: ConfigurationFileWriter
 
@@ -98,7 +99,7 @@ public actor AppBootstrapper {
             return
         }
 
-        let legacyServer = try Self.regularFileDataIfPresent(
+        let legacyServer = try Self.legacyConfigurationDataIfPresent(
             at: paths.legacyServerConfig,
             using: fileManager
         )
@@ -106,7 +107,7 @@ public actor AppBootstrapper {
         if let legacyServer {
             migrationInput = legacyServer
         } else {
-            migrationInput = try Self.regularFileDataIfPresent(
+            migrationInput = try Self.legacyConfigurationDataIfPresent(
                 at: paths.legacyTemplateConfig,
                 using: fileManager
             )
@@ -145,16 +146,12 @@ public actor AppBootstrapper {
         let fileManager = FileManager.default
         guard
             try Self.regularFileDataIfPresent(at: paths.localProxyConfig, using: fileManager) == nil,
-            let legacy = try Self.regularFileDataIfPresent(
+            let legacy = try Self.legacyConfigurationDataIfPresent(
                 at: paths.legacyTemplateConfig,
                 using: fileManager
             ),
-            var local = try? ConfigTemplate.localConfiguration(from: legacy)
+            let local = LegacyXrayLocalConfigurationMigrator.configuration(from: legacy)
         else { return }
-
-        if Self.legacyLogLevel(in: legacy) == "none" {
-            local.logLevel = .silent
-        }
 
         try Self.writeRestrictedConfigurationFile(
             JSONEncoder.pretty.encode(local),
@@ -167,14 +164,17 @@ public actor AppBootstrapper {
         return text.contains(MihomoServerConfiguration.placeholderCredential)
     }
 
-    private static func legacyLogLevel(in data: Data) -> String? {
-        guard
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let log = root["log"] as? [String: Any]
-        else { return nil }
-        return (log["loglevel"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
+    /// Reads one byte beyond the accepted parser limit so legacy migrators can
+    /// reject oversized input without first loading an unbounded file.
+    private static func legacyConfigurationDataIfPresent(
+        at url: URL,
+        using fileManager: FileManager
+    ) throws -> Data? {
+        try regularFileDataIfPresent(
+            at: url,
+            using: fileManager,
+            maximumBytes: legacyConfigurationMaximumBytes + 1
+        )
     }
 
     /// Removes only temporary result files created by an interrupted speed
@@ -339,19 +339,6 @@ public actor AppBootstrapper {
         _ = try replaceLocalProxyConfiguration(
             with: local,
             selectedIP: selectedIP
-        )
-    }
-
-    @discardableResult
-    public func replaceServerConfiguration(
-        with data: Data,
-        selectedIP: String? = nil,
-        expectedProfileData: Data? = nil
-    ) throws -> ProxyEndpoint {
-        try replaceProfileTransaction(
-            with: data,
-            selectedIP: selectedIP,
-            expectedProfileData: expectedProfileData
         )
     }
 
@@ -864,8 +851,12 @@ public actor AppBootstrapper {
 
     fileprivate static func regularFileDataIfPresent(
         at url: URL,
-        using fileManager: FileManager
+        using fileManager: FileManager,
+        maximumBytes: Int? = nil
     ) throws -> Data? {
+        if let maximumBytes {
+            precondition(maximumBytes > 0)
+        }
         if (try? fileManager.destinationOfSymbolicLink(atPath: url.path)) != nil {
             throw AppBootstrapperError.invalidConfigurationFile(url)
         }
@@ -873,14 +864,33 @@ public actor AppBootstrapper {
         guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
             return nil
         }
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        let values = try url.resourceValues(
+            forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey]
+        )
         guard !isDirectory.boolValue,
             values.isRegularFile == true,
             values.isSymbolicLink != true
         else {
             throw AppBootstrapperError.invalidConfigurationFile(url)
         }
-        return try Data(contentsOf: url)
+
+        guard let maximumBytes else {
+            return try Data(contentsOf: url)
+        }
+
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        var data = Data()
+        data.reserveCapacity(min(maximumBytes, max(0, values.fileSize ?? 0)))
+        while data.count < maximumBytes {
+            let remaining = maximumBytes - data.count
+            guard let chunk = try handle.read(upToCount: min(remaining, 64 * 1_024)),
+                !chunk.isEmpty
+            else { break }
+            data.append(chunk)
+        }
+        return data
     }
 
     fileprivate static func removeRegularFileIfPresent(
@@ -925,43 +935,6 @@ public actor AppBootstrapper {
         }
     }
 
-    // MARK: - Transitional source compatibility
-
-    @discardableResult
-    public func validateTemplateForLaunch(selectedIP: String? = nil) throws -> ProxyEndpoint {
-        try validateProfileForLaunch(selectedIP: selectedIP)
-    }
-
-    @discardableResult
-    public func replaceTemplate(with data: Data, selectedIP: String? = nil) throws -> ProxyEndpoint {
-        try replaceProfile(with: data, selectedIP: selectedIP)
-    }
-
-    @discardableResult
-    public func replaceTemplateIfUnchanged(
-        with data: Data,
-        selectedIP: String?,
-        expectedTemplateData: Data?
-    ) throws -> ProxyEndpoint {
-        do {
-            return try replaceProfileIfUnchanged(
-                with: data,
-                selectedIP: selectedIP,
-                expectedProfileData: expectedTemplateData
-            )
-        } catch AppBootstrapperError.profileChangedExternally {
-            throw AppBootstrapperError.templateChangedExternally
-        }
-    }
-
-    @discardableResult
-    public func importTemplate(from sourceURL: URL, selectedIP: String? = nil) throws -> ProxyEndpoint {
-        try importProfile(from: sourceURL, selectedIP: selectedIP)
-    }
-
-    public func loadServerConfiguration() throws -> Data {
-        try loadProfileConfiguration()
-    }
 }
 
 private struct ConfigurationTransactionPaths {

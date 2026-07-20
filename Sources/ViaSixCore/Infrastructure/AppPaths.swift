@@ -80,13 +80,4 @@ public struct AppPaths: Sendable, Equatable {
             try FilePermissions.restrictDirectory(directory, using: fileManager)
         }
     }
-
-    // Temporary source-compatibility aliases while the application target is
-    // migrated. They continue to point at the old files and are never used as
-    // active Mihomo configuration.
-    public var templateConfig: URL { legacyTemplateConfig }
-
-    public var serverConfig: URL { legacyServerConfig }
-
-    public var xrayBinary: URL { mihomoBinary }
 }

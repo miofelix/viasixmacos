@@ -251,8 +251,6 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
     }
 }
 
-public typealias XrayLogLevel = ProxyLogLevel
-
 extension JSONEncoder {
     static var pretty: JSONEncoder {
         let encoder = JSONEncoder()

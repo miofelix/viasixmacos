@@ -95,7 +95,7 @@ public struct UserPreferences: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case parameters, ipSourceMode, selectedIP, cfstPath, mihomoPath, xrayPath, exitIPEndpoint
+        case parameters, ipSourceMode, selectedIP, cfstPath, mihomoPath, exitIPEndpoint
         case exitIPDetectionMode, lastSuccessfulSpeedTestParameters
     }
 
@@ -106,8 +106,6 @@ public struct UserPreferences: Codable, Equatable, Sendable {
             ipSourceMode: try values.decodeIfPresent(IPSourceMode.self, forKey: .ipSourceMode) ?? .ipv6,
             selectedIP: try values.decodeIfPresent(String.self, forKey: .selectedIP) ?? "",
             cfstPath: try values.decodeIfPresent(String.self, forKey: .cfstPath) ?? "",
-            // An Xray executable cannot be used as a Mihomo executable. Never
-            // migrate that legacy path, even when it still exists on disk.
             mihomoPath: try values.decodeIfPresent(String.self, forKey: .mihomoPath) ?? "",
             exitIPEndpoint: try values.decodeIfPresent(String.self, forKey: .exitIPEndpoint)
                 ?? AppMetadata.defaultExitIPEndpoint,
@@ -137,32 +135,4 @@ public struct UserPreferences: Codable, Equatable, Sendable {
         )
     }
 
-    /// Source compatibility for one transition build. Reads and writes are
-    /// intentionally ignored so an Xray path can never become a Mihomo path.
-    public var xrayPath: String {
-        get { "" }
-        set {}
-    }
-
-    public init(
-        parameters: SpeedTestParameters,
-        ipSourceMode: IPSourceMode = .ipv6,
-        selectedIP: String = "",
-        cfstPath: String = "",
-        xrayPath _: String,
-        exitIPEndpoint: String = AppMetadata.defaultExitIPEndpoint,
-        exitIPDetectionMode: ExitIPDetectionMode = .automatic,
-        lastSuccessfulSpeedTestParameters: SpeedTestParameters? = nil
-    ) {
-        self.init(
-            parameters: parameters,
-            ipSourceMode: ipSourceMode,
-            selectedIP: selectedIP,
-            cfstPath: cfstPath,
-            mihomoPath: "",
-            exitIPEndpoint: exitIPEndpoint,
-            exitIPDetectionMode: exitIPDetectionMode,
-            lastSuccessfulSpeedTestParameters: lastSuccessfulSpeedTestParameters
-        )
-    }
 }

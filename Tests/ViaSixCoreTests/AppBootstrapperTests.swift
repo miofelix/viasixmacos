@@ -42,7 +42,7 @@ final class AppBootstrapperTests: XCTestCase {
             credential: "11111111-1111-4111-8111-111111111111",
             serverName: "server-priority.example"
         )
-        let server = try ConfigTemplate.serverConfiguration(from: serverTemplate)
+        let server = try TestConfigFixtures.proxyOutbound(from: serverTemplate)
         let template = try legacyTemplate(
             address: "template-fallback.example",
             credential: "22222222-2222-4222-8222-222222222222",
@@ -86,6 +86,81 @@ final class AppBootstrapperTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: paths.legacyTemplateConfig), template)
     }
 
+    func testLegacyTemplateDoesNotOverrideExistingLocalConfiguration() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        try paths.prepare()
+        let existing = LocalProxyConfiguration(
+            listenAddress: "127.0.0.4",
+            port: 20_281,
+            udpEnabled: false,
+            sniffingEnabled: false,
+            bypassPrivateNetworks: false,
+            logLevel: .info,
+            routingMode: .global,
+            networkAccessMode: .systemProxy
+        )
+        try JSONEncoder.pretty.encode(existing).write(to: paths.localProxyConfig)
+        let template = try legacyTemplate(
+            address: "legacy.example",
+            credential: "88888888-8888-4888-8888-888888888888",
+            serverName: "legacy.example",
+            listen: "127.0.0.9",
+            port: 29_999
+        )
+        try template.write(to: paths.legacyTemplateConfig)
+
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+
+        let loaded = try await bootstrapper.loadLocalProxyConfiguration()
+        XCTAssertEqual(loaded, existing)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.profileConfig.path))
+    }
+
+    func testUnsafeLegacyLocalListenerFallsBackWithoutBlockingProfileMigration() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        try paths.prepare()
+        let template = try legacyTemplate(
+            address: "legacy.example",
+            credential: "99999999-9999-4999-8999-999999999999",
+            serverName: "legacy.example",
+            listen: "0.0.0.0",
+            port: 20_282
+        )
+        try template.write(to: paths.legacyTemplateConfig)
+
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+
+        let loaded = try await bootstrapper.loadLocalProxyConfiguration()
+        XCTAssertEqual(loaded, LocalProxyConfiguration.default)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.profileConfig.path))
+    }
+
+    func testOversizedLegacyTemplateIsRejectedAtTheFileBoundary() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        try paths.prepare()
+        let oversized = Data(repeating: 0x20, count: 8 * 1_024 * 1_024 + 4_096)
+        try oversized.write(to: paths.legacyTemplateConfig)
+
+        do {
+            try await AppBootstrapper(paths: paths).prepareDefaults()
+            XCTFail("Expected the oversized legacy configuration to be rejected")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "旧版 Xray 配置不是有效 JSON")
+        }
+
+        XCTAssertEqual(
+            try paths.legacyTemplateConfig.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+            oversized.count
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.profileConfig.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.localProxyConfig.path))
+    }
+
     func testPlaceholderLegacyServerDoesNotCreateProfileOrFallBackToTemplate() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
@@ -100,7 +175,7 @@ final class AppBootstrapperTests: XCTestCase {
             credential: "44444444-4444-4444-8444-444444444444",
             serverName: "must-not-win.example"
         )
-        try ConfigTemplate.serverConfiguration(from: placeholder).write(
+        try TestConfigFixtures.proxyOutbound(from: placeholder).write(
             to: paths.legacyServerConfig
         )
         try validTemplate.write(to: paths.legacyTemplateConfig)
@@ -402,7 +477,7 @@ final class AppBootstrapperTests: XCTestCase {
             credential: "66666666-6666-4666-8666-666666666666",
             serverName: "restored.example"
         )
-        let oldServer = try ConfigTemplate.serverConfiguration(from: oldTemplate)
+        let oldServer = try TestConfigFixtures.proxyOutbound(from: oldTemplate)
         let oldGenerated = Data("old generated Xray document".utf8)
         let oldLocal = try JSONEncoder.pretty.encode(LocalProxyConfiguration())
         try writePreparedLegacyTransaction(

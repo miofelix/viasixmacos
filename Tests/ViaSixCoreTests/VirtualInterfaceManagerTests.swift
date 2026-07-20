@@ -14,23 +14,25 @@ final class VirtualInterfaceManagerTests: XCTestCase {
         XCTAssertThrowsError(try decoder.decode(NetworkAccessMode.self, from: Data(#""both""#.utf8)))
     }
 
-    func testParsesXrayVersionOutputAndIgnoresGoVersion() throws {
-        let output = "Xray 26.7.11 (Xray, Penetrates Everything.) d2758a0 (go1.26.1 darwin/arm64)"
-        let version = try XCTUnwrap(XrayRuntimeVersion.parse(output))
-        XCTAssertEqual(version, XrayRuntimeVersion(26, 7, 11))
-        XCTAssertEqual(version.description, "26.7.11")
-        XCTAssertEqual(XrayRuntimeVersion.minimumSafe, XrayRuntimeVersion(26, 7, 11))
-        XCTAssertNil(XrayRuntimeVersion.parse("xray development build without a version"))
+    func testParsesMihomoVersionOutputAndIgnoresGoVersion() throws {
+        let output = "Mihomo Meta v1.19.29 darwin arm64 with go1.26.5 Sat Jul 18 12:19:57 UTC 2026"
+        let version = try XCTUnwrap(MihomoRuntimeVersion.parse(output))
+        XCTAssertEqual(version, MihomoRuntimeVersion(1, 19, 29))
+        XCTAssertEqual(version.description, "1.19.29")
+        XCTAssertEqual(MihomoRuntimeVersion.minimumSafe, MihomoRuntimeVersion(1, 19, 29))
+        XCTAssertNil(MihomoRuntimeVersion.parse("Mihomo development build without a version"))
+        XCTAssertNil(MihomoRuntimeVersion.parse("go1.26.5 darwin/arm64"))
+        XCTAssertNil(MihomoRuntimeVersion.parse("1.19.29"))
     }
 
     func testVersionComparisonTreatsReleaseAsNewerThanPrerelease() {
-        XCTAssertLessThan(XrayRuntimeVersion(26, 7, 11), XrayRuntimeVersion(27, 0, 0))
+        XCTAssertLessThan(MihomoRuntimeVersion(1, 19, 29), MihomoRuntimeVersion(1, 20, 0))
         XCTAssertLessThan(
-            XrayRuntimeVersion(major: 26, minor: 7, patch: 11, prerelease: "rc1"),
-            XrayRuntimeVersion(26, 7, 11)
+            MihomoRuntimeVersion(major: 1, minor: 19, patch: 29, prerelease: "rc1"),
+            MihomoRuntimeVersion(1, 19, 29)
         )
-        XCTAssertGreaterThanOrEqual(XrayRuntimeVersion(26, 7, 11), .minimumSafe)
-        XCTAssertLessThan(XrayRuntimeVersion(26, 7, 10), .minimumSafe)
+        XCTAssertGreaterThanOrEqual(MihomoRuntimeVersion(1, 19, 29), .minimumSafe)
+        XCTAssertLessThan(MihomoRuntimeVersion(1, 19, 28), .minimumSafe)
     }
 
     func testFeatureSetRequiresExplicitDNSManagement() {
@@ -55,18 +57,18 @@ final class VirtualInterfaceManagerTests: XCTestCase {
         )
 
         let oldRuntime = VirtualInterfaceProbe(
-            runtimeVersion: XrayRuntimeVersion(26, 3, 27),
+            runtimeVersion: MihomoRuntimeVersion(1, 18, 10),
             helperAvailable: true,
             permissionAvailable: true
         )
         XCTAssertEqual(
             VirtualInterfaceCapability.evaluate(oldRuntime),
             .unavailable(
-                .runtimeTooOld(installed: XrayRuntimeVersion(26, 3, 27), minimum: .minimumSafe)
+                .runtimeTooOld(installed: MihomoRuntimeVersion(1, 18, 10), minimum: .minimumSafe)
             )
         )
 
-        let currentRuntime = XrayRuntimeVersion.minimumSafe
+        let currentRuntime = MihomoRuntimeVersion.minimumSafe
         XCTAssertEqual(
             VirtualInterfaceCapability.evaluate(
                 VirtualInterfaceProbe(
@@ -176,10 +178,16 @@ final class VirtualInterfaceManagerTests: XCTestCase {
     }
 
     func testCapabilityCodableRoundTrip() throws {
-        let value = XrayRuntimeVersion(major: 26, minor: 7, patch: 11, prerelease: "rc1")
+        let value = MihomoRuntimeVersion(major: 1, minor: 19, patch: 29, prerelease: "rc1")
         let encoded = try JSONEncoder().encode(value)
-        XCTAssertEqual(String(data: encoded, encoding: .utf8), #""26.7.11-rc1""#)
-        XCTAssertEqual(try JSONDecoder().decode(XrayRuntimeVersion.self, from: encoded), value)
+        XCTAssertEqual(String(data: encoded, encoding: .utf8), #""1.19.29-rc1""#)
+        XCTAssertEqual(try JSONDecoder().decode(MihomoRuntimeVersion.self, from: encoded), value)
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                MihomoRuntimeVersion.self,
+                from: Data(#""Mihomo Meta v1.19.29""#.utf8)
+            )
+        )
 
         let features: VirtualInterfaceFeature = [.ipv4, .systemRouting, .crashRecovery]
         let featureData = try JSONEncoder().encode(features)

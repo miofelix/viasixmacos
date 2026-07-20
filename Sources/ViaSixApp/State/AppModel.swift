@@ -53,7 +53,7 @@ extension AppBootstrapper: ProxyProfileReplacing {
         if let expectedProfileData {
             let currentProfileData = try Data(contentsOf: paths.profileConfig)
             guard currentProfileData == expectedProfileData else {
-                throw AppModelError.templateChangedExternally
+                throw AppModelError.profileChangedExternally
             }
         }
         do {
@@ -62,8 +62,8 @@ extension AppBootstrapper: ProxyProfileReplacing {
                 selectedIP: selectedIP,
                 expectedProfileData: expectedProfileData
             )
-        } catch AppBootstrapperError.templateChangedExternally {
-            throw AppModelError.templateChangedExternally
+        } catch AppBootstrapperError.profileChangedExternally {
+            throw AppModelError.profileChangedExternally
         }
     }
 }
@@ -591,49 +591,23 @@ final class AppModel {
             }
             updateNodeSelectionCapability(from: data)
             state.proxyConfigurationPhase = .ready
-            appendLog(source: .app, level: .success, message: "已保存代理连接模板")
+            appendLog(source: .app, level: .success, message: "代理配置已保存")
             showNotice("代理配置已保存", style: .success)
         } catch is CancellationError {
             throw CancellationError()
-        } catch AppModelError.templateChangedExternally {
+        } catch AppModelError.profileChangedExternally {
             appendLog(
                 source: .app,
                 level: .warning,
                 message: "代理配置在编辑期间发生变化，已阻止覆盖外部修改"
             )
-            state.templateOperationError = AppModelError.templateChangedExternally.localizedDescription
-            throw AppModelError.templateChangedExternally
+            state.templateOperationError = AppModelError.profileChangedExternally.localizedDescription
+            throw AppModelError.profileChangedExternally
         } catch {
             state.templateOperationError = error.localizedDescription
             appendLog(source: .app, level: .error, message: "保存代理配置失败：\(error.localizedDescription)")
             throw error
         }
-    }
-
-    func saveServerConfiguration(_ data: Data) async throws {
-        guard state.launchPhase != .loading else { throw AppModelError.appNotReady }
-        guard !isShuttingDown else { throw CancellationError() }
-        switch state.proxyCorePhase {
-        case .validating, .starting, .running, .stopping:
-            throw AppModelError.proxyMustBeStopped
-        case .stopped, .failed:
-            break
-        }
-        guard state.templateOperationPhase == .idle else {
-            throw AppModelError.templateOperationInProgress
-        }
-        let selectedIP = state.preferences.selectedIP
-        state.templateOperationPhase = .saving
-        defer { state.templateOperationPhase = .idle }
-        let endpoint = try await Task.detached { [bootstrapper] in
-            try await bootstrapper.replaceServerConfiguration(with: data, selectedIP: selectedIP)
-        }.value
-        guard !isShuttingDown else { throw CancellationError() }
-        state.proxyEndpoint = endpoint
-        updateNodeSelectionCapability(from: data)
-        state.proxyConfigurationPhase = .ready
-        appendLog(source: .app, level: .success, message: "服务器连接配置已保存")
-        showNotice("服务器连接配置已保存", style: .success)
     }
 
     func saveLocalProxyConfiguration(_ configuration: LocalProxyConfiguration) async throws {
@@ -2115,7 +2089,7 @@ enum AppModelError: LocalizedError, Equatable {
     case templateOperationInProgress
     case selectionInProgress
     case runtimeOperationInProgress
-    case templateChangedExternally
+    case profileChangedExternally
     case proxyMustBeStopped
     case proxyNotActive
     case proxyExitedDuringStart
@@ -2131,7 +2105,7 @@ enum AppModelError: LocalizedError, Equatable {
         case .templateOperationInProgress: "另一项代理配置操作尚未完成"
         case .selectionInProgress: "正在应用节点，请等待切换完成后再保存代理配置"
         case .runtimeOperationInProgress: "运行组件操作进行中，请完成后再保存代理配置"
-        case .templateChangedExternally: "代理配置已被其他操作修改，请重新载入后再保存"
+        case .profileChangedExternally: "代理配置已被其他操作修改，请重新载入后再保存"
         case .proxyMustBeStopped: "请先停止本地代理再保存连接配置"
         case .proxyNotActive: "本地代理当前未运行"
         case .proxyExitedDuringStart: "本地代理在系统网络设置完成前已退出"

@@ -484,7 +484,7 @@ struct MihomoProfileEditorView: View {
                 dismiss()
             } catch is CancellationError {
                 isSaving = false
-            } catch AppModelError.templateChangedExternally {
+            } catch AppModelError.profileChangedExternally {
                 isSaving = false
                 hasExternalConflict = true
                 saveError = "磁盘中的代理配置已在编辑期间发生变化。为避免覆盖，请载入最新版本后再继续。"

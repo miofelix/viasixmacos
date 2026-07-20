@@ -41,14 +41,16 @@ public enum NetworkAccessMode: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// A comparable Xray semantic version.
-public struct XrayRuntimeVersion: Codable, Comparable, Hashable, Sendable, CustomStringConvertible {
+/// A comparable Mihomo semantic version parsed from the core's own banner.
+public struct MihomoRuntimeVersion: Codable, Comparable, Hashable, Sendable,
+    CustomStringConvertible
+{
     public let major: Int
     public let minor: Int
     public let patch: Int
     public let prerelease: String?
 
-    public static let minimumSafe = Self(major: 26, minor: 7, patch: 11)
+    public static let minimumSafe = Self(major: 1, minor: 19, patch: 29)
 
     public init(major: Int, minor: Int, patch: Int, prerelease: String? = nil) {
         precondition(major >= 0 && minor >= 0 && patch >= 0)
@@ -63,33 +65,26 @@ public struct XrayRuntimeVersion: Codable, Comparable, Hashable, Sendable, Custo
         self.init(major: major, minor: minor, patch: patch)
     }
 
-    /// Parses output such as `Xray 26.7.11 (Xray, Penetrates Everything.)`.
-    /// Go/toolchain versions embedded later in the output are ignored because
-    /// the parser only accepts a standalone semantic-version token.
+    /// Parses output such as `Mihomo Meta v1.19.29 darwin arm64 with go1.26.5`.
+    /// Requiring the Mihomo product prefix prevents a later Go/toolchain
+    /// version from being mistaken for the runtime version.
     public init?(text: String) {
         guard let parsed = Self.parse(text) else { return nil }
         self = parsed
     }
 
     public static func parse(_ text: String) -> Self? {
-        let pattern = #"\b[vV]?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?\b"#
-        guard let expression = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let pattern = #"\bmihomo(?:\s+meta)?\s+v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?\b"#
+        guard
+            let expression = try? NSRegularExpression(
+                pattern: pattern,
+                options: [.caseInsensitive]
+            )
+        else { return nil }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
 
         for match in expression.matches(in: text, range: range) {
-            guard
-                let major = integer(in: text, match: match, group: 1),
-                let minor = integer(in: text, match: match, group: 2),
-                let patch = integer(in: text, match: match, group: 3)
-            else { continue }
-
-            var prerelease: String?
-            if match.range(at: 4).location != NSNotFound,
-                let valueRange = Range(match.range(at: 4), in: text)
-            {
-                prerelease = String(text[valueRange])
-            }
-            return Self(major: major, minor: minor, patch: patch, prerelease: prerelease)
+            if let version = version(in: text, match: match) { return version }
         }
         return nil
     }
@@ -116,10 +111,10 @@ public struct XrayRuntimeVersion: Codable, Comparable, Hashable, Sendable, Custo
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         let value = try container.decode(String.self)
-        guard let version = Self.parse(value) else {
+        guard let version = Self.parseCanonical(value) else {
             throw DecodingError.dataCorruptedError(
                 in: container,
-                debugDescription: "Invalid Xray runtime version: \(value)"
+                debugDescription: "Invalid Mihomo runtime version: \(value)"
             )
         }
         self = version
@@ -128,6 +123,35 @@ public struct XrayRuntimeVersion: Codable, Comparable, Hashable, Sendable, Custo
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         try container.encode(description)
+    }
+
+    private static func parseCanonical(_ text: String) -> Self? {
+        let pattern = #"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = expression.firstMatch(in: text, range: range), match.range == range else {
+            return nil
+        }
+        return version(in: text, match: match)
+    }
+
+    private static func version(
+        in text: String,
+        match: NSTextCheckingResult
+    ) -> Self? {
+        guard
+            let major = integer(in: text, match: match, group: 1),
+            let minor = integer(in: text, match: match, group: 2),
+            let patch = integer(in: text, match: match, group: 3)
+        else { return nil }
+
+        var prerelease: String?
+        if match.range(at: 4).location != NSNotFound,
+            let valueRange = Range(match.range(at: 4), in: text)
+        {
+            prerelease = String(text[valueRange])
+        }
+        return Self(major: major, minor: minor, patch: patch, prerelease: prerelease)
     }
 
     private static func integer(
@@ -187,8 +211,8 @@ public struct VirtualInterfaceFeature: OptionSet, Codable, Hashable, Sendable {
     ]
 
     /// Features required before ViaSix can advertise a user-facing
-    /// full-traffic mode. Xray's TUN `dns` field does not alter macOS DNS, so
-    /// a separate, reversible DNS manager is part of the requirement.
+    /// full-traffic mode. A reversible macOS DNS manager remains required even
+    /// when Mihomo receives DNS settings in its own configuration.
     public static let minimumSafe: Self = .all
 
     // Naming aliases keep the domain vocabulary clear at call sites.
@@ -198,7 +222,7 @@ public struct VirtualInterfaceFeature: OptionSet, Codable, Hashable, Sendable {
 
 public enum VirtualInterfaceUnavailableReason: Equatable, Hashable, Sendable {
     case runtimeMissing
-    case runtimeTooOld(installed: XrayRuntimeVersion?, minimum: XrayRuntimeVersion)
+    case runtimeTooOld(installed: MihomoRuntimeVersion?, minimum: MihomoRuntimeVersion)
     case helperUnavailable
     case permissionUnavailable
     case unsupportedBuild
@@ -209,9 +233,9 @@ public enum VirtualInterfaceUnavailableReason: Equatable, Hashable, Sendable {
             "虚拟网卡运行组件不可用"
         case .runtimeTooOld(let installed, let minimum):
             if let installed {
-                "虚拟网卡需要 Xray \(minimum) 或更高版本（当前 \(installed)）"
+                "虚拟网卡需要 Mihomo \(minimum) 或更高版本（当前 \(installed)）"
             } else {
-                "无法确认虚拟网卡所需的 Xray 版本"
+                "无法确认虚拟网卡所需的 Mihomo 版本"
             }
         case .helperUnavailable:
             "虚拟网卡服务尚未安装或不可用"
@@ -225,7 +249,7 @@ public enum VirtualInterfaceUnavailableReason: Equatable, Hashable, Sendable {
 
 public struct VirtualInterfaceProbe: Equatable, Sendable {
     public let runtimeInstalled: Bool
-    public let runtimeVersion: XrayRuntimeVersion?
+    public let runtimeVersion: MihomoRuntimeVersion?
     public let helperAvailable: Bool
     public let permissionAvailable: Bool
     public let buildSupported: Bool
@@ -233,7 +257,7 @@ public struct VirtualInterfaceProbe: Equatable, Sendable {
     public let requiredFeatures: VirtualInterfaceFeature
 
     public init(
-        runtimeVersion: XrayRuntimeVersion? = nil,
+        runtimeVersion: MihomoRuntimeVersion? = nil,
         runtimeInstalled: Bool? = nil,
         helperAvailable: Bool = false,
         permissionAvailable: Bool = false,
@@ -260,7 +284,7 @@ public enum VirtualInterfaceCapability: Equatable, Hashable, Sendable {
     case unavailable(VirtualInterfaceUnavailableReason)
     case available(features: VirtualInterfaceFeature)
 
-    public static let minimumSafeVersion = XrayRuntimeVersion.minimumSafe
+    public static let minimumSafeVersion = MihomoRuntimeVersion.minimumSafe
 
     public var isAvailable: Bool {
         if case .available = self { return true }
