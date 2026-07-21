@@ -265,8 +265,8 @@ struct AppState: Equatable, Sendable {
     var speedTest = SpeedTestState()
     var configurationTest = ConfigurationTestState()
     var proxyCorePhase: ProxyCorePhase = .stopped
-    /// Actual macOS proxy state, kept separate from the user's local
-    /// preference (`localProxyConfiguration.networkAccessMode`).
+    /// Actual macOS proxy state, kept separate from the user's independent
+    /// preference (`localProxyConfiguration.systemProxyEnabled`).
     var systemProxyPhase: SystemProxyPhase = .disabled
     var tun = TunState()
     var templateOperationPhase: TemplateOperationPhase = .idle

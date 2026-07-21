@@ -218,7 +218,7 @@ CloudflareSpeedTest 是 XIU2 维护的独立第三方项目，并非 Cloudflare 
 - `preferences.json`：`Codable` 用户偏好；新增字段应提供向后兼容默认值。`mihomoPath` 与历史 `xrayPath` 不兼容，不能自动复制。
 - `ip.txt` / `ipv6.txt`：复制到用户目录后的地址源。
 - `profile.yaml`：用户维护的 Mihomo 节点、Provider、代理组和规则，不包含本机监听设置。
-- `local-proxy.json`：本机监听地址、端口、UDP、嗅探、私网直连、代理模式和互斥的网络接入方式。
+- `local-proxy.json`：本机监听地址、端口、UDP、嗅探、私网直连、代理模式、独立的系统代理开关和 TUN 运行方式。
 - `Mihomo/config.yaml`：按当前模式生成的运行配置，不是配置的唯一来源。
 - `Mihomo/providers/` / `Mihomo/rules/`：HTTP Provider 的受控相对路径和缓存。
 - `system-proxy.json`：系统代理会话恢复快照。
@@ -299,7 +299,7 @@ Mihomo 用户态运行
 
 ## 虚拟网卡开发边界
 
-`NetworkAccessMode` 定义本地代理、系统代理和虚拟网卡三个互斥值。`virtualInterface` 只有在 helper 注册/批准、特权 Mihomo 完整性通过、feature set 满足要求且没有待恢复会话时才开放；否则配置、启动和 UI 都 fail closed。Mihomo YAML 生成器和 typed envelope 共同约束 `tun` 参数，helper 不接受用户路径或原始 YAML。
+`NetworkAccessMode` 选择用户态本地运行或特权 TUN 运行；`systemProxyEnabled` 独立记录 macOS 系统代理偏好，两者可同时启用。`virtualInterface` 只有在 helper 注册/批准、特权 Mihomo 完整性通过、feature set 满足要求且没有待恢复会话时才开放；否则配置、启动和 UI 都 fail closed。Mihomo YAML 生成器和 typed envelope 共同约束 `tun` 参数，helper 不接受用户路径或原始 YAML。
 
 真实 TUN 前必须满足[虚拟网卡能力边界](VIRTUAL_NETWORK.md)中的签名、特权、路由、DNS、进程监督和崩溃恢复要求。尤其是：
 
@@ -308,7 +308,7 @@ Mihomo 用户态运行
 - XPC 不能接收路径、argv、shell 或原始 YAML。
 - 特权执行必须使用固定、root-owned、已签名的 Mihomo，并直接启动固定 `-d`/`-f` 参数。
 - journal 必须精确记录会话、PID、路由模式和清理阶段；进程路径与会话目录身份不匹配时不能终止或删除恢复记录。
-- 系统代理与 TUN 的切换必须由同一 `NetworkAccessMode` 状态机协调。
+- TUN 运行方式切换必须串行停止旧运行时、保存偏好并启动新运行时；系统代理偏好保持独立，并在新监听就绪后重新应用。
 
 ## 测速结果约定
 

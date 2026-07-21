@@ -398,7 +398,7 @@ struct SettingsView: View {
                     systemImage: "network"
                 ) {
                     StatusBadge(
-                        model.state.localProxyConfiguration.networkAccessMode.displayName,
+                        networkAccessTitle,
                         tone: networkAccessTone,
                         systemImage: networkAccessSystemImage
                     )
@@ -664,37 +664,50 @@ struct SettingsView: View {
     }
 
     private var networkAccessConfigurationDetail: String {
-        switch model.state.localProxyConfiguration.networkAccessMode {
-        case .localProxy:
-            "仅提供本机 mixed 代理端口"
-        case .systemProxy:
-            "本地代理运行后接入 macOS 系统代理"
-        case .virtualInterface:
-            "通过虚拟网卡接管应用流量"
+        switch networkAccessFlags {
+        case (true, true): "系统代理与 TUN 独立启用"
+        case (true, false): "本地代理运行后接入 macOS 系统代理"
+        case (false, true): "通过虚拟网卡接管应用流量"
+        case (false, false): "仅提供本机 mixed 代理端口"
+        }
+    }
+
+    private var networkAccessFlags: (systemProxy: Bool, tun: Bool) {
+        (
+            model.state.localProxyConfiguration.systemProxyEnabled,
+            model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+        )
+    }
+
+    private var networkAccessTitle: String {
+        switch networkAccessFlags {
+        case (true, true): "系统代理 + TUN"
+        case (true, false): "系统代理"
+        case (false, true): "TUN"
+        case (false, false): "本地代理"
         }
     }
 
     private var systemProxyPresentation: SystemProxyStatusPresentation {
         SystemProxyStatusPresentation(
             phase: model.state.systemProxyPhase,
-            isRequested: model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
+            isRequested: model.state.localProxyConfiguration.systemProxyEnabled
         )
     }
 
     private var networkAccessTone: AppTone {
-        switch model.state.localProxyConfiguration.networkAccessMode {
-        case .localProxy: .neutral
-        case .systemProxy: systemProxyPresentation.appTone
-        case .virtualInterface: .accent
-        }
+        if case .failed = model.state.systemProxyPhase { return .negative }
+        if case .failed = model.state.tun.sessionPhase { return .negative }
+        if model.isSystemProxyTransitioning || model.isTunTransitioning { return .accent }
+        return networkAccessFlags.systemProxy || networkAccessFlags.tun ? .positive : .neutral
     }
 
     private var networkAccessSystemImage: String {
-        switch model.state.localProxyConfiguration.networkAccessMode {
-        case .localProxy: "dot.radiowaves.left.and.right"
-        case .systemProxy: systemProxyStatusSystemImage
-        case .virtualInterface: "point.3.filled.connected.trianglepath.dotted"
-        }
+        if networkAccessTone == .negative { return "exclamationmark.triangle.fill" }
+        if model.isSystemProxyTransitioning || model.isTunTransitioning { return "hourglass" }
+        if networkAccessFlags.tun { return "point.3.filled.connected.trianglepath.dotted" }
+        if networkAccessFlags.systemProxy { return systemProxyStatusSystemImage }
+        return "dot.radiowaves.left.and.right"
     }
 
     private var systemProxyStatusSystemImage: String {

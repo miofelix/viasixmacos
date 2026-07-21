@@ -1,9 +1,10 @@
 import Foundation
 
-/// The three ways in which ViaSix can expose a proxy to the local Mac.
+/// The runtime used to expose ViaSix locally or through a TUN interface.
 ///
-/// Keeping this as one value prevents contradictory persisted state such as
-/// system proxy and virtual-interface mode both being enabled at once.
+/// `systemProxy` remains as a legacy decoding value. Current configuration
+/// stores the macOS system-proxy preference independently, matching Clash's
+/// ability to enable system proxy and TUN at the same time.
 public enum NetworkAccessMode: String, Codable, CaseIterable, Sendable {
     case localProxy
     case systemProxy

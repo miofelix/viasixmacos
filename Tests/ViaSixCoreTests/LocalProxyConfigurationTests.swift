@@ -88,14 +88,30 @@ final class LocalProxyConfigurationTests: XCTestCase {
         let local = try JSONDecoder().decode(LocalProxyConfiguration.self, from: legacy)
 
         XCTAssertEqual(local.logLevel, .silent)
-        XCTAssertEqual(local.networkAccessMode, .systemProxy)
+        XCTAssertEqual(local.networkAccessMode, .localProxy)
+        XCTAssertTrue(local.systemProxyEnabled)
         let encoded = try JSONEncoder().encode(local)
         let object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         )
         XCTAssertEqual(object["logLevel"] as? String, "silent")
-        XCTAssertEqual(object["networkAccessMode"] as? String, "systemProxy")
-        XCTAssertNil(object["systemProxyEnabled"])
+        XCTAssertEqual(object["networkAccessMode"] as? String, "localProxy")
+        XCTAssertEqual(object["systemProxyEnabled"] as? Bool, true)
+    }
+
+    func testSystemProxyAndTunPreferencesRoundTripIndependently() throws {
+        let configured = LocalProxyConfiguration(
+            networkAccessMode: .virtualInterface,
+            systemProxyEnabled: true
+        )
+
+        let roundTrip = try JSONDecoder().decode(
+            LocalProxyConfiguration.self,
+            from: JSONEncoder().encode(configured)
+        )
+
+        XCTAssertEqual(roundTrip.networkAccessMode, .virtualInterface)
+        XCTAssertTrue(roundTrip.systemProxyEnabled)
     }
 
     func testLegacyXrayLocalMigratorPreservesListenerAndRulePreferences() throws {

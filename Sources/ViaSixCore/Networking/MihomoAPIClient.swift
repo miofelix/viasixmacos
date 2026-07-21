@@ -26,19 +26,22 @@ public struct MihomoProxyGroup: Identifiable, Equatable, Sendable {
     public let selected: String
     public let candidates: [String]
     public let delays: [String: Int]
+    public let candidateTypes: [String: String]
 
     public init(
         name: String,
         type: String,
         selected: String,
         candidates: [String],
-        delays: [String: Int] = [:]
+        delays: [String: Int] = [:],
+        candidateTypes: [String: String] = [:]
     ) {
         self.name = name
         self.type = type
         self.selected = selected
         self.candidates = candidates
         self.delays = delays
+        self.candidateTypes = candidateTypes
     }
 }
 
@@ -552,9 +555,13 @@ private struct ProxiesEnvelope: Decodable {
         proxies.compactMap { key, value in
             guard let candidates = value.all, !candidates.isEmpty else { return nil }
             var delays: [String: Int] = [:]
+            var candidateTypes: [String: String] = [:]
             for candidate in candidates {
                 if let delay = proxies[candidate]?.history?.last?.delay, delay > 0 {
                     delays[candidate] = delay
+                }
+                if let type = proxies[candidate]?.type, !type.isEmpty {
+                    candidateTypes[candidate] = type
                 }
             }
             return MihomoProxyGroup(
@@ -562,7 +569,8 @@ private struct ProxiesEnvelope: Decodable {
                 type: value.type ?? "Selector",
                 selected: value.now ?? "",
                 candidates: candidates,
-                delays: delays
+                delays: delays,
+                candidateTypes: candidateTypes
             )
         }
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }

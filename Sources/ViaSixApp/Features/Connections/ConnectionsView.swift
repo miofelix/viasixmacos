@@ -6,6 +6,7 @@ struct ConnectionsView: View {
     @State private var searchText = ""
     @State private var collection: ConnectionCollection = .active
     @State private var sortOrder: ConnectionSortOrder = .recent
+    @State private var layout = ConnectionLayout.list
     @State private var selectedRecord: ConnectionRecord?
     @State private var showsCloseAllConfirmation = false
 
@@ -18,6 +19,20 @@ struct ConnectionsView: View {
                         tone: connectionMonitorTone,
                         systemImage: connectionMonitorSystemImage
                     )
+
+                    Button {
+                        layout = layout == .list ? .table : .list
+                    } label: {
+                        Label(
+                            layout == .list ? "表格视图" : "列表视图",
+                            systemImage: layout == .list ? "tablecells" : "list.bullet"
+                        )
+                        .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help(layout == .list ? "切换到表格视图" : "切换到列表视图")
+                    .disabled(!model.state.isProxyRunning)
 
                     Button {
                         model.refreshMihomoRuntime()
@@ -188,6 +203,8 @@ struct ConnectionsView: View {
                     description: Text(emptyDescription)
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if layout == .table {
+                connectionTable
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -201,6 +218,66 @@ struct ConnectionsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var connectionTable: some View {
+        Table(filteredRecords) {
+            TableColumn("目标") { record in
+                Button(record.connection.metadata.destination) {
+                    selectedRecord = record
+                }
+                .buttonStyle(.plain)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help("查看连接详情")
+            }
+            .width(min: 180, ideal: 260)
+
+            TableColumn("应用") { record in
+                Text(record.connection.metadata.applicationName ?? "—")
+                    .lineLimit(1)
+            }
+            .width(min: 90, ideal: 130)
+
+            TableColumn("代理链") { record in
+                Text(record.connection.route)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .width(min: 110, ideal: 170)
+
+            TableColumn("规则") { record in
+                Text(record.connection.rule ?? "—")
+                    .lineLimit(1)
+            }
+            .width(min: 90, ideal: 130)
+
+            TableColumn("下载") { record in
+                Text(RuntimePresentation.byteCount(record.connection.download))
+                    .font(.caption.monospacedDigit())
+            }
+            .width(80)
+
+            TableColumn("上传") { record in
+                Text(RuntimePresentation.byteCount(record.connection.upload))
+                    .font(.caption.monospacedDigit())
+            }
+            .width(80)
+
+            TableColumn("") { record in
+                if !record.isClosed {
+                    Button(role: .destructive) {
+                        model.closeConnection(record.connection.id)
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("关闭连接")
+                    .disabled(model.isMihomoActionBusy)
+                }
+            }
+            .width(36)
+        }
     }
 
     private var connectionToolbar: some View {
@@ -364,6 +441,11 @@ struct ConnectionsView: View {
 enum ConnectionCollection: Hashable {
     case active
     case closed
+}
+
+enum ConnectionLayout: Hashable {
+    case list
+    case table
 }
 
 enum ConnectionSortOrder: String, CaseIterable, Identifiable {

@@ -57,7 +57,8 @@ final class DefaultResourceInstallerTests: XCTestCase {
         let local = try JSONDecoder().decode(LocalProxyConfiguration.self, from: installed)
         XCTAssertEqual(local.networkAccessMode, .localProxy)
         XCTAssertEqual(local.logLevel, .warning)
-        XCTAssertFalse(String(decoding: installed, as: UTF8.self).contains("systemProxyEnabled"))
+        XCTAssertFalse(local.systemProxyEnabled)
+        XCTAssertTrue(String(decoding: installed, as: UTF8.self).contains("systemProxyEnabled"))
     }
 
     func testInstallPreservesCustomizedLocalConfigurationAndLegacyInputs() throws {

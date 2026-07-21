@@ -105,12 +105,18 @@ struct LocalProxySettingsView: View {
 
     private var networkAccessSection: some View {
         ConfigurationSection("网络接入", systemImage: "network") {
-            NetworkAccessModePicker(
-                selection: networkAccessModeSelection,
-                isModeDisabled: { mode in
-                    isSaving || (mode == .virtualInterface && !model.canUseTunMode)
-                },
-                showsDescription: false
+            behaviorRow(
+                "系统代理",
+                detail: "配置 macOS HTTP、HTTPS 与 SOCKS 代理，可与 TUN 同时启用",
+                isOn: $configuration.systemProxyEnabled
+            )
+
+            Divider()
+
+            behaviorRow(
+                "TUN 模式",
+                detail: "通过虚拟网卡接管不遵循系统代理的应用流量",
+                isOn: tunModeSelection
             )
 
             Text(networkAccessDescription)
@@ -167,16 +173,16 @@ struct LocalProxySettingsView: View {
         }
     }
 
-    private var networkAccessModeSelection: Binding<NetworkAccessMode> {
+    private var tunModeSelection: Binding<Bool> {
         Binding(
-            get: { configuration.networkAccessMode },
-            set: { mode in
-                guard mode != .virtualInterface || model.canUseTunMode else {
+            get: { configuration.networkAccessMode == .virtualInterface },
+            set: { enabled in
+                guard !enabled || model.canUseTunMode else {
                     errorMessage = tunAvailabilityDescription
                     return
                 }
                 errorMessage = nil
-                configuration.networkAccessMode = mode
+                configuration.networkAccessMode = enabled ? .virtualInterface : .localProxy
             }
         )
     }
@@ -310,7 +316,7 @@ struct LocalProxySettingsView: View {
     private var systemProxyCurrentStateDescription: String {
         let presentation = SystemProxyStatusPresentation(
             phase: model.state.systemProxyPhase,
-            isRequested: model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
+            isRequested: model.state.localProxyConfiguration.systemProxyEnabled
         )
         if case .failed(let message) = model.state.systemProxyPhase {
             return "当前状态：\(presentation.text)。\(message)"
@@ -319,13 +325,16 @@ struct LocalProxySettingsView: View {
     }
 
     private var networkAccessDescription: String {
-        switch configuration.networkAccessMode {
-        case .localProxy:
-            "仅提供本机 mixed 代理端口，不修改 macOS 网络设置。"
-        case .systemProxy:
+        let tunEnabled = configuration.networkAccessMode == .virtualInterface
+        return switch (configuration.systemProxyEnabled, tunEnabled) {
+        case (true, true):
+            "系统代理与 TUN 均启用；两者独立生效并共享本地 Mihomo 配置。"
+        case (true, false):
             "本地代理运行后自动配置 macOS 系统代理。"
-        case .virtualInterface:
-            "接管支持 TUN 的应用流量；需要安装并授权虚拟网卡服务。"
+        case (false, true):
+            "TUN 接管系统流量；不会修改 macOS 系统代理设置。"
+        case (false, false):
+            "仅提供本机 mixed 代理端口，不修改 macOS 网络设置。"
         }
     }
 

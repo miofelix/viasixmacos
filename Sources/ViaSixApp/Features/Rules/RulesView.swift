@@ -90,6 +90,16 @@ struct RulesView: View {
                         .foregroundStyle(.tertiary)
                     TextField("搜索规则内容或策略", text: $searchText)
                         .textFieldStyle(.plain)
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("清除搜索")
+                    }
                 }
                 .padding(.horizontal, 9)
                 .frame(maxWidth: .infinity, minHeight: 30)

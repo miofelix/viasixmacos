@@ -8,6 +8,7 @@
   "logLevel": "warning",
   "networkAccessMode": "localProxy",
   "routingMode": "rule",
+  "systemProxyEnabled": false,
   "tunMTU": 1500,
   "tunStack": "mixed",
   "tunStrictRoute": false

@@ -122,27 +122,6 @@ extension ProxyRoutingMode {
     }
 }
 
-extension NetworkAccessMode {
-    var appSystemImage: String {
-        switch self {
-        case .localProxy: "dot.radiowaves.left.and.right"
-        case .systemProxy: "laptopcomputer"
-        case .virtualInterface: "point.3.filled.connected.trianglepath.dotted"
-        }
-    }
-
-    var appDescription: String {
-        switch self {
-        case .localProxy:
-            "仅提供本机 mixed 代理端口，不修改 macOS 网络设置。"
-        case .systemProxy:
-            "让遵循 macOS 代理设置的应用通过 ViaSix 访问网络。"
-        case .virtualInterface:
-            "通过 TUN 接管不支持系统代理的应用流量。"
-        }
-    }
-}
-
 /// A compact, equal-width mode selector inspired by Clash's mode card.  The
 /// caller owns persistence through the binding; this view only presents and
 /// changes the selected value, so it is also safe to use in a draft editor.
@@ -219,50 +198,6 @@ private struct ProxyRoutingModeButtonStyle: ButtonStyle {
             .opacity(configuration.isPressed ? 0.76 : 1)
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-    }
-}
-
-struct NetworkAccessModePicker: View {
-    @Binding var selection: NetworkAccessMode
-    var isModeDisabled: (NetworkAccessMode) -> Bool = { _ in false }
-    var showsDescription = true
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                ForEach(NetworkAccessMode.allCases, id: \.rawValue) { mode in
-                    Button {
-                        selection = mode
-                    } label: {
-                        Label(mode.displayName, systemImage: mode.appSystemImage)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.78)
-                    }
-                    .buttonStyle(
-                        ProxyRoutingModeButtonStyle(isSelected: selection == mode)
-                    )
-                    .disabled(isModeDisabled(mode))
-                    .help(mode.appDescription)
-                    .accessibilityLabel("网络接入：\(mode.displayName)")
-                    .accessibilityValue(selection == mode ? "当前" : "")
-                }
-            }
-
-            if showsDescription {
-                Text(selection.appDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(VisualStyle.subtleFill, in: RoundedRectangle(cornerRadius: 7))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 7)
-                            .stroke(VisualStyle.accent.opacity(0.32), lineWidth: 1)
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
     }
 }
 

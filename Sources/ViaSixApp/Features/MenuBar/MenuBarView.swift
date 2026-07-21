@@ -213,8 +213,8 @@ struct MenuBarView: View {
             Divider()
 
             Label(
-                "接入方式：\(model.state.localProxyConfiguration.networkAccessMode.displayName)",
-                systemImage: model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
+                "已启用：\(networkAccessTitle)",
+                systemImage: networkAccessIsEnabled
                     ? "checkmark.circle"
                     : "circle"
             )
@@ -239,13 +239,13 @@ struct MenuBarView: View {
             }
         } label: {
             Label(
-                "网络设置：\(model.state.localProxyConfiguration.networkAccessMode.displayName)",
+                "网络设置：\(networkAccessTitle)",
                 systemImage: "network"
             )
         }
         .accessibilityLabel("网络设置")
         .accessibilityValue(
-            "接入方式：\(model.state.localProxyConfiguration.networkAccessMode.displayName)，macOS：\(presentation.text)"
+            "系统代理：\(presentation.text)，TUN：\(tunStatusTitle)"
         )
     }
 
@@ -370,8 +370,24 @@ struct MenuBarView: View {
     private var systemProxyPresentation: SystemProxyStatusPresentation {
         SystemProxyStatusPresentation(
             phase: model.state.systemProxyPhase,
-            isRequested: model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
+            isRequested: model.state.localProxyConfiguration.systemProxyEnabled
         )
+    }
+
+    private var networkAccessIsEnabled: Bool {
+        model.state.localProxyConfiguration.systemProxyEnabled
+            || model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+    }
+
+    private var networkAccessTitle: String {
+        let systemProxy = model.state.localProxyConfiguration.systemProxyEnabled
+        let tun = model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+        return switch (systemProxy, tun) {
+        case (true, true): "系统代理 + TUN"
+        case (true, false): "系统代理"
+        case (false, true): "TUN"
+        case (false, false): "仅本地"
+        }
     }
 
     private var tunRequestedBinding: Binding<Bool> {
@@ -387,10 +403,10 @@ struct MenuBarView: View {
         if model.isRoutingModeChanging
             || model.isSystemProxyTransitioning
             || model.isTunTransitioning
+            || model.isNetworkAccessChanging
             || model.state.runtimeOperation != nil
             || model.isTemplateOperationBusy
             || model.switchingIP != nil
-            || model.state.isProxyRunning
         {
             return true
         }
@@ -399,9 +415,9 @@ struct MenuBarView: View {
     }
 
     private var tunToggleHelp: String {
-        if model.state.isProxyRunning { return "请先停止代理，再切换虚拟网卡接入方式" }
+        if model.isNetworkAccessChanging { return "正在切换 TUN 运行方式" }
         if !model.canUseTunMode { return "请先在设置中安装、批准并准备虚拟网卡服务" }
-        return "切换 TUN 网络接入"
+        return model.state.isProxyRunning ? "切换 TUN 并自动重启代理" : "切换 TUN 网络接入"
     }
 
     private var tunStatusTitle: String {
@@ -503,15 +519,16 @@ struct MenuBarView: View {
 
     private var systemProxyRequestedBinding: Binding<Bool> {
         Binding {
-            model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
+            model.state.localProxyConfiguration.systemProxyEnabled
         } set: { enabled in
-            model.setNetworkAccessMode(enabled ? .systemProxy : .localProxy)
+            model.setSystemProxyEnabled(enabled)
         }
     }
 
     private var systemProxyToggleDisabled: Bool {
         guard model.state.launchPhase == .ready else { return true }
         if model.isRoutingModeChanging
+            || model.isSystemProxyTransitioning
             || model.state.runtimeOperation != nil
             || model.isTemplateOperationBusy
             || model.switchingIP != nil

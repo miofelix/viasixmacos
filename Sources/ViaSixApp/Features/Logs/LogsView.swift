@@ -5,18 +5,21 @@ struct LogsView: View {
     @State private var searchText = ""
     @State private var sourceFilter: LogSourceFilter = .all
     @State private var levelFilter: LogLevelFilter = .all
+    @State private var logOrder = LogOrder.ascending
     @State private var followState = LogFollowState()
     @State private var visibleScrollTarget: LogScrollTarget?
     @State private var showsClearConfirmation = false
 
     var body: some View {
-        let visibleLogs = filteredLogs
+        let visibleLogs = orderedFilteredLogs
         let visibleLogIDs = visibleLogs.map(\.id)
-        let latestVisibleLogID = visibleLogIDs.last
+        let latestVisibleLogID = logOrder == .ascending ? visibleLogIDs.last : nil
+        let lastDisplayedLogID = visibleLogIDs.last
         let filterIdentity = LogFilterIdentity(
             searchText: searchText,
             source: sourceFilter,
-            level: levelFilter
+            level: levelFilter,
+            order: logOrder
         )
         let filteredSnapshot = FilteredLogSnapshot(
             filter: filterIdentity,
@@ -29,6 +32,21 @@ struct LogsView: View {
                 subtitle: "实时查看本地代理与节点测速记录"
             ) {
                 HStack(spacing: VisualStyle.spacing8) {
+                    Button {
+                        toggleLogOrder(latestAscendingID: filteredLogs.last?.id)
+                    } label: {
+                        Label(
+                            logOrder == .ascending ? "最新在下" : "最新在上",
+                            systemImage: "arrow.up.arrow.down"
+                        )
+                        .labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help(logOrder == .ascending ? "切换为最新日志在上" : "切换为最新日志在下")
+                    .accessibilityLabel(logOrder == .ascending ? "最新日志在下" : "最新日志在上")
+                    .disabled(model.state.logs.isEmpty)
+
                     Button {
                         followState.toggleExplicitFollowing(
                             latestEntryID: latestVisibleLogID,
@@ -53,7 +71,7 @@ struct LogsView: View {
                     .accessibilityLabel(
                         followState.followsLatest ? "暂停跟随" : "跟随最新"
                     )
-                    .disabled(model.state.logs.isEmpty)
+                    .disabled(model.state.logs.isEmpty || logOrder == .descending)
 
                     Button(role: .destructive) {
                         showsClearConfirmation = true
@@ -98,7 +116,7 @@ struct LogsView: View {
                                     VStack(spacing: 0) {
                                         LogRow(entry: entry)
 
-                                        if entry.id != latestVisibleLogID {
+                                        if entry.id != lastDisplayedLogID {
                                             Divider()
                                                 .opacity(0.45)
                                         }
@@ -118,7 +136,7 @@ struct LogsView: View {
                         .scrollPosition(id: $visibleScrollTarget, anchor: .bottom)
                         .scrollbarSafeContent()
                         .overlay(alignment: .bottomTrailing) {
-                            if !followState.followsLatest {
+                            if logOrder == .ascending, !followState.followsLatest {
                                 Button {
                                     followState.resumeFollowing(
                                         target: latestVisibleLogID,
@@ -222,6 +240,13 @@ struct LogsView: View {
         }
     }
 
+    private var orderedFilteredLogs: [AppLogEntry] {
+        switch logOrder {
+        case .ascending: filteredLogs
+        case .descending: Array(filteredLogs.reversed())
+        }
+    }
+
     private var logIDs: [AppLogEntry.ID] {
         model.state.logs.map(\.id)
     }
@@ -269,16 +294,28 @@ struct LogsView: View {
 
             HStack(spacing: 5) {
                 Circle()
-                    .fill(followState.followsLatest ? VisualStyle.positive : VisualStyle.warning)
+                    .fill(
+                        logOrder == .descending
+                            ? VisualStyle.accent
+                            : (followState.followsLatest ? VisualStyle.positive : VisualStyle.warning)
+                    )
                     .frame(width: 6, height: 6)
 
-                Text(followState.followsLatest ? "实时" : "已暂停")
+                Text(
+                    logOrder == .descending
+                        ? "最新在上"
+                        : (followState.followsLatest ? "实时" : "已暂停")
+                )
             }
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize()
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(followState.followsLatest ? "正在实时跟随" : "日志跟随已暂停")
+            .accessibilityLabel(
+                logOrder == .descending
+                    ? "日志按最新在上显示"
+                    : (followState.followsLatest ? "正在实时跟随" : "日志跟随已暂停")
+            )
 
             Text(isFiltering ? "\(visibleCount) / \(totalCount) 条" : "\(totalCount) 条")
                 .font(.caption.monospacedDigit())
@@ -341,6 +378,20 @@ struct LogsView: View {
         searchText = ""
         sourceFilter = .all
         levelFilter = .all
+    }
+
+    private func toggleLogOrder(latestAscendingID: AppLogEntry.ID?) {
+        switch logOrder {
+        case .ascending:
+            if followState.followsLatest {
+                followState.toggleExplicitFollowing(latestEntryID: latestAscendingID)
+            }
+            logOrder = .descending
+            visibleScrollTarget = nil
+        case .descending:
+            logOrder = .ascending
+            followState.resumeFollowing(target: latestAscendingID)
+        }
     }
 
     private func scrollToLatest(
@@ -481,6 +532,12 @@ private struct LogFilterIdentity: Equatable {
     let searchText: String
     let source: LogSourceFilter
     let level: LogLevelFilter
+    let order: LogOrder
+}
+
+private enum LogOrder: Equatable {
+    case ascending
+    case descending
 }
 
 private struct FilteredLogSnapshot: Equatable {

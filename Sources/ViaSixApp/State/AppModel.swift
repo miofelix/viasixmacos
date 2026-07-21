@@ -128,7 +128,11 @@ final class AppModel {
     }
 
     var isSystemProxyTransitioning: Bool {
-        state.systemProxyPhase.isTransitioning
+        state.systemProxyPhase.isTransitioning || systemProxyTask != nil
+    }
+
+    var isNetworkAccessChanging: Bool {
+        systemProxyTask != nil
     }
 
     var isTunTransitioning: Bool {
@@ -1001,6 +1005,10 @@ final class AppModel {
     }
 
     func setNetworkAccessMode(_ mode: NetworkAccessMode) {
+        if mode == .systemProxy {
+            setSystemProxyEnabled(true)
+            return
+        }
         guard
             !isShuttingDown,
             state.launchPhase == .ready,
@@ -1020,16 +1028,85 @@ final class AppModel {
             return
         }
         let previous = state.localProxyConfiguration
-        if state.isProxyRunning,
-            mode == .virtualInterface || previous.networkAccessMode == .virtualInterface
-        {
-            showNotice("请先停止代理，再切换虚拟网卡接入方式")
+        if state.isProxyRunning, mode == .localProxy, !hasProxyCoreExecutable {
+            showNotice("请先安装 Mihomo，再关闭 TUN 模式", style: .error, action: .openSettings)
             return
         }
 
         guard previous.networkAccessMode != mode else { return }
+        let shouldRestart = state.isProxyRunning
         var updated = previous
         updated.networkAccessMode = mode
+
+        systemProxyTask = Task { [weak self] in
+            guard let self else { return }
+            defer { systemProxyTask = nil }
+            do {
+                if shouldRestart {
+                    stopProxy()
+                    if let stopTask = proxyStopTask {
+                        await stopTask.value
+                    }
+                    guard state.proxyCorePhase == .stopped else {
+                        throw AppModelError.proxyMustBeStopped
+                    }
+                }
+                try await bootstrapper.saveLocalProxyPreference(
+                    updated,
+                    selectedIP: state.preferences.selectedIP
+                )
+                state.localProxyConfiguration = updated
+                try Task.checkCancellation()
+                if shouldRestart {
+                    startProxy()
+                }
+                let message: String =
+                    switch (mode, shouldRestart) {
+                    case (.virtualInterface, true): "正在切换到 TUN 模式"
+                    case (.virtualInterface, false): "已启用 TUN 模式偏好"
+                    case (.localProxy, true): "正在关闭 TUN 并切换到本地代理"
+                    case (.localProxy, false): "已关闭 TUN 模式偏好"
+                    case (.systemProxy, _): "系统代理设置已更新"
+                    }
+                showNotice(message, style: .success)
+            } catch is CancellationError {
+                return
+            } catch {
+                if shouldRestart, !state.isProxyRunning,
+                    state.localProxyConfiguration.networkAccessMode == previous.networkAccessMode
+                {
+                    startProxy()
+                }
+                appendLog(
+                    source: .app,
+                    level: .error,
+                    message: "更新网络接入方式失败：\(error.localizedDescription)"
+                )
+                showNotice("更新网络接入方式失败：\(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+
+    func setSystemProxyEnabled(_ enabled: Bool) {
+        guard
+            !isShuttingDown,
+            state.launchPhase == .ready,
+            systemProxyTask == nil,
+            routingModeTask == nil,
+            runtimeTask == nil,
+            state.templateOperationPhase == .idle
+        else { return }
+        switch state.proxyCorePhase {
+        case .validating, .starting, .stopping:
+            return
+        case .stopped, .running, .failed:
+            break
+        }
+
+        let previous = state.localProxyConfiguration
+        guard previous.systemProxyEnabled != enabled else { return }
+        var updated = previous
+        updated.systemProxyEnabled = enabled
 
         systemProxyTask = Task { [weak self] in
             guard let self else { return }
@@ -1044,22 +1121,20 @@ final class AppModel {
                 state.localProxyConfiguration = updated
                 try Task.checkCancellation()
 
-                if mode == .systemProxy, state.isProxyRunning {
+                if enabled, state.isProxyRunning {
                     try await applySystemProxyIfRequested(endpoint: state.proxyEndpoint)
-                } else if mode == .localProxy || mode == .virtualInterface {
+                } else if !enabled {
                     try await restoreSystemProxyIfNeeded()
                 } else {
                     state.systemProxyPhase = .disabled
                 }
                 let message =
-                    if mode == .systemProxy, state.isProxyRunning {
+                    if enabled, state.isProxyRunning {
                         "系统代理已启用"
-                    } else if mode == .systemProxy {
+                    } else if enabled {
                         "系统代理将在本地代理运行时启用"
-                    } else if mode == .virtualInterface {
-                        "已切换到虚拟网卡模式，启动代理后接管系统流量"
                     } else {
-                        "已切换到本地代理模式"
+                        "系统代理已关闭"
                     }
                 showNotice(message, style: .success)
             } catch is CancellationError {
@@ -1086,10 +1161,6 @@ final class AppModel {
         }
     }
 
-    func setSystemProxyEnabled(_ enabled: Bool) {
-        setNetworkAccessMode(enabled ? .systemProxy : .localProxy)
-    }
-
     private func rollbackSystemProxyPreference(
         to configuration: LocalProxyConfiguration
     ) async -> (any Error)? {
@@ -1112,13 +1183,13 @@ final class AppModel {
             await restoreSystemProxyAfterProxyFailure()
             return nil
         }
-        if configuration.networkAccessMode == .systemProxy, state.isProxyRunning {
+        if configuration.systemProxyEnabled, state.isProxyRunning {
             do {
                 try await applySystemProxyIfRequested(endpoint: state.proxyEndpoint)
             } catch {
                 state.systemProxyPhase = .failed(error.localizedDescription)
             }
-        } else if configuration.networkAccessMode != .systemProxy {
+        } else if !configuration.systemProxyEnabled {
             await restoreSystemProxyAfterProxyFailure()
         }
         return nil
@@ -1577,7 +1648,6 @@ final class AppModel {
             guard let self else { return }
             defer { proxyStartTask = nil }
             do {
-                try await restoreSystemProxyIfNeeded()
                 let selectedIP = state.preferences.selectedIP
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 let endpoint = try await bootstrapper.validateProfileForLaunch(
@@ -1601,6 +1671,7 @@ final class AppModel {
                 state.proxyCorePhase = .running
                 beginMihomoMonitoring()
                 beginTunStatusMonitoring()
+                try await applySystemProxyIfRequested(endpoint: endpoint)
                 appendLog(
                     source: .proxy,
                     level: .success,
@@ -1616,7 +1687,18 @@ final class AppModel {
                     state.proxyCorePhase = .running
                     beginMihomoMonitoring()
                     beginTunStatusMonitoring()
-                    showNotice("虚拟网卡已启动，但启动确认曾中断", style: .success)
+                    if state.localProxyConfiguration.systemProxyEnabled,
+                        case .failed(let message) = state.systemProxyPhase
+                    {
+                        appendLog(
+                            source: .app,
+                            level: .error,
+                            message: "虚拟网卡已启动，但系统代理启用失败：\(message)"
+                        )
+                        showNotice("TUN 已启动，但系统代理启用失败：\(message)", style: .error)
+                    } else {
+                        showNotice("虚拟网卡已启动，但启动确认曾中断", style: .success)
+                    }
                     return
                 }
                 state.tun.sessionPhase = .failed(error.localizedDescription)
@@ -1884,8 +1966,12 @@ final class AppModel {
         }
     }
 
-    func testProxyGroup(_ group: String) {
+    func testProxyGroup(_ group: String, url: String? = nil) {
         guard let client = mihomoAPIClient, mihomoActionTask == nil else { return }
+        let requestedURL = url?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let testURL =
+            requestedURL.flatMap { $0.isEmpty ? nil : $0 }
+            ?? AppMetadata.proxyDelayTestURL
         state.mihomoRuntime.testingProxyGroup = group
         mihomoActionTask = Task { [weak self] in
             guard let self else { return }
@@ -1896,7 +1982,7 @@ final class AppModel {
             do {
                 let delays = try await client.testProxyGroup(
                     group: group,
-                    url: AppMetadata.proxyDelayTestURL,
+                    url: testURL,
                     timeoutMilliseconds: AppMetadata.proxyDelayTimeoutMilliseconds
                 )
                 applyProxyGroupDelays(delays, groupName: group)
@@ -2192,6 +2278,17 @@ final class AppModel {
                     beginMihomoMonitoring()
                     beginTunStatusMonitoring()
                     appendLog(source: .app, level: .success, message: "已接管现有虚拟网卡会话")
+                    if localProxyConfiguration.systemProxyEnabled {
+                        do {
+                            try await applySystemProxyIfRequested(endpoint: proxyEndpoint)
+                        } catch {
+                            appendLog(
+                                source: .app,
+                                level: .error,
+                                message: "接管 TUN 后启用系统代理失败：\(error.localizedDescription)"
+                            )
+                        }
+                    }
                 } else {
                     do {
                         applyTunSnapshot(try await tunCoordinator.stopSession())
@@ -2546,6 +2643,7 @@ final class AppModel {
                         let detail = snapshot.lastError ?? "特权 TUN 会话已停止"
                         state.proxyCorePhase = .failed(detail)
                         stopMihomoMonitoring()
+                        await restoreSystemProxyAfterProxyFailure()
                         appendLog(source: .proxy, level: .error, message: detail)
                         showNotice("虚拟网卡异常停止：\(detail)", style: .error)
                         activeTunMonitorID = nil
@@ -2761,7 +2859,8 @@ final class AppModel {
                 type: group.type,
                 selected: group.selected,
                 candidates: group.candidates,
-                delays: measuredDelays
+                delays: measuredDelays,
+                candidateTypes: group.candidateTypes
             )
         }
         state.mihomoRuntime.snapshot = MihomoRuntimeSnapshot(
@@ -2899,7 +2998,7 @@ final class AppModel {
     }
 
     private func applySystemProxyIfRequested(endpoint: ProxyEndpoint) async throws {
-        guard state.localProxyConfiguration.networkAccessMode == .systemProxy else {
+        guard state.localProxyConfiguration.systemProxyEnabled else {
             try await restoreSystemProxyIfNeeded()
             if case .failed(let message) = state.systemProxyPhase {
                 throw AppModelError.systemProxyRecoveryRequired(message)

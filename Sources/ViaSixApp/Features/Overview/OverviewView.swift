@@ -350,25 +350,40 @@ struct OverviewView: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 0) {
-                    NetworkAccessModePicker(
-                        selection: networkAccessModeBinding,
-                        isModeDisabled: networkAccessModeDisabled
-                    )
-                    .padding(.top, VisualStyle.spacing16)
+                    SettingRow(
+                        "系统代理",
+                        detail: "配置 macOS HTTP、HTTPS 与 SOCKS 代理；可与 TUN 同时启用。",
+                        systemImage: "network"
+                    ) {
+                        HStack(spacing: VisualStyle.spacing8) {
+                            StatusBadge(
+                                systemProxyStatusText,
+                                tone: systemProxyPresentation.appTone,
+                                systemImage: systemProxyIsTransitioning ? "hourglass" : nil
+                            )
+                            Toggle("系统代理", isOn: systemProxyRequestedBinding)
+                                .labelsHidden()
+                                .disabled(systemProxyToggleDisabled)
+                        }
+                    }
 
                     Divider()
-                        .padding(.top, VisualStyle.spacing16)
 
                     SettingRow(
-                        model.state.localProxyConfiguration.networkAccessMode.displayName,
-                        detail: networkAccessFooter,
-                        systemImage: model.state.localProxyConfiguration.networkAccessMode.appSystemImage
+                        "TUN 模式",
+                        detail: "通过虚拟网卡接管流量；启用偏好与系统代理互不影响。",
+                        systemImage: "point.3.filled.connected.trianglepath.dotted"
                     ) {
-                        StatusBadge(
-                            networkAccessStatusText,
-                            tone: networkAccessTone,
-                            systemImage: networkAccessStatusSystemImage
-                        )
+                        HStack(spacing: VisualStyle.spacing8) {
+                            StatusBadge(
+                                tunStatusText,
+                                tone: tunTone,
+                                systemImage: tunStatusSystemImage
+                            )
+                            Toggle("TUN 模式", isOn: tunRequestedBinding)
+                                .labelsHidden()
+                                .disabled(tunToggleDisabled)
+                        }
                     }
 
                     Divider()
@@ -385,9 +400,7 @@ struct OverviewView: View {
                             .truncationMode(.middle)
                     }
 
-                    if model.state.localProxyConfiguration.networkAccessMode == .virtualInterface,
-                        let message = model.state.tun.lastError
-                    {
+                    if let message = model.state.tun.lastError {
                         Divider()
                         inlineMessage(
                             message,
@@ -395,7 +408,8 @@ struct OverviewView: View {
                             tone: .negative
                         )
                         .padding(.vertical, VisualStyle.spacing12)
-                    } else if case .failed(let message) = model.state.systemProxyPhase {
+                    }
+                    if case .failed(let message) = model.state.systemProxyPhase {
                         Divider()
                         inlineMessage(
                             message,
@@ -858,32 +872,26 @@ struct OverviewView: View {
         optimisticRoutingMode = model.isRoutingModeChanging ? mode : nil
     }
 
-    private var networkAccessModeBinding: Binding<NetworkAccessMode> {
+    private var tunRequestedBinding: Binding<Bool> {
         Binding {
-            model.state.localProxyConfiguration.networkAccessMode
-        } set: { mode in
-            model.setNetworkAccessMode(mode)
+            model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+        } set: { enabled in
+            model.setNetworkAccessMode(enabled ? .virtualInterface : .localProxy)
         }
     }
 
-    private func networkAccessModeDisabled(_ mode: NetworkAccessMode) -> Bool {
-        let current = model.state.localProxyConfiguration.networkAccessMode
-        if mode == current { return false }
-        switch mode {
-        case .localProxy:
-            return current == .virtualInterface
-                ? tunToggleDisabled
-                : systemProxyToggleDisabled
-        case .systemProxy:
-            return systemProxyToggleDisabled
-        case .virtualInterface:
-            return tunToggleDisabled
+    private var systemProxyRequestedBinding: Binding<Bool> {
+        Binding {
+            model.state.localProxyConfiguration.systemProxyEnabled
+        } set: { enabled in
+            model.setSystemProxyEnabled(enabled)
         }
     }
 
     private var systemProxyToggleDisabled: Bool {
         guard model.state.launchPhase == .ready else { return true }
         if model.isRoutingModeChanging
+            || model.isSystemProxyTransitioning
             || model.state.runtimeOperation != nil
             || model.isTemplateOperationBusy
             || model.switchingIP != nil
@@ -895,11 +903,6 @@ struct OverviewView: View {
             return true
         case .stopped, .running, .failed:
             break
-        }
-        if model.state.isProxyRunning,
-            model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
-        {
-            return true
         }
         return switch model.state.systemProxyPhase {
         case .enabling, .disabling:
@@ -914,10 +917,10 @@ struct OverviewView: View {
         if model.isRoutingModeChanging
             || model.isSystemProxyTransitioning
             || model.isTunTransitioning
+            || model.isNetworkAccessChanging
             || model.state.runtimeOperation != nil
             || model.isTemplateOperationBusy
             || model.switchingIP != nil
-            || model.state.isProxyRunning
         {
             return true
         }
@@ -944,51 +947,53 @@ struct OverviewView: View {
     }
 
     private var networkAccessStatusText: String {
-        switch model.state.localProxyConfiguration.networkAccessMode {
-        case .localProxy: "仅本地监听"
-        case .systemProxy: systemProxyStatusText
-        case .virtualInterface: tunStatusText
+        let systemProxy = model.state.localProxyConfiguration.systemProxyEnabled
+        let tun = model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+        return switch (systemProxy, tun) {
+        case (true, true): "系统代理 + TUN"
+        case (true, false): "系统代理"
+        case (false, true): "TUN"
+        case (false, false): "仅本地监听"
         }
     }
 
     private var networkAccessTone: AppTone {
-        switch model.state.localProxyConfiguration.networkAccessMode {
-        case .localProxy: .neutral
-        case .systemProxy: systemProxyPresentation.appTone
-        case .virtualInterface:
-            switch model.state.tun.sessionPhase {
-            case .running: .positive
-            case .starting, .stopping, .recovering: .accent
-            case .recoveryRequired: .warning
-            case .failed: .negative
-            case .inactive: model.canUseTunMode ? .accent : .warning
-            }
+        if case .failed = model.state.systemProxyPhase { return .negative }
+        if case .failed = model.state.tun.sessionPhase { return .negative }
+        if systemProxyIsTransitioning || model.isTunTransitioning { return .accent }
+        if model.state.localProxyConfiguration.systemProxyEnabled
+            || model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+        {
+            return .positive
         }
+        return .neutral
     }
 
     private var networkAccessStatusSystemImage: String? {
-        switch model.state.localProxyConfiguration.networkAccessMode {
-        case .localProxy: "circle"
-        case .systemProxy: systemProxyIsTransitioning ? "hourglass" : nil
-        case .virtualInterface:
-            switch model.state.tun.sessionPhase {
-            case .running: "checkmark.circle.fill"
-            case .starting, .stopping, .recovering: "hourglass"
-            case .recoveryRequired: "exclamationmark.circle.fill"
-            case .failed: "xmark.circle.fill"
-            case .inactive: model.canUseTunMode ? "checkmark.circle" : "exclamationmark.circle.fill"
-            }
+        if networkAccessTone == .negative { return "xmark.circle.fill" }
+        if systemProxyIsTransitioning || model.isTunTransitioning { return "hourglass" }
+        return networkAccessTone == .positive ? "checkmark.circle.fill" : "circle"
+    }
+
+    private var tunTone: AppTone {
+        switch model.state.tun.sessionPhase {
+        case .running: .positive
+        case .starting, .stopping, .recovering: .accent
+        case .recoveryRequired: .warning
+        case .failed: .negative
+        case .inactive:
+            model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+                ? (model.canUseTunMode ? .accent : .warning) : .neutral
         }
     }
 
-    private var networkAccessFooter: String {
-        switch model.state.localProxyConfiguration.networkAccessMode {
-        case .localProxy:
-            "仅提供回环地址上的 mixed 代理端口，不修改 macOS 网络设置。"
-        case .systemProxy:
-            "系统代理不会接管不遵循 macOS 代理设置的应用流量。"
-        case .virtualInterface:
-            "TUN 由固定签名内核管理路由与 DNS，可接管不支持系统代理的应用流量。"
+    private var tunStatusSystemImage: String? {
+        switch model.state.tun.sessionPhase {
+        case .running: "checkmark.circle.fill"
+        case .starting, .stopping, .recovering: "hourglass"
+        case .recoveryRequired: "exclamationmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        case .inactive: nil
         }
     }
 
@@ -1003,7 +1008,7 @@ struct OverviewView: View {
     private var systemProxyPresentation: SystemProxyStatusPresentation {
         SystemProxyStatusPresentation(
             phase: model.state.systemProxyPhase,
-            isRequested: model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
+            isRequested: model.state.localProxyConfiguration.systemProxyEnabled
         )
     }
 

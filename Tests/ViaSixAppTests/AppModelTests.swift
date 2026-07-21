@@ -8,6 +8,192 @@ import XCTest
 
 @MainActor
 final class AppModelTests: XCTestCase {
+    func testSystemProxyCanToggleWhileTunKeepsRunning() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        try await bootstrapper.replaceProfile(with: validProfile(), selectedIP: "2606::1")
+        _ = try await bootstrapper.replaceLocalProxyConfiguration(
+            with: LocalProxyConfiguration(networkAccessMode: .virtualInterface),
+            selectedIP: "2606::1"
+        )
+        let systemProxy = ControlledSystemProxyManager()
+        let tunCoordinator = ControlledTunModeCoordinator()
+        let model = makeModel(
+            paths: paths,
+            bootstrapper: bootstrapper,
+            systemProxyManager: systemProxy,
+            tunCoordinator: tunCoordinator
+        )
+
+        model.start()
+        try await waitUntilReady(model)
+        model.startProxy()
+        try await waitUntilAsync {
+            let tunStartCount = await tunCoordinator.startCount
+            return tunStartCount == 1
+                && model.state.proxyCorePhase == .running
+                && model.state.tun.isRunning
+                && model.state.systemProxyPhase == .disabled
+        }
+
+        model.setSystemProxyEnabled(true)
+        try await waitUntilAsync {
+            let tunStartCount = await tunCoordinator.startCount
+            let enableCount = await systemProxy.enableCount
+            return tunStartCount == 1
+                && enableCount == 1
+                && model.state.tun.isRunning
+                && model.state.localProxyConfiguration.systemProxyEnabled
+                && model.state.systemProxyPhase == .enabled
+        }
+
+        model.setSystemProxyEnabled(false)
+        try await waitUntilAsync {
+            let tunStartCount = await tunCoordinator.startCount
+            let tunStopCount = await tunCoordinator.stopCount
+            let disableCount = await systemProxy.disableCount
+            return tunStartCount == 1
+                && tunStopCount == 0
+                && disableCount == 1
+                && model.state.tun.isRunning
+                && !model.state.localProxyConfiguration.systemProxyEnabled
+                && model.state.systemProxyPhase == .disabled
+        }
+
+        model.stopProxy()
+        try await waitUntil {
+            model.state.proxyCorePhase == .stopped
+                && model.state.tun.sessionPhase == .inactive
+        }
+        let didShutdown = await model.shutdown()
+        XCTAssertTrue(didShutdown)
+    }
+
+    func testSystemProxyAndTunCanRunTogetherAndStopCleanly() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        try await bootstrapper.replaceProfile(with: validProfile(), selectedIP: "2606::1")
+        _ = try await bootstrapper.replaceLocalProxyConfiguration(
+            with: LocalProxyConfiguration(
+                networkAccessMode: .virtualInterface,
+                systemProxyEnabled: true
+            ),
+            selectedIP: "2606::1"
+        )
+        let systemProxy = ControlledSystemProxyManager()
+        let tunCoordinator = ControlledTunModeCoordinator()
+        let model = makeModel(
+            paths: paths,
+            bootstrapper: bootstrapper,
+            systemProxyManager: systemProxy,
+            tunCoordinator: tunCoordinator
+        )
+
+        model.start()
+        try await waitUntilReady(model)
+        XCTAssertTrue(model.state.localProxyConfiguration.systemProxyEnabled)
+        XCTAssertEqual(
+            model.state.localProxyConfiguration.networkAccessMode,
+            .virtualInterface
+        )
+
+        model.startProxy()
+        try await waitUntilAsync {
+            let enableCount = await systemProxy.enableCount
+            return model.state.proxyCorePhase == .running
+                && model.state.tun.isRunning
+                && model.state.systemProxyPhase == .enabled
+                && enableCount == 1
+        }
+
+        model.stopProxy()
+        try await waitUntilAsync {
+            let disableCount = await systemProxy.disableCount
+            return model.state.proxyCorePhase == .stopped
+                && model.state.tun.sessionPhase == .inactive
+                && model.state.systemProxyPhase == .disabled
+                && disableCount == 1
+        }
+
+        let didShutdown = await model.shutdown()
+        XCTAssertTrue(didShutdown)
+    }
+
+    func testTunToggleRestartsRuntimeWithoutChangingSystemProxyPreference() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let store = PreferencesStore(fileURL: paths.preferences)
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        try await bootstrapper.replaceProfile(with: validProfile(), selectedIP: "2606::1")
+        _ = try await bootstrapper.replaceLocalProxyConfiguration(
+            with: LocalProxyConfiguration(systemProxyEnabled: true),
+            selectedIP: "2606::1"
+        )
+        let executableURL = try makeExecutable(in: paths)
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                selectedIP: "2606::1",
+                mihomoPath: executableURL.path
+            )
+        )
+        let systemProxy = ControlledSystemProxyManager()
+        let proxyCore = ControlledMihomoController()
+        let tunCoordinator = ControlledTunModeCoordinator()
+        let model = makeModel(
+            paths: paths,
+            store: store,
+            bootstrapper: bootstrapper,
+            systemProxyManager: systemProxy,
+            tunCoordinator: tunCoordinator,
+            proxyCoreControllerFactory: { _ in proxyCore }
+        )
+
+        model.start()
+        try await waitUntilReady(model)
+        model.startProxy()
+        try await waitUntilAsync {
+            let startCount = await proxyCore.startCount
+            return startCount == 1
+                && model.state.proxyCorePhase == .running
+                && model.state.systemProxyPhase == .enabled
+        }
+
+        model.setNetworkAccessMode(.virtualInterface)
+        try await waitUntilAsync {
+            let stopCount = await proxyCore.stopCount
+            let tunStartCount = await tunCoordinator.startCount
+            return stopCount == 1
+                && tunStartCount == 1
+                && model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+                && model.state.localProxyConfiguration.systemProxyEnabled
+                && model.state.tun.isRunning
+                && model.state.systemProxyPhase == .enabled
+        }
+
+        model.setNetworkAccessMode(.localProxy)
+        try await waitUntilAsync {
+            let tunStopCount = await tunCoordinator.stopCount
+            let startCount = await proxyCore.startCount
+            return tunStopCount == 1
+                && startCount == 2
+                && model.state.localProxyConfiguration.networkAccessMode == .localProxy
+                && model.state.localProxyConfiguration.systemProxyEnabled
+                && model.state.tun.sessionPhase == .inactive
+                && model.state.systemProxyPhase == .enabled
+        }
+
+        model.stopProxy()
+        try await waitUntil { model.state.proxyCorePhase == .stopped }
+        let didShutdown = await model.shutdown()
+        XCTAssertTrue(didShutdown)
+    }
+
     func testTunModeStartsWithPrivilegedRuntimeWithoutUserMihomoAndStopsCleanly()
         async throws
     {
@@ -56,7 +242,7 @@ final class AppModelTests: XCTestCase {
             model.state.localProxyConfiguration.networkAccessMode,
             .virtualInterface
         )
-        XCTAssertTrue(model.state.notice?.message.contains("请先停止代理") == true)
+        XCTAssertTrue(model.state.notice?.message.contains("安装 Mihomo") == true)
 
         model.stopProxy()
         try await waitUntil {
@@ -610,14 +796,15 @@ final class AppModelTests: XCTestCase {
         model.start()
         try await waitUntilReady(model)
 
-        model.setNetworkAccessMode(.systemProxy)
+        model.setSystemProxyEnabled(true)
         try await waitUntil {
-            model.state.localProxyConfiguration.networkAccessMode == .systemProxy
+            model.state.localProxyConfiguration.systemProxyEnabled
         }
         let activeBeforeStart = await systemProxy.isActive
         let storedBeforeStart = try await bootstrapper.loadLocalProxyConfiguration()
         XCTAssertFalse(activeBeforeStart)
-        XCTAssertEqual(storedBeforeStart.networkAccessMode, .systemProxy)
+        XCTAssertEqual(storedBeforeStart.networkAccessMode, .localProxy)
+        XCTAssertTrue(storedBeforeStart.systemProxyEnabled)
 
         model.startProxy()
         try await waitUntilAsync {
@@ -1009,7 +1196,7 @@ final class AppModelTests: XCTestCase {
                 && model.state.mihomoRuntime.providerSnapshot == providers
         }
 
-        model.testProxyGroup("GLOBAL")
+        model.testProxyGroup("GLOBAL", url: "https://example.com/generate_204")
         try await waitUntil {
             !model.isMihomoActionBusy
                 && model.state.mihomoRuntime.snapshot?.proxyGroups.first?.delays["edge"] == 128
@@ -1028,6 +1215,8 @@ final class AppModelTests: XCTestCase {
 
         let testedGroups = await apiClient.testedGroups
         XCTAssertEqual(testedGroups, ["GLOBAL"])
+        let testedURLs = await apiClient.testedURLs
+        XCTAssertEqual(testedURLs, ["https://example.com/generate_204"])
         XCTAssertTrue(model.state.mihomoRuntime.updatingProxyProviders.isEmpty)
         XCTAssertTrue(model.state.mihomoRuntime.updatingRuleProviders.isEmpty)
         await model.shutdown()
@@ -1556,22 +1745,20 @@ final class AppModelTests: XCTestCase {
         try await waitUntil { model.state.proxyCorePhase == .running }
         writer.fail(afterSuccessfulWrites: 2)
 
-        model.setNetworkAccessMode(.systemProxy)
+        model.setSystemProxyEnabled(true)
         try await waitUntilAsync {
             guard await systemProxy.enableCount == 1 else { return false }
             guard
-                model.state.localProxyConfiguration.networkAccessMode == .systemProxy,
+                model.state.localProxyConfiguration.systemProxyEnabled,
                 case .failed(let message) = model.state.systemProxyPhase
             else { return false }
             return message.contains("恢复系统代理偏好失败")
         }
 
         let stored = try await bootstrapper.loadLocalProxyConfiguration()
-        XCTAssertEqual(stored.networkAccessMode, .systemProxy)
-        XCTAssertEqual(
-            model.state.localProxyConfiguration.networkAccessMode,
-            stored.networkAccessMode
-        )
+        XCTAssertEqual(stored.networkAccessMode, .localProxy)
+        XCTAssertTrue(stored.systemProxyEnabled)
+        XCTAssertEqual(model.state.localProxyConfiguration, stored)
         XCTAssertTrue(model.state.notice?.message.contains("恢复原设置失败") == true)
         let isProxyCoreRunning = await proxyCore.isRunning
         XCTAssertTrue(isProxyCoreRunning)
@@ -3045,6 +3232,7 @@ private actor ControlledMihomoController: ProxyCoreControlling {
 private actor ControlledMihomoAPIClient: MihomoAPIControlling {
     private(set) var snapshotCount = 0
     private(set) var testedGroups: [String] = []
+    private(set) var testedURLs: [String] = []
     private(set) var updatedProxyProviders: [String] = []
     private(set) var updatedRuleProviders: [String] = []
     private(set) var connectionStreamCount = 0
@@ -3128,10 +3316,11 @@ private actor ControlledMihomoAPIClient: MihomoAPIControlling {
 
     func testProxyGroup(
         group: String,
-        url _: String,
+        url: String,
         timeoutMilliseconds _: Int
     ) async throws -> [String: Int] {
         testedGroups.append(group)
+        testedURLs.append(url)
         let delays = groupDelayResults[group] ?? [:]
         proxyGroups = proxyGroups.map { proxyGroup in
             guard proxyGroup.name == group else { return proxyGroup }
@@ -3140,7 +3329,8 @@ private actor ControlledMihomoAPIClient: MihomoAPIControlling {
                 type: proxyGroup.type,
                 selected: proxyGroup.selected,
                 candidates: proxyGroup.candidates,
-                delays: proxyGroup.delays.merging(delays) { _, latest in latest }
+                delays: proxyGroup.delays.merging(delays) { _, latest in latest },
+                candidateTypes: proxyGroup.candidateTypes
             )
         }
         return delays

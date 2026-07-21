@@ -33,6 +33,7 @@ final class MihomoAPIClientTests: XCTestCase {
         XCTAssertEqual(snapshot.proxyGroups.map(\.name), ["GLOBAL"])
         XCTAssertEqual(snapshot.proxyGroups.first?.selected, "edge")
         XCTAssertEqual(snapshot.proxyGroups.first?.delays["edge"], 128)
+        XCTAssertEqual(snapshot.proxyGroups.first?.candidateTypes["edge"], "VLESS")
         XCTAssertEqual(snapshot.connections.first?.metadata.destination, "example.com:443")
         XCTAssertEqual(snapshot.connections.first?.route, "edge -> GLOBAL")
         XCTAssertEqual(snapshot.rules.first?.index, 0)

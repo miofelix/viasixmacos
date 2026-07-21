@@ -113,6 +113,7 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
     public var logLevel: ProxyLogLevel
     public var routingMode: ProxyRoutingMode
     public var networkAccessMode: NetworkAccessMode
+    public var systemProxyEnabled: Bool
     public var tunStack: VirtualInterfaceStack
     public var tunMTU: Int
     public var tunStrictRoute: Bool
@@ -127,6 +128,7 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         logLevel: ProxyLogLevel = .warning,
         routingMode: ProxyRoutingMode = .rule,
         networkAccessMode: NetworkAccessMode = .localProxy,
+        systemProxyEnabled: Bool = false,
         tunStack: VirtualInterfaceStack = .mixed,
         tunMTU: Int = 1_500,
         tunStrictRoute: Bool = false
@@ -139,42 +141,16 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         self.bypassPrivateNetworks = bypassPrivateNetworks
         self.logLevel = logLevel
         self.routingMode = routingMode
-        self.networkAccessMode = networkAccessMode
+        if networkAccessMode == .systemProxy {
+            self.networkAccessMode = .localProxy
+            self.systemProxyEnabled = true
+        } else {
+            self.networkAccessMode = networkAccessMode
+            self.systemProxyEnabled = systemProxyEnabled
+        }
         self.tunStack = tunStack
         self.tunMTU = tunMTU
         self.tunStrictRoute = tunStrictRoute
-    }
-
-    /// Source-compatible initializer for callers that have not yet adopted
-    /// the mutually-exclusive network access mode.
-    public init(
-        listenAddress: String = AppMetadata.proxyHost,
-        port: Int = AppMetadata.proxyPort,
-        controllerPort: Int = AppMetadata.controllerPort,
-        udpEnabled: Bool = true,
-        sniffingEnabled: Bool = true,
-        bypassPrivateNetworks: Bool = true,
-        logLevel: ProxyLogLevel = .warning,
-        routingMode: ProxyRoutingMode = .rule,
-        systemProxyEnabled: Bool,
-        tunStack: VirtualInterfaceStack = .mixed,
-        tunMTU: Int = 1_500,
-        tunStrictRoute: Bool = false
-    ) {
-        self.init(
-            listenAddress: listenAddress,
-            port: port,
-            controllerPort: controllerPort,
-            udpEnabled: udpEnabled,
-            sniffingEnabled: sniffingEnabled,
-            bypassPrivateNetworks: bypassPrivateNetworks,
-            logLevel: logLevel,
-            routingMode: routingMode,
-            networkAccessMode: systemProxyEnabled ? .systemProxy : .localProxy,
-            tunStack: tunStack,
-            tunMTU: tunMTU,
-            tunStrictRoute: tunStrictRoute
-        )
     }
 
     public static let `default` = Self()
@@ -221,15 +197,21 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         routingMode =
             try container.decodeIfPresent(ProxyRoutingMode.self, forKey: .routingMode)
             ?? .rule
-        if let mode = try container.decodeIfPresent(
-            NetworkAccessMode.self,
-            forKey: .networkAccessMode
-        ) {
-            networkAccessMode = mode
+        let decodedMode =
+            try container.decodeIfPresent(
+                NetworkAccessMode.self,
+                forKey: .networkAccessMode
+            ) ?? .localProxy
+        let decodedSystemProxy = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .systemProxyEnabled
+        )
+        if decodedMode == .systemProxy {
+            networkAccessMode = .localProxy
+            systemProxyEnabled = true
         } else {
-            networkAccessMode =
-                try container.decodeIfPresent(Bool.self, forKey: .systemProxyEnabled) == true
-                ? .systemProxy : .localProxy
+            networkAccessMode = decodedMode
+            systemProxyEnabled = decodedSystemProxy ?? false
         }
         tunStack =
             try container.decodeIfPresent(VirtualInterfaceStack.self, forKey: .tunStack)
@@ -251,6 +233,7 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         try container.encode(logLevel, forKey: .logLevel)
         try container.encode(routingMode, forKey: .routingMode)
         try container.encode(networkAccessMode, forKey: .networkAccessMode)
+        try container.encode(systemProxyEnabled, forKey: .systemProxyEnabled)
         try container.encode(tunStack, forKey: .tunStack)
         try container.encode(tunMTU, forKey: .tunMTU)
         try container.encode(tunStrictRoute, forKey: .tunStrictRoute)
@@ -275,25 +258,15 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         guard (1_280...9_000).contains(copy.tunMTU) else {
             throw LocalProxyConfigurationError.invalidTunMTU
         }
+        if copy.networkAccessMode == .systemProxy {
+            copy.networkAccessMode = .localProxy
+            copy.systemProxyEnabled = true
+        }
         return copy
     }
 
     public var endpoint: ProxyEndpoint {
         ProxyEndpoint(host: listenAddress, port: port)
-    }
-
-    /// Compatibility for code compiled against the old independent toggle.
-    /// New persistence writes only `networkAccessMode`, preventing system proxy
-    /// and virtual-interface mode from being requested simultaneously.
-    public var systemProxyEnabled: Bool {
-        get { networkAccessMode.usesSystemProxy }
-        set {
-            if newValue {
-                networkAccessMode = .systemProxy
-            } else if networkAccessMode == .systemProxy {
-                networkAccessMode = .localProxy
-            }
-        }
     }
 
     static func isLoopbackHost(_ value: String) -> Bool {
