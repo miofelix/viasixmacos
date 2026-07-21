@@ -8,37 +8,40 @@ struct ProxiesView: View {
     @State private var optimisticRoutingMode: ProxyRoutingMode?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: VisualStyle.spacing16) {
-                AppPageHeader("代理", subtitle: "管理代理组与路由模式") {
-                    headerActions
-                }
-
-                searchField
-
-                if !model.state.isProxyRunning {
-                    unavailableCard
-                } else if let snapshot = model.state.mihomoRuntime.snapshot {
-                    if filteredGroups(in: snapshot).isEmpty {
-                        ContentUnavailableView(
-                            "没有匹配的代理组",
-                            systemImage: "magnifyingglass",
-                            description: Text("尝试清除搜索条件，或检查当前配置是否包含 proxy-groups。")
-                        )
-                        .frame(maxWidth: .infinity, minHeight: 320)
-                    } else {
-                        ForEach(filteredGroups(in: snapshot)) { group in
-                            proxyGroupCard(group)
-                        }
-                    }
-                } else {
-                    loadingCard
-                }
+        VStack(spacing: 0) {
+            AppPageHeader("代理", subtitle: "管理代理组与路由模式") {
+                headerActions
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, VisualStyle.spacing4)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
+                    searchField
+
+                    if !model.state.isProxyRunning {
+                        unavailableCard
+                    } else if let snapshot = model.state.mihomoRuntime.snapshot {
+                        if filteredGroups(in: snapshot).isEmpty {
+                            ContentUnavailableView(
+                                "没有匹配的代理组",
+                                systemImage: "magnifyingglass",
+                                description: Text("尝试清除搜索条件，或检查当前配置是否包含 proxy-groups。")
+                            )
+                            .frame(maxWidth: .infinity, minHeight: 320)
+                        } else {
+                            ForEach(filteredGroups(in: snapshot)) { group in
+                                proxyGroupCard(group)
+                            }
+                        }
+                    } else {
+                        loadingCard
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, VisualStyle.pageHorizontalPadding)
+                .padding(.vertical, VisualStyle.pageVerticalPadding)
+            }
+            .scrollbarSafeContent()
         }
-        .scrollbarSafeContent()
         .task(id: model.state.isProxyRunning) {
             if model.state.isProxyRunning { model.refreshMihomoProviders() }
         }

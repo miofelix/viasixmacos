@@ -14,10 +14,16 @@ struct NodesView: View {
     @State var resultSortOrder: [NodeResultSortComparator] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: VisualStyle.spacing16) {
+        VStack(spacing: 0) {
             pageHeader
-            speedTestCard
-            resultsCard
+
+            VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
+                speedTestCard
+                resultsCard
+            }
+            .padding(.horizontal, VisualStyle.pageHorizontalPadding)
+            .padding(.vertical, VisualStyle.pageVerticalPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {

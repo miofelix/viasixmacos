@@ -40,7 +40,6 @@ struct ServerConfigurationEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             if isLoading {
                 ProgressView("正在读取服务器配置…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -80,8 +79,6 @@ struct ServerConfigurationEditorView: View {
             .keyboardShortcut(.cancelAction)
             .disabled(isSaving)
         }
-        .padding(.horizontal, VisualStyle.spacing20)
-        .padding(.vertical, VisualStyle.spacing4)
     }
 
     private var form: some View {

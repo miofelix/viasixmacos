@@ -12,19 +12,23 @@ struct SettingsView: View {
     @State private var exitIPEndpointError: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: VisualStyle.spacing20) {
-                AppPageHeader("设置", subtitle: "连接、网络接入与运行组件")
+        VStack(spacing: 0) {
+            AppPageHeader("设置", subtitle: "连接、网络接入与运行组件")
 
-                serverConfigurationCard
-                localProxyCard
-                tunServiceCard
-                runtimeCard
-                dataCard
+            ScrollView {
+                VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
+                    serverConfigurationCard
+                    localProxyCard
+                    tunServiceCard
+                    runtimeCard
+                    dataCard
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, VisualStyle.pageHorizontalPadding)
+                .padding(.vertical, VisualStyle.pageVerticalPadding)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .scrollbarSafeContent()
         }
-        .scrollbarSafeContent()
         .onAppear {
             if exitIPEndpointDraft.isEmpty {
                 exitIPEndpointDraft = model.exitIPEndpoint

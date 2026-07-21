@@ -23,7 +23,7 @@ struct LogsView: View {
             ids: visibleLogIDs
         )
 
-        VStack(alignment: .leading, spacing: VisualStyle.spacing16) {
+        VStack(spacing: 0) {
             AppPageHeader(
                 "日志",
                 subtitle: "实时查看本地代理与节点测速记录"
@@ -177,6 +177,8 @@ struct LogsView: View {
                 )
             )
             .cardStyle()
+            .padding(.horizontal, VisualStyle.pageHorizontalPadding)
+            .padding(.vertical, VisualStyle.pageVerticalPadding)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onChange(of: filteredSnapshot) { previous, current in

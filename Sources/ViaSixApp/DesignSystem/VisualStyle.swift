@@ -3,7 +3,13 @@ import SwiftUI
 import ViaSixCore
 
 enum VisualStyle {
-    static let accent = Color(red: 0.29, green: 0.55, blue: 0.96)
+    static let accent = Color(
+        nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(srgbRed: 0.039, green: 0.518, blue: 1, alpha: 1)
+                : NSColor(srgbRed: 0, green: 0.478, blue: 1, alpha: 1)
+        }
+    )
     static let positive = Color(nsColor: .systemGreen)
     static let warning = Color(nsColor: .systemOrange)
     static let negative = Color(nsColor: .systemRed)
@@ -11,35 +17,35 @@ enum VisualStyle {
         nsColor: NSColor(name: nil) { appearance in
             let match = appearance.bestMatch(from: [.darkAqua, .aqua])
             if match == .darkAqua {
-                return NSColor(srgbRed: 0.075, green: 0.082, blue: 0.105, alpha: 1)
+                return NSColor(srgbRed: 0.118, green: 0.125, blue: 0.157, alpha: 1)
             }
-            return NSColor(srgbRed: 0.952, green: 0.958, blue: 0.97, alpha: 1)
+            return NSColor(srgbRed: 0.961, green: 0.961, blue: 0.961, alpha: 1)
         }
     )
     static let sidebarBackgroundColor = Color(
         nsColor: NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                ? NSColor(srgbRed: 0.15, green: 0.16, blue: 0.205, alpha: 1)
-                : NSColor(srgbRed: 0.975, green: 0.978, blue: 0.985, alpha: 1)
+                ? NSColor(srgbRed: 0.18, green: 0.188, blue: 0.239, alpha: 1)
+                : NSColor(srgbRed: 0.978, green: 0.978, blue: 0.978, alpha: 1)
         }
     )
     static let surfaceColor = Color(
         nsColor: NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                ? NSColor(srgbRed: 0.14, green: 0.15, blue: 0.19, alpha: 1)
+                ? NSColor(srgbRed: 0.157, green: 0.165, blue: 0.212, alpha: 1)
                 : NSColor.white
         }
     )
     static let elevatedSurfaceColor = Color(
         nsColor: NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                ? NSColor(srgbRed: 0.18, green: 0.19, blue: 0.24, alpha: 1)
-                : NSColor(srgbRed: 0.985, green: 0.988, blue: 0.995, alpha: 1)
+                ? NSColor(srgbRed: 0.188, green: 0.196, blue: 0.247, alpha: 1)
+                : NSColor(srgbRed: 0.976, green: 0.976, blue: 0.976, alpha: 1)
         }
     )
     static let selectedSurfaceColor = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
-    static let subtleFill = Color(nsColor: .quaternaryLabelColor).opacity(0.12)
-    static let surfaceBorder = Color(nsColor: .separatorColor).opacity(0.58)
+    static let subtleFill = Color.primary.opacity(0.045)
+    static let surfaceBorder = Color(nsColor: .separatorColor).opacity(0.5)
 
     static let spacing4: CGFloat = 4
     static let spacing8: CGFloat = 8
@@ -48,15 +54,15 @@ enum VisualStyle {
     static let spacing20: CGFloat = 20
     static let spacing24: CGFloat = 24
 
-    static let radiusSmall: CGFloat = 7
-    static let radiusMedium: CGFloat = 9
-    static let radiusLarge: CGFloat = 12
-    static let navigationRowHeight: CGFloat = 42
+    static let radiusSmall: CGFloat = 6
+    static let radiusMedium: CGFloat = 8
+    static let radiusLarge: CGFloat = 10
+    static let navigationRowHeight: CGFloat = 48
     static let settingsRowHeight: CGFloat = 52
-    static let pageHeaderHeight: CGFloat = 60
-    static let sidebarWidth: CGFloat = 224
-    static let pageHorizontalPadding: CGFloat = 22
-    static let pageVerticalPadding: CGFloat = 20
+    static let pageHeaderHeight: CGFloat = 58
+    static let sidebarWidth: CGFloat = 200
+    static let pageHorizontalPadding: CGFloat = 12
+    static let pageVerticalPadding: CGFloat = 10
     static let controlHeight: CGFloat = 34
     static let iconButtonSize: CGFloat = 34
     static let disclosureHitTarget: CGFloat = 44
@@ -112,6 +118,27 @@ extension ProxyRoutingMode {
             "所有经过本地代理的流量都通过代理节点。"
         case .direct:
             "所有经过本地代理的流量都直接连接。"
+        }
+    }
+}
+
+extension NetworkAccessMode {
+    var appSystemImage: String {
+        switch self {
+        case .localProxy: "dot.radiowaves.left.and.right"
+        case .systemProxy: "laptopcomputer"
+        case .virtualInterface: "point.3.filled.connected.trianglepath.dotted"
+        }
+    }
+
+    var appDescription: String {
+        switch self {
+        case .localProxy:
+            "仅提供本机 mixed 代理端口，不修改 macOS 网络设置。"
+        case .systemProxy:
+            "让遵循 macOS 代理设置的应用通过 ViaSix 访问网络。"
+        case .virtualInterface:
+            "通过 TUN 接管不支持系统代理的应用流量。"
         }
     }
 }
@@ -195,6 +222,50 @@ private struct ProxyRoutingModeButtonStyle: ButtonStyle {
     }
 }
 
+struct NetworkAccessModePicker: View {
+    @Binding var selection: NetworkAccessMode
+    var isModeDisabled: (NetworkAccessMode) -> Bool = { _ in false }
+    var showsDescription = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                ForEach(NetworkAccessMode.allCases, id: \.rawValue) { mode in
+                    Button {
+                        selection = mode
+                    } label: {
+                        Label(mode.displayName, systemImage: mode.appSystemImage)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                    }
+                    .buttonStyle(
+                        ProxyRoutingModeButtonStyle(isSelected: selection == mode)
+                    )
+                    .disabled(isModeDisabled(mode))
+                    .help(mode.appDescription)
+                    .accessibilityLabel("网络接入：\(mode.displayName)")
+                    .accessibilityValue(selection == mode ? "当前" : "")
+                }
+            }
+
+            if showsDescription {
+                Text(selection.appDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(VisualStyle.subtleFill, in: RoundedRectangle(cornerRadius: 7))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(VisualStyle.accent.opacity(0.32), lineWidth: 1)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
 struct CardModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
@@ -210,9 +281,8 @@ struct CardModifier: ViewModifier {
                     cornerRadius: VisualStyle.radiusMedium,
                     style: .continuous
                 )
-                .stroke(VisualStyle.surfaceBorder, lineWidth: 1)
+                .stroke(VisualStyle.surfaceBorder.opacity(0.28), lineWidth: 0.5)
             }
-            .shadow(color: .black.opacity(0.045), radius: 3, y: 1)
     }
 }
 
@@ -261,24 +331,23 @@ struct AppPageHeader<Trailing: View>: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: VisualStyle.spacing16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 21, weight: .bold))
-                    .lineLimit(1)
-
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            Text(title)
+                .font(.system(size: 20, weight: .semibold))
+                .lineLimit(1)
 
             Spacer(minLength: VisualStyle.spacing16)
             trailing
         }
-        .frame(minHeight: VisualStyle.pageHeaderHeight)
+        .padding(.horizontal, VisualStyle.spacing20)
+        .frame(maxWidth: .infinity, minHeight: VisualStyle.pageHeaderHeight)
+        .background(VisualStyle.surfaceColor)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(VisualStyle.surfaceBorder)
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityHint(subtitle ?? "")
     }
 }
 
@@ -311,9 +380,9 @@ struct CardHeader<Trailing: View>: View {
     var body: some View {
         HStack(spacing: VisualStyle.spacing12) {
             Image(systemName: systemImage)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(tone.color)
-                .frame(width: 34, height: 34)
+                .frame(width: 38, height: 38)
                 .background(
                     tone.color.opacity(0.11),
                     in: RoundedRectangle(
@@ -323,14 +392,14 @@ struct CardHeader<Trailing: View>: View {
                 )
 
             Text(title)
-                .font(.headline)
+                .font(.system(size: 17, weight: .medium))
                 .lineLimit(1)
 
             Spacer(minLength: VisualStyle.spacing12)
             trailing
         }
         .padding(.horizontal, VisualStyle.spacing16)
-        .padding(.vertical, 11)
+        .padding(.vertical, VisualStyle.spacing8)
     }
 }
 

@@ -1,4 +1,5 @@
 import AppKit
+import Charts
 import SwiftUI
 import ViaSixCore
 
@@ -18,7 +19,7 @@ struct RootView: View {
         }
         .background(VisualStyle.pageBackgroundColor)
         .tint(VisualStyle.accent)
-        .frame(minWidth: 900, minHeight: 640)
+        .frame(minWidth: 860, minHeight: 620)
         .comfortableInterface()
         .animation(VisualStyle.standardAnimation, value: model.state.notice?.id)
     }
@@ -32,37 +33,31 @@ struct RootView: View {
                     sidebarNavigationButton(section)
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
 
             Spacer(minLength: VisualStyle.spacing16)
 
             sidebarProxyPanel
-                .padding(12)
         }
         .frame(width: VisualStyle.sidebarWidth)
         .background(VisualStyle.sidebarBackgroundColor)
     }
 
     private var brandHeader: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 10) {
             Image(nsImage: NSApplication.shared.applicationIconImage)
                 .resizable()
                 .interpolation(.high)
-                .frame(width: 34, height: 34)
+                .frame(width: 32, height: 32)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(AppMetadata.name)
-                    .font(.system(size: 18, weight: .bold))
-                Text("网络代理与节点测速")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
+            Text(AppMetadata.name)
+                .font(.system(size: 19, weight: .bold))
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 18)
-        .padding(.bottom, 20)
+        .padding(.horizontal, 18)
+        .padding(.top, 19)
+        .padding(.bottom, 18)
     }
 
     private func sidebarNavigationButton(_ section: AppSection) -> some View {
@@ -73,19 +68,19 @@ struct RootView: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: section.systemImage)
-                    .font(.system(size: 15, weight: isSelected ? .semibold : .medium))
-                    .frame(width: 20)
+                    .font(.system(size: 17, weight: isSelected ? .semibold : .medium))
+                    .frame(width: 22)
 
                 Text(section.title)
-                    .font(.callout.weight(isSelected ? .semibold : .medium))
+                    .font(.system(size: 15, weight: isSelected ? .semibold : .medium))
 
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(isSelected ? VisualStyle.accent : Color.primary)
-            .padding(.horizontal, 13)
+            .foregroundStyle(Color.primary)
+            .padding(.horizontal, 12)
             .frame(height: VisualStyle.navigationRowHeight)
             .background(
-                isSelected ? VisualStyle.accent.opacity(0.13) : .clear,
+                isSelected ? VisualStyle.accent.opacity(0.14) : .clear,
                 in: RoundedRectangle(
                     cornerRadius: VisualStyle.radiusSmall,
                     style: .continuous
@@ -99,7 +94,35 @@ struct RootView: View {
     }
 
     private var sidebarProxyPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+
+            SidebarTrafficSparkline(samples: model.state.mihomoRuntime.trafficSamples)
+                .frame(height: 42)
+
+            sidebarMetricRow(
+                icon: "arrow.up",
+                title: "上传",
+                value: RuntimePresentation.speed(model.state.mihomoRuntime.uploadSpeed),
+                tone: .warning
+            )
+            sidebarMetricRow(
+                icon: "arrow.down",
+                title: "下载",
+                value: RuntimePresentation.speed(model.state.mihomoRuntime.downloadSpeed),
+                tone: .accent
+            )
+            sidebarMetricRow(
+                icon: "memorychip",
+                title: "内存",
+                value: RuntimePresentation.byteCount(
+                    model.state.mihomoRuntime.snapshot?.memoryUsage ?? 0
+                ),
+                tone: .neutral
+            )
+
+            Divider()
+
             HStack(spacing: 8) {
                 Circle()
                     .fill(sidebarPresentation.tone.color)
@@ -126,36 +149,6 @@ struct RootView: View {
                     .textSelection(.enabled)
             }
 
-            if let detail = sidebarPresentation.detailText {
-                Text(detail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if model.state.isProxyRunning, let snapshot = model.state.mihomoRuntime.snapshot {
-                Divider()
-
-                HStack(spacing: 0) {
-                    sidebarMetric(
-                        icon: "arrow.up",
-                        value: RuntimePresentation.speed(model.state.mihomoRuntime.uploadSpeed),
-                        tone: .warning
-                    )
-                    sidebarMetric(
-                        icon: "arrow.down",
-                        value: RuntimePresentation.speed(model.state.mihomoRuntime.downloadSpeed),
-                        tone: .accent
-                    )
-                    sidebarMetric(
-                        icon: "link",
-                        value: "\(snapshot.connections.count)",
-                        tone: .positive
-                    )
-                }
-            }
-
             Button(action: performSidebarAction) {
                 Label(
                     sidebarPresentation.actionTitle,
@@ -173,35 +166,33 @@ struct RootView: View {
             .accessibilityLabel(sidebarActionHelp)
             .accessibilityValue(sidebarPresentation.statusTitle)
         }
-        .padding(12)
-        .background(
-            VisualStyle.surfaceColor,
-            in: RoundedRectangle(
-                cornerRadius: VisualStyle.radiusMedium,
-                style: .continuous
-            )
-        )
-        .overlay {
-            RoundedRectangle(
-                cornerRadius: VisualStyle.radiusMedium,
-                style: .continuous
-            )
-            .stroke(VisualStyle.surfaceBorder)
-        }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 12)
     }
 
-    private func sidebarMetric(icon: String, value: String, tone: AppTone) -> some View {
-        VStack(spacing: 4) {
+    private func sidebarMetricRow(
+        icon: String,
+        title: String,
+        value: String,
+        tone: AppTone
+    ) -> some View {
+        HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.caption2.weight(.bold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(tone.color)
-            Text(value)
-                .font(.caption2.monospacedDigit())
+                .frame(width: 16)
+
+            Text(title)
+                .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Spacer(minLength: 4)
+
+            Text(value)
+                .font(.caption.monospacedDigit())
                 .lineLimit(1)
-                .minimumScaleFactor(0.65)
+                .minimumScaleFactor(0.7)
         }
-        .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
     }
 
@@ -211,10 +202,7 @@ struct RootView: View {
                 .ignoresSafeArea()
 
             detailContent
-                .frame(maxWidth: 1_160, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.horizontal, VisualStyle.pageHorizontalPadding)
-                .padding(.vertical, VisualStyle.pageVerticalPadding)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             if let notice = model.state.notice {
                 NoticeView(
@@ -226,7 +214,7 @@ struct RootView: View {
                         model.clearNotice()
                     }
                 )
-                .padding(22)
+                .padding(14)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -360,6 +348,51 @@ struct RootView: View {
                 "启动本地代理"
             }
         }
+    }
+}
+
+private struct SidebarTrafficSparkline: View {
+    let samples: [AppState.MihomoTrafficSample]
+
+    var body: some View {
+        Chart {
+            if samples.count < 2 {
+                RuleMark(y: .value("空闲", 0))
+                    .foregroundStyle(VisualStyle.surfaceBorder)
+            } else {
+                ForEach(samples) { sample in
+                    LineMark(
+                        x: .value("时间", sample.timestamp),
+                        y: .value("下载", sample.downloadSpeed)
+                    )
+                    .foregroundStyle(VisualStyle.accent)
+                    .lineStyle(StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+                    .interpolationMethod(.catmullRom)
+
+                    LineMark(
+                        x: .value("时间", sample.timestamp),
+                        y: .value("上传", sample.uploadSpeed)
+                    )
+                    .foregroundStyle(VisualStyle.warning)
+                    .lineStyle(StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round))
+                    .interpolationMethod(.catmullRom)
+                }
+            }
+        }
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartYScale(domain: 0...chartMaximum)
+        .accessibilityLabel("侧栏实时流量趋势")
+    }
+
+    private var chartMaximum: Int64 {
+        max(
+            1,
+            Int64(
+                Double(samples.map { max($0.uploadSpeed, $0.downloadSpeed) }.max() ?? 0)
+                    * 1.15
+            )
+        )
     }
 }
 

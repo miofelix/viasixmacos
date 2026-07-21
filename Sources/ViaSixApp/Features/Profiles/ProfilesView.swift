@@ -13,29 +13,32 @@ struct ProfilesView: View {
     @State private var showsManualEditor = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: VisualStyle.spacing16) {
-                AppPageHeader("配置", subtitle: "管理 ViaSix 使用的 Mihomo 配置档") {
-                    HStack(spacing: VisualStyle.spacing8) {
-                        Button("导入", systemImage: "square.and.arrow.down") {
-                            showsImporter = true
-                        }
-                        Button("新建", systemImage: "plus") {
-                            showsManualEditor = true
-                        }
-                        .buttonStyle(.borderedProminent)
+        VStack(spacing: 0) {
+            AppPageHeader("配置", subtitle: "管理 ViaSix 使用的 Mihomo 配置档") {
+                HStack(spacing: VisualStyle.spacing8) {
+                    Button("导入", systemImage: "square.and.arrow.down") {
+                        showsImporter = true
                     }
-                    .disabled(configurationEditingDisabled)
+                    Button("新建", systemImage: "plus") {
+                        showsManualEditor = true
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-
-                currentProfileCard
-                profileActionsCard
-                safetyCard
+                .disabled(configurationEditingDisabled)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, VisualStyle.spacing4)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
+                    currentProfileCard
+                    profileActionsCard
+                    safetyCard
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, VisualStyle.pageHorizontalPadding)
+                .padding(.vertical, VisualStyle.pageVerticalPadding)
+            }
+            .scrollbarSafeContent()
         }
-        .scrollbarSafeContent()
         .task { await reloadSummary() }
         .onChange(of: model.state.templateOperationPhase) { previous, current in
             guard previous != .idle, current == .idle else { return }

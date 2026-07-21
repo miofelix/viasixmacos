@@ -23,7 +23,6 @@ struct MihomoProfileEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             editorHeader
-            Divider()
 
             if let loadError, originalData == nil {
                 loadFailureView(loadError)
@@ -97,8 +96,6 @@ struct MihomoProfileEditorView: View {
                 .disabled(isSaving)
             }
         }
-        .padding(.horizontal, VisualStyle.spacing20)
-        .padding(.vertical, VisualStyle.spacing4)
     }
 
     private var editorContent: some View {

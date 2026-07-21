@@ -10,7 +10,7 @@ struct ConnectionsView: View {
     @State private var showsCloseAllConfirmation = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: VisualStyle.spacing16) {
+        VStack(spacing: 0) {
             AppPageHeader("连接", subtitle: "查看当前会话与最近关闭的网络连接") {
                 HStack(spacing: VisualStyle.spacing8) {
                     StatusBadge(
@@ -39,12 +39,17 @@ struct ConnectionsView: View {
                 }
             }
 
-            if !model.state.isProxyRunning {
-                unavailable
-            } else {
-                summaryStrip
-                connectionList
+            VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
+                if !model.state.isProxyRunning {
+                    unavailable
+                } else {
+                    summaryStrip
+                    connectionList
+                }
             }
+            .padding(.horizontal, VisualStyle.pageHorizontalPadding)
+            .padding(.vertical, VisualStyle.pageVerticalPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .sheet(item: $selectedRecord) { record in

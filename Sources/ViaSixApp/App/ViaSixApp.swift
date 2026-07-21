@@ -37,7 +37,6 @@ struct ViaSixMacApp: App {
             SettingsView()
                 .environment(model)
                 .frame(minWidth: 700, idealWidth: 760, minHeight: 600, idealHeight: 720)
-                .padding(28)
                 .comfortableInterface()
                 .task {
                     model.start()

@@ -12,36 +12,39 @@ struct OverviewView: View {
     @State private var optimisticRoutingMode: ProxyRoutingMode?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: VisualStyle.spacing16) {
-                pageHeader
+        VStack(spacing: 0) {
+            pageHeader
 
-                if runtimeNeedsAttention {
-                    runtimeBanner
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
+                    if runtimeNeedsAttention {
+                        runtimeBanner
+                    }
 
-                LazyVGrid(
-                    columns: [
-                        GridItem(
-                            .adaptive(minimum: 350),
-                            spacing: VisualStyle.spacing16,
-                            alignment: .top
-                        )
-                    ],
-                    alignment: .leading,
-                    spacing: VisualStyle.spacing16
-                ) {
-                    connectionCard
-                    routingModeCard
-                    networkAccessCard
-                    runtimeActivityCard
-                    exitIPCard
+                    LazyVGrid(
+                        columns: [
+                            GridItem(
+                                .adaptive(minimum: 350),
+                                spacing: VisualStyle.spacing12,
+                                alignment: .top
+                            )
+                        ],
+                        alignment: .leading,
+                        spacing: VisualStyle.spacing12
+                    ) {
+                        connectionCard
+                        routingModeCard
+                        networkAccessCard
+                        runtimeActivityCard
+                        exitIPCard
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, VisualStyle.pageHorizontalPadding)
+                .padding(.vertical, VisualStyle.pageVerticalPadding)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, VisualStyle.spacing4)
+            .scrollbarSafeContent()
         }
-        .scrollbarSafeContent()
         .onChange(of: model.state.localProxyConfiguration.routingMode) { _, mode in
             if optimisticRoutingMode == mode {
                 optimisticRoutingMode = nil
@@ -347,33 +350,25 @@ struct OverviewView: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 0) {
-                    SettingRow(
-                        "系统代理",
-                        detail: "让遵循 macOS 代理设置的应用使用 ViaSix",
-                        systemImage: "desktopcomputer"
-                    ) {
-                        Toggle("系统代理", isOn: systemProxyEnabledBinding)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .disabled(systemProxyToggleDisabled)
-                            .accessibilityLabel("系统代理")
-                            .accessibilityValue(systemProxyStatusText)
-                    }
+                    NetworkAccessModePicker(
+                        selection: networkAccessModeBinding,
+                        isModeDisabled: networkAccessModeDisabled
+                    )
+                    .padding(.top, VisualStyle.spacing16)
 
                     Divider()
+                        .padding(.top, VisualStyle.spacing16)
 
                     SettingRow(
-                        "虚拟网卡模式",
-                        detail: "通过 TUN 接管不支持系统代理的应用流量",
-                        systemImage: "point.3.filled.connected.trianglepath.dotted"
+                        model.state.localProxyConfiguration.networkAccessMode.displayName,
+                        detail: networkAccessFooter,
+                        systemImage: model.state.localProxyConfiguration.networkAccessMode.appSystemImage
                     ) {
-                        Toggle("虚拟网卡模式", isOn: tunEnabledBinding)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .disabled(tunToggleDisabled)
-                            .help(tunToggleHelp)
-                            .accessibilityLabel("虚拟网卡模式")
-                            .accessibilityValue(tunStatusText)
+                        StatusBadge(
+                            networkAccessStatusText,
+                            tone: networkAccessTone,
+                            systemImage: networkAccessStatusSystemImage
+                        )
                     }
 
                     Divider()
@@ -410,11 +405,6 @@ struct OverviewView: View {
                         .padding(.vertical, VisualStyle.spacing12)
                     }
 
-                    Text(networkAccessFooter)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, VisualStyle.spacing12)
                 }
                 .padding(.horizontal, VisualStyle.spacing16)
                 .padding(.bottom, VisualStyle.spacing16)
@@ -868,19 +858,26 @@ struct OverviewView: View {
         optimisticRoutingMode = model.isRoutingModeChanging ? mode : nil
     }
 
-    private var systemProxyEnabledBinding: Binding<Bool> {
+    private var networkAccessModeBinding: Binding<NetworkAccessMode> {
         Binding {
-            model.state.localProxyConfiguration.networkAccessMode.usesSystemProxy
-        } set: { enabled in
-            model.setNetworkAccessMode(enabled ? .systemProxy : .localProxy)
+            model.state.localProxyConfiguration.networkAccessMode
+        } set: { mode in
+            model.setNetworkAccessMode(mode)
         }
     }
 
-    private var tunEnabledBinding: Binding<Bool> {
-        Binding {
-            model.state.localProxyConfiguration.networkAccessMode.usesVirtualInterface
-        } set: { enabled in
-            model.setNetworkAccessMode(enabled ? .virtualInterface : .localProxy)
+    private func networkAccessModeDisabled(_ mode: NetworkAccessMode) -> Bool {
+        let current = model.state.localProxyConfiguration.networkAccessMode
+        if mode == current { return false }
+        switch mode {
+        case .localProxy:
+            return current == .virtualInterface
+                ? tunToggleDisabled
+                : systemProxyToggleDisabled
+        case .systemProxy:
+            return systemProxyToggleDisabled
+        case .virtualInterface:
+            return tunToggleDisabled
         }
     }
 
@@ -932,14 +929,6 @@ struct OverviewView: View {
         }
         return !model.state.localProxyConfiguration.networkAccessMode.usesVirtualInterface
             && !model.canUseTunMode
-    }
-
-    private var tunToggleHelp: String {
-        if model.state.isProxyRunning { return "请先停止代理，再切换虚拟网卡接入方式" }
-        if !model.canUseTunMode { return "请先在设置中安装、批准并准备虚拟网卡服务" }
-        return model.state.localProxyConfiguration.networkAccessMode.usesVirtualInterface
-            ? "关闭虚拟网卡，改为仅保留本地监听"
-            : "使用 TUN 接管系统流量"
     }
 
     private var tunStatusText: String {

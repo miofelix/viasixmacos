@@ -8,7 +8,7 @@ struct RulesView: View {
     @State private var showsProviders = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: VisualStyle.spacing16) {
+        VStack(spacing: 0) {
             AppPageHeader("规则", subtitle: "检查当前 Mihomo 配置的路由顺序与目标策略") {
                 HStack(spacing: VisualStyle.spacing8) {
                     Button("Provider", systemImage: "shippingbox") {
@@ -29,18 +29,23 @@ struct RulesView: View {
                 }
             }
 
-            if !model.state.isProxyRunning {
-                SurfaceCard {
-                    ContentUnavailableView(
-                        "Mihomo 尚未运行",
-                        systemImage: "arrow.triangle.branch",
-                        description: Text("启动本地代理后，可以查看内核实际加载的规则。")
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Group {
+                if !model.state.isProxyRunning {
+                    SurfaceCard {
+                        ContentUnavailableView(
+                            "Mihomo 尚未运行",
+                            systemImage: "arrow.triangle.branch",
+                            description: Text("启动本地代理后，可以查看内核实际加载的规则。")
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                } else {
+                    rulesCard
                 }
-            } else {
-                rulesCard
             }
+            .padding(.horizontal, VisualStyle.pageHorizontalPadding)
+            .padding(.vertical, VisualStyle.pageVerticalPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: model.state.isProxyRunning) {

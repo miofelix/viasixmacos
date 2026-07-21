@@ -30,9 +30,6 @@ struct LocalProxySettingsView: View {
                 .keyboardShortcut(.cancelAction)
                 .disabled(isSaving)
             }
-            .padding(.horizontal, VisualStyle.spacing20)
-            .padding(.vertical, VisualStyle.spacing4)
-            Divider()
 
             if isLoading {
                 ProgressView("正在读取本机设置…")
@@ -108,16 +105,13 @@ struct LocalProxySettingsView: View {
 
     private var networkAccessSection: some View {
         ConfigurationSection("网络接入", systemImage: "network") {
-            Picker("网络接入", selection: networkAccessModeSelection) {
-                ForEach(NetworkAccessMode.allCases, id: \.self) { mode in
-                    Text(mode.displayName)
-                        .tag(mode)
-                        .disabled(mode == .virtualInterface && !model.canUseTunMode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .disabled(isSaving)
+            NetworkAccessModePicker(
+                selection: networkAccessModeSelection,
+                isModeDisabled: { mode in
+                    isSaving || (mode == .virtualInterface && !model.canUseTunMode)
+                },
+                showsDescription: false
+            )
 
             Text(networkAccessDescription)
                 .font(.caption)
