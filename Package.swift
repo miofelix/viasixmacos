@@ -53,7 +53,10 @@ let package = Package(
         ),
         .target(
             name: "ViaSixTunHelperSupport",
-            dependencies: ["ViaSixPrivilegedProtocol"]
+            dependencies: ["ViaSixPrivilegedProtocol"],
+            linkerSettings: [
+                .linkedFramework("Security")
+            ]
         ),
         .executableTarget(
             name: "ViaSixApp",

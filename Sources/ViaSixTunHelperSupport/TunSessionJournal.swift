@@ -65,6 +65,7 @@ public struct TunSessionJournal: Codable, Equatable, Sendable {
 public enum TunSessionJournalError: LocalizedError, Equatable, Sendable {
     case invalidRootDirectory(String)
     case insecureOwnership(expected: UInt32, actual: UInt32)
+    case insecureGroup(expected: UInt32, actual: UInt32)
     case insecurePermissions(UInt16)
     case invalidJournalFile(String)
     case journalTooLarge(Int64)
@@ -80,6 +81,8 @@ public enum TunSessionJournalError: LocalizedError, Equatable, Sendable {
             "虚拟网卡恢复目录无效：\(path)"
         case .insecureOwnership(let expected, let actual):
             "虚拟网卡恢复目录所有者无效（需要 \(expected)，实际 \(actual)）"
+        case .insecureGroup(let expected, let actual):
+            "虚拟网卡恢复目录所属组无效（需要 \(expected)，实际 \(actual)）"
         case .insecurePermissions(let mode):
             "虚拟网卡恢复目录权限不安全：\(String(mode, radix: 8))"
         case .invalidJournalFile(let reason):
@@ -115,13 +118,16 @@ public struct TunSessionJournalStore: Sendable {
 
     public let rootDirectoryURL: URL
     public let expectedOwnerUserIdentifier: UInt32
+    public let expectedOwnerGroupIdentifier: UInt32
 
     public init(
         rootDirectoryURL: URL = Self.systemDirectory,
-        expectedOwnerUserIdentifier: UInt32 = 0
+        expectedOwnerUserIdentifier: UInt32 = 0,
+        expectedOwnerGroupIdentifier: UInt32 = 0
     ) {
         self.rootDirectoryURL = rootDirectoryURL.standardizedFileURL
         self.expectedOwnerUserIdentifier = expectedOwnerUserIdentifier
+        self.expectedOwnerGroupIdentifier = expectedOwnerGroupIdentifier
     }
 
     public func load() throws -> TunSessionJournal? {
@@ -201,6 +207,19 @@ public struct TunSessionJournalStore: Sendable {
             }
         }
 
+        guard
+            fchown(
+                descriptor,
+                expectedOwnerUserIdentifier,
+                expectedOwnerGroupIdentifier
+            ) == 0
+        else {
+            throw posixError("fchown(temporary journal)")
+        }
+        guard fchmod(descriptor, mode_t(S_IRUSR | S_IWUSR)) == 0 else {
+            throw posixError("fchmod(temporary journal)")
+        }
+
         try data.withUnsafeBytes { rawBuffer in
             guard var baseAddress = rawBuffer.baseAddress else { return }
             var remaining = rawBuffer.count
@@ -256,11 +275,13 @@ public struct TunSessionJournalStore: Sendable {
         guard parent >= 0 else { throw posixError("open(journal parent)") }
         defer { close(parent) }
 
-        if createIfMissing,
-            mkdirat(parent, directoryName, mode_t(S_IRWXU)) != 0,
-            errno != EEXIST
-        {
-            throw posixError("mkdirat(journal directory)")
+        var created = false
+        if createIfMissing {
+            if mkdirat(parent, directoryName, mode_t(S_IRWXU)) == 0 {
+                created = true
+            } else if errno != EEXIST {
+                throw posixError("mkdirat(journal directory)")
+            }
         }
 
         let directory = openat(
@@ -271,6 +292,25 @@ public struct TunSessionJournalStore: Sendable {
         guard directory >= 0 else { throw posixError("openat(journal directory)") }
 
         do {
+            if created {
+                guard
+                    fchown(
+                        directory,
+                        expectedOwnerUserIdentifier,
+                        expectedOwnerGroupIdentifier
+                    ) == 0
+                else {
+                    throw posixError("fchown(journal directory)")
+                }
+                guard fchmod(directory, mode_t(S_IRWXU)) == 0 else {
+                    throw posixError("fchmod(journal directory)")
+                }
+            } else {
+                try migrateLegacyRootGroupIfSafe(
+                    directory,
+                    parent: parent
+                )
+            }
             var metadata = stat()
             guard fstat(directory, &metadata) == 0 else {
                 throw posixError("fstat(journal directory)")
@@ -282,6 +322,12 @@ public struct TunSessionJournalStore: Sendable {
                 throw TunSessionJournalError.insecureOwnership(
                     expected: expectedOwnerUserIdentifier,
                     actual: metadata.st_uid
+                )
+            }
+            guard metadata.st_gid == expectedOwnerGroupIdentifier else {
+                throw TunSessionJournalError.insecureGroup(
+                    expected: expectedOwnerGroupIdentifier,
+                    actual: metadata.st_gid
                 )
             }
             if metadata.st_mode & mode_t(S_IRWXG | S_IRWXO) != 0 {
@@ -310,11 +356,53 @@ public struct TunSessionJournalStore: Sendable {
                 actual: metadata.st_uid
             )
         }
+        guard metadata.st_gid == expectedOwnerGroupIdentifier else {
+            throw TunSessionJournalError.insecureGroup(
+                expected: expectedOwnerGroupIdentifier,
+                actual: metadata.st_gid
+            )
+        }
         let exposedPermissions = metadata.st_mode & mode_t(S_IRWXG | S_IRWXO)
         guard exposedPermissions == 0 else {
             throw TunSessionJournalError.insecurePermissions(UInt16(metadata.st_mode & 0o777))
         }
         return metadata
+    }
+
+    private func migrateLegacyRootGroupIfSafe(
+        _ directory: Int32,
+        parent: Int32
+    ) throws {
+        var metadata = stat()
+        guard fstat(directory, &metadata) == 0 else {
+            throw posixError("fstat(journal directory migration)")
+        }
+        guard
+            metadata.st_gid != expectedOwnerGroupIdentifier,
+            metadata.st_uid == expectedOwnerUserIdentifier,
+            UInt16(metadata.st_mode & 0o7777) == 0o700,
+            UInt32(geteuid()) == expectedOwnerUserIdentifier
+        else { return }
+
+        // Older builds inherited group `admin` from /Library/Application
+        // Support. With owner root and mode 0700, changing only the group to
+        // wheel does not widen access and keeps Runtime and journal contracts
+        // consistent across upgrades.
+        guard
+            fchown(
+                directory,
+                expectedOwnerUserIdentifier,
+                expectedOwnerGroupIdentifier
+            ) == 0
+        else {
+            throw posixError("fchown(legacy journal directory)")
+        }
+        guard fsync(directory) == 0 else {
+            throw posixError("fsync(legacy journal directory)")
+        }
+        guard fsync(parent) == 0 else {
+            throw posixError("fsync(journal parent)")
+        }
     }
 
     private func posixError(_ operation: String) -> TunSessionJournalError {

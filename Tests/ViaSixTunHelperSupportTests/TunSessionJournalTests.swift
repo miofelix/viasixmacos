@@ -22,6 +22,11 @@ final class TunSessionJournalTests: XCTestCase {
             let journalMode = try fileMode(at: root.appendingPathComponent("tun-session.json"))
             XCTAssertEqual(directoryMode & 0o777, 0o700)
             XCTAssertEqual(journalMode & 0o777, 0o600)
+            XCTAssertEqual(try fileGroup(at: root), UInt32(getegid()))
+            XCTAssertEqual(
+                try fileGroup(at: root.appendingPathComponent("tun-session.json")),
+                UInt32(getegid())
+            )
 
             try store.remove()
             try store.remove()
@@ -46,6 +51,21 @@ final class TunSessionJournalTests: XCTestCase {
                 XCTAssertEqual(operation, "openat(journal)")
                 XCTAssertEqual(code, ELOOP)
             }
+        }
+    }
+
+    func testSecureLegacyRootGroupIsNormalized() throws {
+        try withStore { store, root in
+            _ = try store.load()
+            guard let legacyGroup = supplementaryGroupDifferentFromEffectiveGroup() else {
+                throw XCTSkip("No alternate supplementary group is available")
+            }
+            guard chown(root.path, uid_t.max, legacyGroup) == 0 else {
+                throw XCTSkip("Cannot assign the simulated legacy group")
+            }
+
+            XCTAssertNil(try store.load())
+            XCTAssertEqual(try fileGroup(at: root), UInt32(getegid()))
         }
     }
 
@@ -171,7 +191,8 @@ final class TunSessionJournalTests: XCTestCase {
 
         let store = TunSessionJournalStore(
             rootDirectoryURL: root,
-            expectedOwnerUserIdentifier: UInt32(geteuid())
+            expectedOwnerUserIdentifier: UInt32(geteuid()),
+            expectedOwnerGroupIdentifier: UInt32(getegid())
         )
         try body(store, root)
     }
@@ -182,5 +203,20 @@ final class TunSessionJournalTests: XCTestCase {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
         return metadata.st_mode
+    }
+
+    private func fileGroup(at url: URL) throws -> UInt32 {
+        var metadata = stat()
+        guard lstat(url.path, &metadata) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        return metadata.st_gid
+    }
+
+    private func supplementaryGroupDifferentFromEffectiveGroup() -> gid_t? {
+        var groups = [gid_t](repeating: 0, count: Int(NGROUPS_MAX))
+        let count = getgroups(Int32(groups.count), &groups)
+        guard count > 0 else { return nil }
+        return groups.prefix(Int(count)).first { $0 != getegid() }
     }
 }
