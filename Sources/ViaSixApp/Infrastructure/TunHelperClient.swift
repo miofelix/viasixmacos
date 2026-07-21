@@ -12,7 +12,37 @@ protocol TunHelperConnection: AnyObject, Sendable {
     func invalidate()
 }
 
-extension NSXPCConnection: TunHelperConnection {}
+private final class LiveTunHelperConnection: TunHelperConnection, @unchecked Sendable {
+    private let connection: NSXPCConnection
+
+    init(connection: NSXPCConnection) {
+        self.connection = connection
+    }
+
+    var interruptionHandler: (() -> Void)? {
+        get { connection.interruptionHandler }
+        set { connection.interruptionHandler = newValue }
+    }
+
+    var invalidationHandler: (() -> Void)? {
+        get { connection.invalidationHandler }
+        set { connection.invalidationHandler = newValue }
+    }
+
+    func remoteObjectProxyWithErrorHandler(
+        _ handler: @escaping (any Error) -> Void
+    ) -> Any {
+        connection.remoteObjectProxyWithErrorHandler(handler)
+    }
+
+    func activate() {
+        connection.activate()
+    }
+
+    func invalidate() {
+        connection.invalidate()
+    }
+}
 
 typealias TunHelperConnectionFactory = @Sendable () throws -> any TunHelperConnection
 
@@ -353,7 +383,7 @@ actor TunHelperClient {
         )
         connection.remoteObjectInterface = TunHelperXPCInterfaceFactory.make()
         connection.setCodeSigningRequirement(helperRequirement)
-        return connection
+        return LiveTunHelperConnection(connection: connection)
     }
 
     private func scheduleTimeout<Value>(
