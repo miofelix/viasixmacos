@@ -1,0 +1,21 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+dist/
+*.xcuserstate
+xcuserdata/
+*.xcarchive/
+*.dSYM/
+*.dSYM.zip
+
+# Local secrets and signing material
+.env*
+!.env.example
+*.p12
+*.mobileprovision
+*.provisionprofile
+
+# Local runtime payloads and generated data
+.runtime/
+*.log
