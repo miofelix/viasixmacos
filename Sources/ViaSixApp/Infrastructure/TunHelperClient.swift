@@ -277,6 +277,22 @@ actor TunHelperClient {
                     }
                     return
                 }
+                guard
+                    implementationVersion
+                        >= TunHelperConstants.minimumCompatibleImplementationVersion
+                else {
+                    if gate.resume(
+                        throwing: TunHelperClientError.incompatibleImplementation(
+                            minimum: TunHelperConstants.minimumCompatibleImplementationVersion,
+                            actual: implementationVersion
+                        )
+                    ) {
+                        Task {
+                            await self?.discardConnection(generation: generation)
+                        }
+                    }
+                    return
+                }
                 gate.resume(returning: result)
             }
         }
@@ -323,16 +339,12 @@ actor TunHelperClient {
                 teamIdentifier: teamIdentifier
             )
         } else {
-            let helperURL = Bundle.main.bundleURL.appendingPathComponent(
-                TunHelperConstants.helperRelativePath
-            )
-            let helperIdentity = try CodeSigningInspector.staticCode(
-                at: helperURL,
-                expectedIdentifier: TunHelperConstants.helperBundleIdentifier
-            )
-            helperRequirement = try CodeSigningRequirementBuilder.exactCDHashRequirement(
-                identifier: TunHelperConstants.helperBundleIdentifier,
-                cdHash: helperIdentity.cdHash
+            // The root-owned local service is pinned to its installed helper
+            // CDHash. The client intentionally accepts a compatible installed
+            // helper across ordinary app rebuilds, mirroring Clash's
+            // install-once/service-IPC lifecycle.
+            helperRequirement = try CodeSigningRequirementBuilder.identifierRequirement(
+                identifier: TunHelperConstants.helperBundleIdentifier
             )
         }
         let connection = NSXPCConnection(

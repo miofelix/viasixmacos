@@ -21,7 +21,8 @@ public enum TunHelperConstants {
         "/Library/LaunchDaemons/\(launchDaemonPlistName)"
     public static let errorDomain = "com.felix.viasix.tun-helper.error"
     public static let protocolVersion = 2
-    public static let implementationVersion = 4
+    public static let implementationVersion = 5
+    public static let minimumCompatibleImplementationVersion = 5
 }
 
 public struct TunHelperFeature: OptionSet, Hashable, Sendable {
@@ -741,6 +742,7 @@ public enum TunHelperRemoteError {
 
 public enum TunHelperClientError: LocalizedError, Equatable, Sendable {
     case incompatibleProtocol(expected: Int, actual: Int)
+    case incompatibleImplementation(minimum: Int, actual: Int)
     case invalidRemoteObject
     case invalidStatusSnapshot
     case timedOut
@@ -750,6 +752,8 @@ public enum TunHelperClientError: LocalizedError, Equatable, Sendable {
         switch self {
         case .incompatibleProtocol(let expected, let actual):
             "虚拟网卡服务协议不兼容（需要 \(expected)，实际 \(actual)）"
+        case .incompatibleImplementation(let minimum, let actual):
+            "虚拟网卡服务版本过旧（最低 \(minimum)，实际 \(actual)），请修复服务"
         case .invalidRemoteObject:
             "无法连接虚拟网卡服务"
         case .invalidStatusSnapshot:

@@ -23,6 +23,27 @@ final class TunHelperClientTests: XCTestCase {
         XCTAssertEqual(remote.events, [.probe])
     }
 
+    func testOutdatedImplementationIsRejectedBeforeAnyMutation() async throws {
+        let remote = try FakeTunHelperRemote(
+            protocolVersion: TunHelperConstants.protocolVersion,
+            implementationVersion: 4
+        )
+        let factory = FakeTunHelperConnectionFactory(remote: remote)
+        let client = TunHelperClient(connectionFactory: { factory.makeConnection() })
+
+        do {
+            _ = try await client.stopSession()
+            XCTFail("Expected the outdated helper to be rejected")
+        } catch {
+            XCTAssertEqual(
+                error as? TunHelperClientError,
+                .incompatibleImplementation(minimum: 5, actual: 4)
+            )
+        }
+
+        XCTAssertEqual(remote.events, [.probe])
+    }
+
     func testCompatibleProbeIsCachedForConnectionGeneration() async throws {
         let remote = try FakeTunHelperRemote(protocolVersion: 2)
         let factory = FakeTunHelperConnectionFactory(remote: remote)
@@ -188,6 +209,7 @@ private final class FakeTunHelperRemote: NSObject, TunHelperXPCProtocol, @unchec
 
     private let lock = NSLock()
     private let protocolVersion: Int
+    private let implementationVersion: Int
     private let snapshot: TunHelperStatusSnapshot
     private let ignoredReplies: Set<Event>
     private let nilReplyEvents: Set<Event>
@@ -197,11 +219,13 @@ private final class FakeTunHelperRemote: NSObject, TunHelperXPCProtocol, @unchec
 
     init(
         protocolVersion: Int,
+        implementationVersion: Int = TunHelperConstants.implementationVersion,
         ignoredReplies: Set<Event> = [],
         nilReplyEvents: Set<Event> = [],
         transportFailureEvents: Set<Event> = []
     ) throws {
         self.protocolVersion = protocolVersion
+        self.implementationVersion = implementationVersion
         self.ignoredReplies = ignoredReplies
         self.nilReplyEvents = nilReplyEvents
         self.transportFailureEvents = transportFailureEvents
@@ -234,7 +258,7 @@ private final class FakeTunHelperRemote: NSObject, TunHelperXPCProtocol, @unchec
         reply: @escaping (Int, Int, UInt64, Bool, NSError?) -> Void
     ) {
         record(.probe)
-        reply(protocolVersion, 1, 0, false, nil)
+        reply(protocolVersion, implementationVersion, 0, false, nil)
     }
 
     func status(

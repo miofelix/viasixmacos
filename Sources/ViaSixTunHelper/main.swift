@@ -21,11 +21,13 @@ do {
         expectedIdentifier: TunHelperConstants.helperBundleIdentifier
     )
     let clientRequirement: String
+    let authorizedClientUserIdentifier: UInt32?
     if let teamIdentifier = identity.teamIdentifier {
         clientRequirement = try CodeSigningRequirementBuilder.sameTeamRequirement(
             identifier: TunHelperConstants.appBundleIdentifier,
             teamIdentifier: teamIdentifier
         )
+        authorizedClientUserIdentifier = nil
     } else {
         let policy = try TunLocalInstallationPolicy(
             contentsOf: URL(fileURLWithPath: TunHelperConstants.localInstallationPolicyPath)
@@ -50,10 +52,10 @@ do {
                     NSLocalizedDescriptionKey: "已安装 App 与本地安装策略不匹配，请重新修复服务"
                 ])
         }
-        clientRequirement = try CodeSigningRequirementBuilder.exactCDHashRequirement(
-            identifier: policy.appIdentifier,
-            cdHash: policy.appCDHash
+        clientRequirement = try CodeSigningRequirementBuilder.identifierRequirement(
+            identifier: policy.appIdentifier
         )
+        authorizedClientUserIdentifier = policy.authorizedUserIdentifier
     }
 
     let journalController = TunSessionJournalController()
@@ -68,7 +70,10 @@ do {
         )
     }
 
-    let delegate = TunXPCListener(backend: backend)
+    let delegate = TunXPCListener(
+        backend: backend,
+        authorizedClientUserIdentifier: authorizedClientUserIdentifier
+    )
     let listener = NSXPCListener(machServiceName: TunHelperConstants.machServiceName)
     listener.setConnectionCodeSigningRequirement(clientRequirement)
     listener.delegate = delegate

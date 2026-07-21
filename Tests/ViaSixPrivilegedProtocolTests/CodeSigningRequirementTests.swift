@@ -14,6 +14,20 @@ final class CodeSigningRequirementTests: XCTestCase {
         )
     }
 
+    func testBuildsIdentifierRequirementForPersistentLocalService() throws {
+        XCTAssertEqual(
+            try CodeSigningRequirementBuilder.identifierRequirement(
+                identifier: TunHelperConstants.appBundleIdentifier
+            ),
+            "identifier \"com.felix.viasix\""
+        )
+        XCTAssertThrowsError(
+            try CodeSigningRequirementBuilder.identifierRequirement(
+                identifier: "com.felix.viasix\" or true"
+            )
+        )
+    }
+
     func testRejectsRequirementInjectionAndInvalidTeamIdentifiers() {
         XCTAssertThrowsError(
             try CodeSigningRequirementBuilder.sameTeamRequirement(
@@ -60,7 +74,8 @@ final class CodeSigningRequirementTests: XCTestCase {
             appIdentifier: TunHelperConstants.appBundleIdentifier,
             appCDHash: String(repeating: "a", count: 40),
             helperIdentifier: TunHelperConstants.helperBundleIdentifier,
-            helperCDHash: String(repeating: "b", count: 40)
+            helperCDHash: String(repeating: "b", count: 40),
+            authorizedUserIdentifier: 501
         )
         XCTAssertEqual(try TunLocalInstallationPolicy(data: policy.encodedPropertyList()), policy)
         XCTAssertThrowsError(
@@ -68,13 +83,26 @@ final class CodeSigningRequirementTests: XCTestCase {
                 appIdentifier: "com.example.invalid",
                 appCDHash: String(repeating: "a", count: 40),
                 helperIdentifier: TunHelperConstants.helperBundleIdentifier,
-                helperCDHash: String(repeating: "b", count: 40)
+                helperCDHash: String(repeating: "b", count: 40),
+                authorizedUserIdentifier: 501
+            )
+        )
+        XCTAssertThrowsError(
+            try TunLocalInstallationPolicy(
+                appIdentifier: TunHelperConstants.appBundleIdentifier,
+                appCDHash: String(repeating: "a", count: 40),
+                helperIdentifier: TunHelperConstants.helperBundleIdentifier,
+                helperCDHash: String(repeating: "b", count: 40),
+                authorizedUserIdentifier: 0
             )
         )
     }
 
     func testProtocolConstantsRemainStable() {
         XCTAssertEqual(TunHelperConstants.protocolVersion, 2)
+        XCTAssertEqual(TunHelperConstants.implementationVersion, 5)
+        XCTAssertEqual(TunHelperConstants.minimumCompatibleImplementationVersion, 5)
+        XCTAssertEqual(TunLocalInstallationPolicy.currentSchemaVersion, 2)
         XCTAssertEqual(
             TunHelperConstants.launchDaemonPlistName,
             "com.felix.viasix.tun-helper.plist"

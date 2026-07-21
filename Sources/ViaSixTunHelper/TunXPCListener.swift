@@ -8,10 +8,12 @@ final class TunXPCListener: NSObject, NSXPCListenerDelegate {
 
     init(
         backend: any TunSessionBackend,
-        identityValidator: ClientIdentityValidator = ClientIdentityValidator()
+        authorizedClientUserIdentifier: UInt32? = nil
     ) {
         self.backend = backend
-        self.identityValidator = identityValidator
+        identityValidator = ClientIdentityValidator(
+            authorizedUserIdentifier: authorizedClientUserIdentifier
+        )
     }
 
     func listener(

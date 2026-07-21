@@ -6,6 +6,7 @@ private enum TunInstallerError: LocalizedError {
     case mustRunAsRoot
     case unsupportedCommand(String)
     case invalidExecutablePath(String)
+    case invalidUserIdentifier(String)
     case invalidAppLayout(String)
     case unsafeFile(path: String, reason: String)
     case signingMismatch(String)
@@ -19,6 +20,8 @@ private enum TunInstallerError: LocalizedError {
             "不支持的 TUN 安装命令：\(command)"
         case .invalidExecutablePath(let path):
             "TUN 安装器路径无效：\(path)"
+        case .invalidUserIdentifier(let value):
+            "TUN 安装器用户标识无效：\(value)"
         case .invalidAppLayout(let path):
             "TUN 安装器不在 ViaSix.app 的固定位置：\(path)"
         case .unsafeFile(let path, let reason):
@@ -41,15 +44,21 @@ private struct TunInstallerIdentities {
 private struct TunLocalServiceInstaller {
     private let fileManager = FileManager.default
 
-    func run(command: String) throws {
+    func run(command: String, userIdentifier: String) throws {
         guard geteuid() == 0 else { throw TunInstallerError.mustRunAsRoot }
         guard command == "install" else {
             throw TunInstallerError.unsupportedCommand(command)
         }
-        try install()
+        guard let authorizedUserIdentifier = UInt32(userIdentifier),
+            authorizedUserIdentifier > 0,
+            getpwuid(uid_t(authorizedUserIdentifier)) != nil
+        else {
+            throw TunInstallerError.invalidUserIdentifier(userIdentifier)
+        }
+        try install(authorizedUserIdentifier: authorizedUserIdentifier)
     }
 
-    private func install() throws {
+    private func install(authorizedUserIdentifier: UInt32) throws {
         let executableURL = try currentExecutableURL()
         let sourceAppURL = try enclosingAppURL(for: executableURL)
         try validateTree(at: sourceAppURL, requiresRootOwnership: false)
@@ -114,7 +123,8 @@ private struct TunLocalServiceInstaller {
             appIdentifier: identities.app.identifier,
             appCDHash: identities.app.cdHash,
             helperIdentifier: identities.helper.identifier,
-            helperCDHash: identities.helper.cdHash
+            helperCDHash: identities.helper.cdHash,
+            authorizedUserIdentifier: authorizedUserIdentifier
         )
         try policy.encodedPropertyList().write(to: stagedPolicyURL, options: .withoutOverwriting)
         try secureRegularFile(at: stagedPolicyURL, mode: 0o600)
@@ -483,7 +493,11 @@ private struct TunLocalServiceInstaller {
 
 do {
     let command = CommandLine.arguments.dropFirst().first ?? ""
-    try TunLocalServiceInstaller().run(command: command)
+    let userIdentifier = CommandLine.arguments.dropFirst(2).first ?? ""
+    try TunLocalServiceInstaller().run(
+        command: command,
+        userIdentifier: userIdentifier
+    )
     print("ViaSix TUN service installed")
 } catch {
     FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))

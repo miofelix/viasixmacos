@@ -62,7 +62,7 @@ make app
 open dist/ViaSix.app
 ```
 
-本地 `make app` 生成 ad-hoc 签名包，适合开发、冒烟测试和本机 TUN 验证；首次安装 TUN 会请求管理员授权，并把受精确 CDHash 约束的 App 副本安装到 root-only 固定目录。每次重新构建后需要在设置中再次“修复服务”。ad-hoc 包没有可验证的开发者身份，不应分发给其他用户。完整说明见[开发文档](Docs/DEVELOPMENT.md)。
+本地 `make app` 生成 ad-hoc 签名包，适合开发、冒烟测试和本机 TUN 验证；首次安装 TUN 会请求管理员授权，并把受精确 CDHash 约束的服务副本安装到 root-only 固定目录。之后启动、停止和切换 TUN 都复用现有服务，不再要求密码；只有特权 helper 或协议不兼容时才需要“修复服务”。ad-hoc 包没有可验证的开发者身份，不应分发给其他用户。完整说明见[开发文档](Docs/DEVELOPMENT.md)。
 
 ## 快速开始
 

@@ -118,7 +118,7 @@ VIASIX_CODESIGN_IDENTITY="Developer ID Application: Example Corp (TEAMID)" make 
 4. 根据签名后的 Mihomo 生成 `Contents/Resources/PrivilegedRuntime.plist`。
 5. 最后签名外层 app，使运行时清单受 app resource seal 保护。
 
-使用非 ad-hoc 身份时，Mihomo、helper、installer 与 app 都启用 Hardened Runtime 和可信时间戳。不要使用 `codesign --deep --sign` 代替确定的嵌套签名顺序。未提供签名身份的本地构建只通过 root-owned 固定副本和精确 CDHash 开放本机 TUN 调试；它没有可信 Team ID，不得作为对外分发产物。
+使用非 ad-hoc 身份时，Mihomo、helper、installer 与 app 都启用 Hardened Runtime 和可信时间戳。不要使用 `codesign --deep --sign` 代替确定的嵌套签名顺序。未提供签名身份的本地构建通过 root-owned 固定副本、已安装 helper 的精确 CDHash、授权 UID 和协议检查开放本机 TUN 调试；普通 App 重编不应触发再次授权。它没有可信 Team ID，不得作为对外分发产物。
 
 验证签名：
 

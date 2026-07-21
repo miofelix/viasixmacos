@@ -1,26 +1,29 @@
 import Foundation
 
 public struct TunLocalInstallationPolicy: Codable, Equatable, Sendable {
-    public static let currentSchemaVersion = 1
+    public static let currentSchemaVersion = 2
 
     public let schemaVersion: Int
     public let appIdentifier: String
     public let appCDHash: String
     public let helperIdentifier: String
     public let helperCDHash: String
+    public let authorizedUserIdentifier: UInt32
 
     public init(
         schemaVersion: Int = Self.currentSchemaVersion,
         appIdentifier: String,
         appCDHash: String,
         helperIdentifier: String,
-        helperCDHash: String
+        helperCDHash: String,
+        authorizedUserIdentifier: UInt32
     ) throws {
         self.schemaVersion = schemaVersion
         self.appIdentifier = appIdentifier
         self.appCDHash = appCDHash
         self.helperIdentifier = helperIdentifier
         self.helperCDHash = helperCDHash
+        self.authorizedUserIdentifier = authorizedUserIdentifier
         try validate()
     }
 
@@ -62,6 +65,11 @@ public struct TunLocalInstallationPolicy: Codable, Equatable, Sendable {
         guard Self.isValidCDHash(helperCDHash) else {
             throw TunLocalInstallationPolicyError.invalidCDHash(helperCDHash)
         }
+        guard authorizedUserIdentifier > 0 else {
+            throw TunLocalInstallationPolicyError.invalidUserIdentifier(
+                authorizedUserIdentifier
+            )
+        }
     }
 
     private static func isValidCDHash(_ value: String) -> Bool {
@@ -76,6 +84,7 @@ public enum TunLocalInstallationPolicyError: LocalizedError, Equatable, Sendable
     case unsupportedSchemaVersion(Int)
     case unexpectedIdentifier(expected: String, actual: String)
     case invalidCDHash(String)
+    case invalidUserIdentifier(UInt32)
 
     public var errorDescription: String? {
         switch self {
@@ -85,6 +94,8 @@ public enum TunLocalInstallationPolicyError: LocalizedError, Equatable, Sendable
             "本地 TUN 安装策略标识不匹配（需要 \(expected)，实际 \(actual)）"
         case .invalidCDHash(let value):
             "本地 TUN 安装策略 CDHash 无效：\(value)"
+        case .invalidUserIdentifier(let value):
+            "本地 TUN 安装策略用户标识无效：\(value)"
         }
     }
 }

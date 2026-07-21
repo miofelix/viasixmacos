@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import ServiceManagement
 import ViaSixPrivilegedProtocol
@@ -17,6 +18,7 @@ enum TunHelperInstallationStrategy: Equatable, Sendable {
 enum TunHelperInstallerError: LocalizedError, Equatable, Sendable {
     case installerMissing(String)
     case installerTeamMismatch
+    case invalidCurrentUser
     case localUnregisterUnsupported
     case commandFailed(executable: String, status: Int32, output: String)
 
@@ -26,6 +28,8 @@ enum TunHelperInstallerError: LocalizedError, Equatable, Sendable {
             "当前应用包缺少 TUN 服务安装器：\(path)"
         case .installerTeamMismatch:
             "TUN 服务安装器与当前应用的签名 Team ID 不一致"
+        case .invalidCurrentUser:
+            "当前登录用户不能安装 TUN 服务"
         case .localUnregisterUnsupported:
             "本地 TUN 服务只能通过新的安装包覆盖修复"
         case .commandFailed(let executable, let status, let output):
@@ -137,6 +141,10 @@ struct TunHelperInstaller {
     }
 
     private func runLocalInstaller() throws {
+        let userIdentifier = getuid()
+        guard userIdentifier > 0 else {
+            throw TunHelperInstallerError.invalidCurrentUser
+        }
         let appIdentity = try CodeSigningInspector.currentProcess(
             expectedIdentifier: TunHelperConstants.appBundleIdentifier
         )
@@ -156,15 +164,16 @@ struct TunHelperInstaller {
 
         let script = """
             on run argv
-                if (count of argv) is not 1 then error "missing installer path"
+                if (count of argv) is not 2 then error "missing installer arguments"
                 set installerPath to item 1 of argv
-                do shell script (quoted form of installerPath & " install") with administrator privileges
+                set userIdentifier to item 2 of argv
+                do shell script (quoted form of installerPath & " install " & quoted form of userIdentifier) with administrator privileges
             end run
             """
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script, installerURL.path]
+        process.arguments = ["-e", script, installerURL.path, String(userIdentifier)]
         process.standardOutput = output
         process.standardError = output
         try process.run()
