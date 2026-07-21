@@ -59,7 +59,7 @@ make app
 open dist/ViaSix.app
 ```
 
-`make app` 默认生成优化后的 ad-hoc 签名包，`make app-debug` 生成调试包，均适用于本地开发与冒烟测试。打包时会取得当前架构的固定 Mihomo v1.19.29；已有上游二进制时可设置 `VIASIX_MIHOMO_SOURCE=/absolute/path/to/mihomo`，但大小、SHA-256、Mach-O 架构和版本校验不会因此放宽。正式签名和公证流程见[发布指南](RELEASING.md)。
+`make app` 默认生成优化后的 ad-hoc 签名包，`make app-debug` 生成调试包，均适用于本地开发、冒烟测试和本机 TUN 验证。本地 TUN 首次安装会请求管理员授权，把完整 App 安装到 root-only 固定目录，并用 App/helper 精确 CDHash 鉴权；每次重新构建后都必须在设置中再次“修复服务”。打包时会取得当前架构的固定 Mihomo v1.19.29；已有上游二进制时可设置 `VIASIX_MIHOMO_SOURCE=/absolute/path/to/mihomo`，但大小、SHA-256、Mach-O 架构和版本校验不会因此放宽。正式签名和公证流程见[发布指南](RELEASING.md)。
 
 打包脚本会定义 `VIASIX_PACKAGED_APP`，使 app bundle 只从 `Bundle.main` 读取默认资源，避免 SwiftPM 的开发期 `Bundle.module` 路径泄露本机检出目录。修改资源加载或打包命令时必须保留对应验证。
 
@@ -304,6 +304,7 @@ Mihomo 用户态运行
 真实 TUN 前必须满足[虚拟网卡能力边界](VIRTUAL_NETWORK.md)中的签名、特权、路由、DNS、进程监督和崩溃恢复要求。尤其是：
 
 - helper 不能执行用户可写的 `Runtime/mihomo`。
+- ad-hoc helper 必须从 root-owned 固定 App 副本启动，并以安装策略中的精确 CDHash 双向约束 App/helper；重新构建后旧策略不得继续接受新 App。
 - XPC 不能接收路径、argv、shell 或原始 YAML。
 - 特权执行必须使用固定、root-owned、已签名的 Mihomo，并直接启动固定 `-d`/`-f` 参数。
 - journal 必须精确记录会话、PID、路由模式和清理阶段；进程路径与会话目录身份不匹配时不能终止或删除恢复记录。

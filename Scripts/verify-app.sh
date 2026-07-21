@@ -36,6 +36,7 @@ short_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "
 build_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$info_plist")
 executable_path="$contents_dir/MacOS/$executable_name"
 helper_path="$contents_dir/Library/HelperTools/com.felix.viasix.tun-helper"
+installer_path="$contents_dir/Library/HelperTools/com.felix.viasix.tun-installer"
 daemon_plist="$contents_dir/Library/LaunchDaemons/com.felix.viasix.tun-helper.plist"
 mihomo_relative_path="Contents/Library/HelperTools/com.felix.viasix.mihomo"
 mihomo_path="$app_bundle/$mihomo_relative_path"
@@ -57,6 +58,9 @@ file "$executable_path" | grep -q "Mach-O" || fail "main executable is not Mach-
 [[ -x "$helper_path" ]] || fail "TUN helper is missing or not executable"
 [[ ! -L "$helper_path" ]] || fail "TUN helper must not be a symbolic link"
 file "$helper_path" | grep -q "Mach-O" || fail "TUN helper is not Mach-O"
+[[ -x "$installer_path" ]] || fail "TUN installer is missing or not executable"
+[[ ! -L "$installer_path" ]] || fail "TUN installer must not be a symbolic link"
+file "$installer_path" | grep -q "Mach-O" || fail "TUN installer is not Mach-O"
 [[ -x "$mihomo_path" ]] || fail "privileged Mihomo runtime is missing or not executable"
 [[ ! -L "$mihomo_path" ]] || fail "privileged Mihomo runtime must not be a symbolic link"
 file "$mihomo_path" | grep -q "Mach-O 64-bit executable" \
@@ -199,27 +203,35 @@ fi
 
 codesign --verify --strict --verbose=2 "$mihomo_path"
 codesign --verify --strict --verbose=2 "$helper_path"
+codesign --verify --strict --verbose=2 "$installer_path"
 codesign --verify --strict --verbose=2 "$app_bundle"
 codesign --verify --deep --strict --verbose=2 "$app_bundle"
 
 mihomo_signing_details=$(codesign -d --verbose=4 "$mihomo_path" 2>&1)
 helper_signing_details=$(codesign -d --verbose=4 "$helper_path" 2>&1)
+installer_signing_details=$(codesign -d --verbose=4 "$installer_path" 2>&1)
 app_signing_details=$(codesign -d --verbose=4 "$app_bundle" 2>&1)
 mihomo_identifier=$(print -r -- "$mihomo_signing_details" | sed -n 's/^Identifier=//p')
 helper_identifier=$(print -r -- "$helper_signing_details" | sed -n 's/^Identifier=//p')
+installer_identifier=$(print -r -- "$installer_signing_details" | sed -n 's/^Identifier=//p')
 app_signing_identifier=$(print -r -- "$app_signing_details" | sed -n 's/^Identifier=//p')
 mihomo_team_identifier=$(print -r -- "$mihomo_signing_details" | sed -n 's/^TeamIdentifier=//p')
 helper_team_identifier=$(print -r -- "$helper_signing_details" | sed -n 's/^TeamIdentifier=//p')
+installer_team_identifier=$(print -r -- "$installer_signing_details" | sed -n 's/^TeamIdentifier=//p')
 app_team_identifier=$(print -r -- "$app_signing_details" | sed -n 's/^TeamIdentifier=//p')
 actual_mihomo_cdhash=$(print -r -- "$mihomo_signing_details" | sed -n 's/^CDHash=//p' | head -n 1)
 [[ "$app_signing_identifier" == "com.felix.viasix" ]] \
     || fail "unexpected application signing identifier: $app_signing_identifier"
 [[ "$helper_identifier" == "com.felix.viasix.tun-helper" ]] \
     || fail "unexpected TUN helper signing identifier: $helper_identifier"
+[[ "$installer_identifier" == "com.felix.viasix.tun-installer" ]] \
+    || fail "unexpected TUN installer signing identifier: $installer_identifier"
 [[ "$mihomo_identifier" == "$runtime_bundle_identifier" ]] \
     || fail "unexpected privileged Mihomo signing identifier: $mihomo_identifier"
 [[ "$helper_team_identifier" == "$app_team_identifier" ]] \
     || fail "application/helper Team Identifier mismatch"
+[[ "$installer_team_identifier" == "$app_team_identifier" ]] \
+    || fail "application/installer Team Identifier mismatch"
 [[ "$mihomo_team_identifier" == "$app_team_identifier" ]] \
     || fail "application/Mihomo Team Identifier mismatch"
 if [[ -n "${VIASIX_EXPECTED_TEAM_IDENTIFIER:-}" \
@@ -231,6 +243,7 @@ if [[ "$app_team_identifier" != "not set" ]]; then
     for signing_specification in \
         "Mihomo|$mihomo_signing_details" \
         "TUN helper|$helper_signing_details" \
+        "TUN installer|$installer_signing_details" \
         "application|$app_signing_details"
     do
         signing_name=${signing_specification%%|*}
@@ -244,9 +257,12 @@ fi
 
 architectures=$(lipo -archs "$executable_path")
 helper_architectures=$(lipo -archs "$helper_path")
+installer_architectures=$(lipo -archs "$installer_path")
 mihomo_architectures=$(lipo -archs "$mihomo_path")
 [[ "$helper_architectures" == "$architectures" ]] \
     || fail "main/helper architecture mismatch: $architectures vs $helper_architectures"
+[[ "$installer_architectures" == "$architectures" ]] \
+    || fail "main/installer architecture mismatch: $architectures vs $installer_architectures"
 [[ "$mihomo_architectures" == "$architectures" ]] \
     || fail "main/Mihomo architecture mismatch: $architectures vs $mihomo_architectures"
 [[ "$runtime_architecture" == "$architectures" ]] \

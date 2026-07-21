@@ -54,6 +54,16 @@ final class PrivilegedRuntimeManagerTests: XCTestCase {
         }
     }
 
+    func testAdHocSignedRuntimeUsesExplicitHashesWithoutTeamIdentifier() throws {
+        try withFixture(teamIdentifier: nil) { fixture in
+            try fixture.updateBundledRuntime(Data("ad-hoc-signed-mihomo".utf8))
+
+            let installed = try fixture.manager().installBundledRuntime()
+
+            XCTAssertEqual(try fixture.manager().verifiedInstalledRuntime(), installed)
+        }
+    }
+
     func testVerificationRejectsInstalledSymbolicLink() throws {
         try withFixture { fixture in
             try fixture.updateBundledRuntime(Data("signed-mihomo".utf8))
@@ -310,8 +320,11 @@ final class PrivilegedRuntimeManagerTests: XCTestCase {
         }
     }
 
-    private func withFixture(_ body: (RuntimeFixture) throws -> Void) throws {
-        let fixture = try RuntimeFixture()
+    private func withFixture(
+        teamIdentifier: String? = "A1B2C3D4E5",
+        _ body: (RuntimeFixture) throws -> Void
+    ) throws {
+        let fixture = try RuntimeFixture(teamIdentifier: teamIdentifier)
         defer { fixture.remove() }
         try body(fixture)
     }
@@ -352,7 +365,7 @@ private final class RuntimeFixture {
     let bundledRuntimeURL: URL
     let bundledManifestURL: URL
     let containerURL: URL
-    let signer = FakeRuntimeCodeSigningVerifier()
+    let signer: FakeRuntimeCodeSigningVerifier
 
     var runtimeDirectoryURL: URL {
         containerURL.appendingPathComponent("Runtime", isDirectory: true)
@@ -366,7 +379,8 @@ private final class RuntimeFixture {
         runtimeDirectoryURL.appendingPathComponent("PrivilegedRuntime.plist")
     }
 
-    init() throws {
+    init(teamIdentifier: String? = "A1B2C3D4E5") throws {
+        signer = FakeRuntimeCodeSigningVerifier(teamIdentifier: teamIdentifier)
         let temporaryPath = FileManager.default.temporaryDirectory.path
         let resolvedTemporaryPath =
             temporaryPath.hasPrefix("/var/")
@@ -458,8 +472,12 @@ private final class FakeRuntimeCodeSigningVerifier:
     private let lock = NSLock()
     private var runtimeCDHashes: [String: String] = [:]
     private var teamMismatchIdentifier: String?
-    private let teamIdentifier = "A1B2C3D4E5"
+    private let teamIdentifier: String?
     private let helperCDHash = String(repeating: "a", count: 40)
+
+    init(teamIdentifier: String?) {
+        self.teamIdentifier = teamIdentifier
+    }
 
     func registerRuntime(digest: String, cdHash: String) {
         lock.withLock {
@@ -486,7 +504,7 @@ private final class FakeRuntimeCodeSigningVerifier:
     func verifyStaticCode(
         at url: URL,
         expectedIdentifier: String,
-        expectedTeamIdentifier: String
+        expectedTeamIdentifier: String?
     ) throws -> PrivilegedRuntimeCodeIdentity {
         let cdHash: String
         switch expectedIdentifier {
@@ -506,7 +524,7 @@ private final class FakeRuntimeCodeSigningVerifier:
         }
         let teamIdentifier = lock.withLock {
             teamMismatchIdentifier == expectedIdentifier
-                ? "Z9Y8X7W6V5"
+                ? Optional("Z9Y8X7W6V5")
                 : expectedTeamIdentifier
         }
         return PrivilegedRuntimeCodeIdentity(

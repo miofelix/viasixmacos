@@ -316,10 +316,25 @@ actor TunHelperClient {
         let identity = try CodeSigningInspector.currentProcess(
             expectedIdentifier: TunHelperConstants.appBundleIdentifier
         )
-        let helperRequirement = try CodeSigningRequirementBuilder.sameTeamRequirement(
-            identifier: TunHelperConstants.helperBundleIdentifier,
-            teamIdentifier: identity.teamIdentifier
-        )
+        let helperRequirement: String
+        if let teamIdentifier = identity.teamIdentifier {
+            helperRequirement = try CodeSigningRequirementBuilder.sameTeamRequirement(
+                identifier: TunHelperConstants.helperBundleIdentifier,
+                teamIdentifier: teamIdentifier
+            )
+        } else {
+            let helperURL = Bundle.main.bundleURL.appendingPathComponent(
+                TunHelperConstants.helperRelativePath
+            )
+            let helperIdentity = try CodeSigningInspector.staticCode(
+                at: helperURL,
+                expectedIdentifier: TunHelperConstants.helperBundleIdentifier
+            )
+            helperRequirement = try CodeSigningRequirementBuilder.exactCDHashRequirement(
+                identifier: TunHelperConstants.helperBundleIdentifier,
+                cdHash: helperIdentity.cdHash
+            )
+        }
         let connection = NSXPCConnection(
             machServiceName: TunHelperConstants.machServiceName,
             options: .privileged

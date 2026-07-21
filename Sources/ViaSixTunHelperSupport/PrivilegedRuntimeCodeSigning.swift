@@ -4,7 +4,7 @@ import ViaSixPrivilegedProtocol
 
 struct PrivilegedRuntimeCodeIdentity: Equatable, Sendable {
     let identifier: String
-    let teamIdentifier: String
+    let teamIdentifier: String?
     let cdHash: String
 }
 
@@ -16,18 +16,17 @@ protocol PrivilegedRuntimeCodeSigningVerifying: Sendable {
     func verifyStaticCode(
         at url: URL,
         expectedIdentifier: String,
-        expectedTeamIdentifier: String
+        expectedTeamIdentifier: String?
     ) throws -> PrivilegedRuntimeCodeIdentity
 }
 
 enum PrivilegedRuntimeCodeSigningError: LocalizedError, Equatable, Sendable {
     case securityFailure(operation: String, status: OSStatus)
     case missingIdentifier(String)
-    case missingTeamIdentifier(String)
     case missingCDHash(String)
     case malformedCDHash(String)
     case unexpectedIdentifier(expected: String, actual: String)
-    case unexpectedTeamIdentifier(expected: String, actual: String)
+    case unexpectedTeamIdentifier(expected: String?, actual: String?)
 
     var errorDescription: String? {
         switch self {
@@ -38,8 +37,6 @@ enum PrivilegedRuntimeCodeSigningError: LocalizedError, Equatable, Sendable {
             return "特权运行组件签名校验失败（\(operation)）：\(detail)"
         case .missingIdentifier(let path):
             return "特权运行组件缺少签名标识：\(path)"
-        case .missingTeamIdentifier(let path):
-            return "特权运行组件缺少 Team ID：\(path)"
         case .missingCDHash(let path):
             return "特权运行组件缺少 CDHash：\(path)"
         case .malformedCDHash(let path):
@@ -47,7 +44,8 @@ enum PrivilegedRuntimeCodeSigningError: LocalizedError, Equatable, Sendable {
         case .unexpectedIdentifier(let expected, let actual):
             return "特权运行组件签名标识不匹配（需要 \(expected)，实际 \(actual)）"
         case .unexpectedTeamIdentifier(let expected, let actual):
-            return "特权运行组件 Team ID 不匹配（需要 \(expected)，实际 \(actual)）"
+            return
+                "特权运行组件 Team ID 不匹配（需要 \(expected ?? "not set")，实际 \(actual ?? "not set")）"
         }
     }
 }
@@ -108,7 +106,8 @@ struct SecurityPrivilegedRuntimeCodeSigningVerifier:
         )
         let requirement = try makeRequirement(
             identifier: expectedIdentifier,
-            teamIdentifier: unverifiedIdentity.teamIdentifier
+            teamIdentifier: unverifiedIdentity.teamIdentifier,
+            cdHash: unverifiedIdentity.cdHash
         )
         let validityStatus = SecCodeCheckValidity(
             dynamicCode,
@@ -124,7 +123,7 @@ struct SecurityPrivilegedRuntimeCodeSigningVerifier:
     func verifyStaticCode(
         at url: URL,
         expectedIdentifier: String,
-        expectedTeamIdentifier: String
+        expectedTeamIdentifier: String?
     ) throws -> PrivilegedRuntimeCodeIdentity {
         var staticCode: SecStaticCode?
         let createStatus = SecStaticCodeCreateWithPath(
@@ -138,7 +137,8 @@ struct SecurityPrivilegedRuntimeCodeSigningVerifier:
 
         let requirement = try makeRequirement(
             identifier: expectedIdentifier,
-            teamIdentifier: expectedTeamIdentifier
+            teamIdentifier: expectedTeamIdentifier,
+            cdHash: nil
         )
         let validityStatus = SecStaticCodeCheckValidity(
             staticCode,
@@ -163,12 +163,25 @@ struct SecurityPrivilegedRuntimeCodeSigningVerifier:
 
     private func makeRequirement(
         identifier: String,
-        teamIdentifier: String
+        teamIdentifier: String?,
+        cdHash: String?
     ) throws -> SecRequirement {
-        let requirementText = try CodeSigningRequirementBuilder.sameTeamRequirement(
-            identifier: identifier,
-            teamIdentifier: teamIdentifier
-        )
+        let requirementText: String
+        if let teamIdentifier {
+            requirementText = try CodeSigningRequirementBuilder.sameTeamRequirement(
+                identifier: identifier,
+                teamIdentifier: teamIdentifier
+            )
+        } else if let cdHash {
+            requirementText = try CodeSigningRequirementBuilder.exactCDHashRequirement(
+                identifier: identifier,
+                cdHash: cdHash
+            )
+        } else {
+            requirementText = try CodeSigningRequirementBuilder.identifierRequirement(
+                identifier: identifier
+            )
+        }
         var requirement: SecRequirement?
         let status = SecRequirementCreateWithString(
             requirementText as CFString,
@@ -199,11 +212,8 @@ struct SecurityPrivilegedRuntimeCodeSigningVerifier:
         guard let identifier = values[kSecCodeInfoIdentifier] as? String, !identifier.isEmpty else {
             throw PrivilegedRuntimeCodeSigningError.missingIdentifier(displayPath)
         }
-        guard
-            let teamIdentifier = values[kSecCodeInfoTeamIdentifier] as? String,
-            !teamIdentifier.isEmpty
-        else {
-            throw PrivilegedRuntimeCodeSigningError.missingTeamIdentifier(displayPath)
+        let teamIdentifier = (values[kSecCodeInfoTeamIdentifier] as? String).flatMap {
+            $0.isEmpty ? nil : $0
         }
         guard let cdHashData = values[kSecCodeInfoUnique] as? Data else {
             throw PrivilegedRuntimeCodeSigningError.missingCDHash(displayPath)
@@ -222,7 +232,7 @@ struct SecurityPrivilegedRuntimeCodeSigningVerifier:
     private func validateExpectedIdentity(
         _ identity: PrivilegedRuntimeCodeIdentity,
         expectedIdentifier: String,
-        expectedTeamIdentifier: String
+        expectedTeamIdentifier: String?
     ) throws {
         guard identity.identifier == expectedIdentifier else {
             throw PrivilegedRuntimeCodeSigningError.unexpectedIdentifier(

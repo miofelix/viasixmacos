@@ -4,8 +4,21 @@ import Foundation
 public enum TunHelperConstants {
     public static let appBundleIdentifier = "com.felix.viasix"
     public static let helperBundleIdentifier = "com.felix.viasix.tun-helper"
+    public static let installerBundleIdentifier = "com.felix.viasix.tun-installer"
     public static let machServiceName = helperBundleIdentifier
     public static let launchDaemonPlistName = "\(helperBundleIdentifier).plist"
+    public static let helperRelativePath =
+        "Contents/Library/HelperTools/\(helperBundleIdentifier)"
+    public static let installerRelativePath =
+        "Contents/Library/HelperTools/\(installerBundleIdentifier)"
+    public static let localInstallationContainerPath =
+        "/Library/Application Support/com.felix.viasix"
+    public static let localInstalledAppPath =
+        "\(localInstallationContainerPath)/InstalledApp/ViaSix.app"
+    public static let localInstallationPolicyPath =
+        "\(localInstallationContainerPath)/TunLocalInstallationPolicy.plist"
+    public static let systemLaunchDaemonPlistPath =
+        "/Library/LaunchDaemons/\(launchDaemonPlistName)"
     public static let errorDomain = "com.felix.viasix.tun-helper.error"
     public static let protocolVersion = 2
     public static let implementationVersion = 4

@@ -92,7 +92,7 @@ struct SettingsView: View {
                         .padding(.vertical, VisualStyle.spacing8)
                 }
 
-                Text("TUN 使用应用内固定签名的 Mihomo，由 macOS 后台服务以最小权限启动；不会使用自定义可执行文件。首次安装后可能需要在“系统设置 → 通用 → 登录项”中批准。")
+                Text("TUN 使用应用内固定签名的 Mihomo，由 macOS 后台服务以最小权限启动；不会使用自定义可执行文件。本地构建首次安装会请求管理员授权，正式签名版本也可能需要在系统设置中批准。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

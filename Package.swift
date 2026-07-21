@@ -24,6 +24,7 @@ let package = Package(
         ),
         .executable(name: "ViaSix", targets: ["ViaSixApp"]),
         .executable(name: "ViaSixTunHelper", targets: ["ViaSixTunHelper"]),
+        .executable(name: "ViaSixTunInstaller", targets: ["ViaSixTunInstaller"]),
     ],
     dependencies: [
         .package(
@@ -76,6 +77,10 @@ let package = Package(
                 "ViaSixPrivilegedProtocol",
                 "ViaSixTunHelperSupport",
             ]
+        ),
+        .executableTarget(
+            name: "ViaSixTunInstaller",
+            dependencies: ["ViaSixPrivilegedProtocol"]
         ),
         .testTarget(
             name: "ViaSixCoreTests",

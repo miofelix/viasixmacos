@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import OSLog
 import ViaSixPrivilegedProtocol
@@ -9,13 +10,51 @@ private let logger = Logger(
 )
 
 do {
+    guard geteuid() == 0 else {
+        throw CocoaError(
+            .userCancelled,
+            userInfo: [
+                NSLocalizedDescriptionKey: "ViaSix TUN helper 只能由 root LaunchDaemon 启动"
+            ])
+    }
     let identity = try CodeSigningInspector.currentProcess(
         expectedIdentifier: TunHelperConstants.helperBundleIdentifier
     )
-    let clientRequirement = try CodeSigningRequirementBuilder.sameTeamRequirement(
-        identifier: TunHelperConstants.appBundleIdentifier,
-        teamIdentifier: identity.teamIdentifier
-    )
+    let clientRequirement: String
+    if let teamIdentifier = identity.teamIdentifier {
+        clientRequirement = try CodeSigningRequirementBuilder.sameTeamRequirement(
+            identifier: TunHelperConstants.appBundleIdentifier,
+            teamIdentifier: teamIdentifier
+        )
+    } else {
+        let policy = try TunLocalInstallationPolicy(
+            contentsOf: URL(fileURLWithPath: TunHelperConstants.localInstallationPolicyPath)
+        )
+        guard identity.cdHash == policy.helperCDHash else {
+            throw CocoaError(
+                .fileReadCorruptFile,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "当前 helper 与本地安装策略不匹配，请重新修复服务"
+                ])
+        }
+        let installedAppIdentity = try CodeSigningInspector.staticCode(
+            at: URL(fileURLWithPath: TunHelperConstants.localInstalledAppPath),
+            expectedIdentifier: policy.appIdentifier
+        )
+        guard installedAppIdentity.teamIdentifier == nil,
+            installedAppIdentity.cdHash == policy.appCDHash
+        else {
+            throw CocoaError(
+                .fileReadCorruptFile,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "已安装 App 与本地安装策略不匹配，请重新修复服务"
+                ])
+        }
+        clientRequirement = try CodeSigningRequirementBuilder.exactCDHashRequirement(
+            identifier: policy.appIdentifier,
+            cdHash: policy.appCDHash
+        )
+    }
 
     let journalController = TunSessionJournalController()
     let backend = PrivilegedTunBackend(journalController: journalController)

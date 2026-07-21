@@ -29,6 +29,50 @@ final class CodeSigningRequirementTests: XCTestCase {
         )
     }
 
+    func testBuildsExactCDHashRequirementForAdHocInstallation() throws {
+        let cdHash = String(repeating: "a", count: 40)
+        XCTAssertEqual(
+            try CodeSigningRequirementBuilder.exactCDHashRequirement(
+                identifier: TunHelperConstants.appBundleIdentifier,
+                cdHash: cdHash
+            ),
+            "identifier \"com.felix.viasix\" and cdhash H\"\(cdHash)\""
+        )
+    }
+
+    func testRejectsInvalidExactCDHashRequirementComponents() {
+        XCTAssertThrowsError(
+            try CodeSigningRequirementBuilder.exactCDHashRequirement(
+                identifier: "com.felix.viasix\" or true",
+                cdHash: String(repeating: "a", count: 40)
+            )
+        )
+        XCTAssertThrowsError(
+            try CodeSigningRequirementBuilder.exactCDHashRequirement(
+                identifier: TunHelperConstants.appBundleIdentifier,
+                cdHash: String(repeating: "A", count: 40)
+            )
+        )
+    }
+
+    func testLocalInstallationPolicyRoundTripsAndValidatesIdentity() throws {
+        let policy = try TunLocalInstallationPolicy(
+            appIdentifier: TunHelperConstants.appBundleIdentifier,
+            appCDHash: String(repeating: "a", count: 40),
+            helperIdentifier: TunHelperConstants.helperBundleIdentifier,
+            helperCDHash: String(repeating: "b", count: 40)
+        )
+        XCTAssertEqual(try TunLocalInstallationPolicy(data: policy.encodedPropertyList()), policy)
+        XCTAssertThrowsError(
+            try TunLocalInstallationPolicy(
+                appIdentifier: "com.example.invalid",
+                appCDHash: String(repeating: "a", count: 40),
+                helperIdentifier: TunHelperConstants.helperBundleIdentifier,
+                helperCDHash: String(repeating: "b", count: 40)
+            )
+        )
+    }
+
     func testProtocolConstantsRemainStable() {
         XCTAssertEqual(TunHelperConstants.protocolVersion, 2)
         XCTAssertEqual(
@@ -38,6 +82,10 @@ final class CodeSigningRequirementTests: XCTestCase {
         XCTAssertEqual(
             TunHelperConstants.machServiceName,
             TunHelperConstants.helperBundleIdentifier
+        )
+        XCTAssertEqual(
+            TunHelperConstants.localInstalledAppPath,
+            "/Library/Application Support/com.felix.viasix/InstalledApp/ViaSix.app"
         )
     }
 }

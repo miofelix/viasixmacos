@@ -26,6 +26,7 @@ swift build "${build_arguments[@]}"
 binary_directory=$(swift build "${build_arguments[@]}" --show-bin-path)
 binary_path="$binary_directory/ViaSix"
 helper_binary_path="$binary_directory/ViaSixTunHelper"
+installer_binary_path="$binary_directory/ViaSixTunInstaller"
 runtime_relative_path="Contents/Library/HelperTools/com.felix.viasix.mihomo"
 runtime_bundle_identifier="com.felix.viasix.mihomo"
 runtime_version="1.19.29"
@@ -36,6 +37,10 @@ if [[ ! -x "$binary_path" ]]; then
 fi
 if [[ ! -x "$helper_binary_path" ]]; then
     print -u2 "ViaSix TUN helper was not produced at $helper_binary_path"
+    exit 1
+fi
+if [[ ! -x "$installer_binary_path" ]]; then
+    print -u2 "ViaSix TUN installer was not produced at $installer_binary_path"
     exit 1
 fi
 
@@ -62,6 +67,9 @@ cp "$binary_path" "$contents_dir/MacOS/ViaSix"
 cp \
     "$helper_binary_path" \
     "$contents_dir/Library/HelperTools/com.felix.viasix.tun-helper"
+cp \
+    "$installer_binary_path" \
+    "$contents_dir/Library/HelperTools/com.felix.viasix.tun-installer"
 "$project_root/Scripts/fetch-mihomo.sh" \
     "$app_bundle/$runtime_relative_path" \
     "$application_architectures"
@@ -107,11 +115,12 @@ for resource_name in ip.txt ipv6.txt local-proxy.json; do
 done
 
 helper_path="$contents_dir/Library/HelperTools/com.felix.viasix.tun-helper"
+installer_path="$contents_dir/Library/HelperTools/com.felix.viasix.tun-installer"
 mihomo_path="$app_bundle/$runtime_relative_path"
 privileged_runtime_manifest="$contents_dir/Resources/PrivilegedRuntime.plist"
-chmod 755 "$contents_dir/MacOS/ViaSix" "$helper_path" "$mihomo_path"
+chmod 755 "$contents_dir/MacOS/ViaSix" "$helper_path" "$installer_path" "$mihomo_path"
 if [[ "$configuration" == "release" ]]; then
-    /usr/bin/strip -S -x "$contents_dir/MacOS/ViaSix" "$helper_path"
+    /usr/bin/strip -S -x "$contents_dir/MacOS/ViaSix" "$helper_path" "$installer_path"
 fi
 codesign_identity=${VIASIX_CODESIGN_IDENTITY:--}
 if [[ "$codesign_identity" == "-" ]]; then
@@ -126,6 +135,11 @@ if [[ "$codesign_identity" == "-" ]]; then
         --entitlements "$project_root/Packaging/Entitlements/ViaSixTunHelper.entitlements" \
         --sign - \
         "$helper_path"
+    codesign \
+        --force \
+        --identifier com.felix.viasix.tun-installer \
+        --sign - \
+        "$installer_path"
 else
     codesign \
         --force \
@@ -142,6 +156,13 @@ else
         --entitlements "$project_root/Packaging/Entitlements/ViaSixTunHelper.entitlements" \
         --sign "$codesign_identity" \
         "$helper_path"
+    codesign \
+        --force \
+        --options runtime \
+        --timestamp \
+        --identifier com.felix.viasix.tun-installer \
+        --sign "$codesign_identity" \
+        "$installer_path"
 fi
 
 mihomo_sha256=$(/usr/bin/shasum -a 256 "$mihomo_path" | /usr/bin/awk '{print $1}')

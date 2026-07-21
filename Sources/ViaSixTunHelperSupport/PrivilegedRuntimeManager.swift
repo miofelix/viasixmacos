@@ -523,7 +523,7 @@ public struct PrivilegedRuntimeManager: Sendable {
         in container: Int32,
         at directoryURL: URL,
         expectedManifest: PrivilegedRuntimeManifest?,
-        expectedTeamIdentifier: String
+        expectedTeamIdentifier: String?
     ) throws -> VerifiedPrivilegedRuntime {
         let directory = openat(
             container,
@@ -1123,9 +1123,6 @@ public struct PrivilegedRuntimeManager: Sendable {
                 actual: identity.teamIdentifier
             )
         }
-        guard !identity.teamIdentifier.isEmpty else {
-            throw PrivilegedRuntimeCodeSigningError.missingTeamIdentifier(expectedIdentifier)
-        }
         let cdHashBytes = Array(identity.cdHash.utf8)
         guard
             cdHashBytes.count == 40,
@@ -1335,13 +1332,13 @@ private final class ValidatedBundledSource: @unchecked Sendable {
     let runtimeDescriptor: Int32
     let manifestData: Data
     let manifest: PrivilegedRuntimeManifest
-    let teamIdentifier: String
+    let teamIdentifier: String?
 
     init(
         runtimeDescriptor: Int32,
         manifestData: Data,
         manifest: PrivilegedRuntimeManifest,
-        teamIdentifier: String
+        teamIdentifier: String?
     ) {
         self.runtimeDescriptor = runtimeDescriptor
         self.manifestData = manifestData
