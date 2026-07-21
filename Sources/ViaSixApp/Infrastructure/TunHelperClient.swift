@@ -185,9 +185,7 @@ actor TunHelperClient {
                     mutationOutcomeMayBeUnknown
                     ? TunHelperClientError.operationOutcomeUnknown : error
                 guard gate.resume(throwing: reportedError) else { return }
-                Task {
-                    await self?.discardConnection(generation: generation)
-                }
+                Self.scheduleConnectionDiscard(self, generation: generation)
             }
             guard let helper = remote as? TunHelperXPCProtocol else {
                 if gate.resume(throwing: TunHelperClientError.invalidRemoteObject) {
@@ -206,9 +204,7 @@ actor TunHelperClient {
                         mutationOutcomeMayBeUnknown
                         ? .operationOutcomeUnknown : .invalidStatusSnapshot
                     if gate.resume(throwing: error) {
-                        Task {
-                            await self?.discardConnection(generation: generation)
-                        }
+                        Self.scheduleConnectionDiscard(self, generation: generation)
                     }
                     return
                 }
@@ -223,9 +219,7 @@ actor TunHelperClient {
                     if gate.resume(
                         throwing: error
                     ) {
-                        Task {
-                            await self?.discardConnection(generation: generation)
-                        }
+                        Self.scheduleConnectionDiscard(self, generation: generation)
                     }
                     return
                 }
@@ -237,9 +231,7 @@ actor TunHelperClient {
                         mutationOutcomeMayBeUnknown
                         ? .operationOutcomeUnknown : .invalidStatusSnapshot
                     if gate.resume(throwing: error) {
-                        Task {
-                            await self?.discardConnection(generation: generation)
-                        }
+                        Self.scheduleConnectionDiscard(self, generation: generation)
                     }
                 }
             }
@@ -266,9 +258,7 @@ actor TunHelperClient {
 
             let remote = connection.remoteObjectProxyWithErrorHandler { [weak self] error in
                 guard gate.resume(throwing: error) else { return }
-                Task {
-                    await self?.discardConnection(generation: generation)
-                }
+                Self.scheduleConnectionDiscard(self, generation: generation)
             }
             guard let helper = remote as? TunHelperXPCProtocol else {
                 if gate.resume(throwing: TunHelperClientError.invalidRemoteObject) {
@@ -301,9 +291,7 @@ actor TunHelperClient {
                             actual: protocolVersion
                         )
                     ) {
-                        Task {
-                            await self?.discardConnection(generation: generation)
-                        }
+                        Self.scheduleConnectionDiscard(self, generation: generation)
                     }
                     return
                 }
@@ -317,9 +305,7 @@ actor TunHelperClient {
                             actual: implementationVersion
                         )
                     ) {
-                        Task {
-                            await self?.discardConnection(generation: generation)
-                        }
+                        Self.scheduleConnectionDiscard(self, generation: generation)
                     }
                     return
                 }
@@ -342,14 +328,10 @@ actor TunHelperClient {
         let connection = try connectionFactory()
         let generation = UUID()
         connection.interruptionHandler = { [weak self] in
-            Task {
-                await self?.discardConnection(generation: generation)
-            }
+            Self.scheduleConnectionDiscard(self, generation: generation)
         }
         connection.invalidationHandler = { [weak self] in
-            Task {
-                await self?.discardConnection(generation: generation)
-            }
+            Self.scheduleConnectionDiscard(self, generation: generation)
         }
         connection.activate()
         self.connection = connection
@@ -384,6 +366,16 @@ actor TunHelperClient {
         connection.remoteObjectInterface = TunHelperXPCInterfaceFactory.make()
         connection.setCodeSigningRequirement(helperRequirement)
         return LiveTunHelperConnection(connection: connection)
+    }
+
+    private nonisolated static func scheduleConnectionDiscard(
+        _ client: TunHelperClient?,
+        generation: UUID
+    ) {
+        guard let client else { return }
+        Task {
+            await client.discardConnection(generation: generation)
+        }
     }
 
     private func scheduleTimeout<Value>(
