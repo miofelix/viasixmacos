@@ -579,15 +579,11 @@ public actor AppBootstrapper {
         projection: MihomoRuntimeProjection
     ) throws -> MihomoRuntimeOptions {
         let externalController: MihomoExternalControllerConfiguration?
-        if projection == .user {
-            let configuration = try mihomoAPIConfiguration()
-            externalController = MihomoExternalControllerConfiguration(
-                port: configuration.port,
-                secret: configuration.secret
-            )
-        } else {
-            externalController = nil
-        }
+        let configuration = try mihomoAPIConfiguration()
+        externalController = MihomoExternalControllerConfiguration(
+            port: configuration.port,
+            secret: configuration.secret
+        )
         return MihomoRuntimeOptions(
             listenAddress: local.listenAddress,
             mixedPort: local.port,
@@ -598,7 +594,13 @@ public actor AppBootstrapper {
             sniffingEnabled: local.sniffingEnabled,
             bypassPrivateNetworks: local.bypassPrivateNetworks,
             externalController: externalController,
-            tun: projection == .privilegedTun ? MihomoTunConfiguration() : nil
+            tun: projection == .privilegedTun
+                ? MihomoTunConfiguration(
+                    stack: MihomoTunStack(rawValue: local.tunStack.rawValue) ?? .mixed,
+                    strictRoute: local.tunStrictRoute,
+                    mtu: local.tunMTU
+                )
+                : nil
         )
     }
 

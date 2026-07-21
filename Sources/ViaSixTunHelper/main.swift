@@ -18,17 +18,18 @@ do {
     )
 
     let journalController = TunSessionJournalController()
+    let backend = PrivilegedTunBackend(journalController: journalController)
     do {
-        try journalController.rejectPendingRecoveryWithoutBackend()
+        _ = try backend.recoverAtStartup()
     } catch {
-        // Keep serving probe/recovery so the app can surface the failure.
-        // The journal remains available for a future concrete cleanup backend.
+        // Keep serving status/recovery so the app can surface and retry the
+        // exact failure without discarding the root-owned recovery journal.
         logger.error(
             "Initial TUN recovery failed: \(error.localizedDescription, privacy: .public)"
         )
     }
 
-    let delegate = TunXPCListener(journalController: journalController)
+    let delegate = TunXPCListener(backend: backend)
     let listener = NSXPCListener(machServiceName: TunHelperConstants.machServiceName)
     listener.setConnectionCodeSigningRequirement(clientRequirement)
     listener.delegate = delegate

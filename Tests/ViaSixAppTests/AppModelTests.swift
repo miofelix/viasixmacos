@@ -1,5 +1,6 @@
 import Foundation
 import ViaSixMihomoConfig
+import ViaSixPrivilegedProtocol
 import XCTest
 
 @testable import ViaSixApp
@@ -7,6 +8,228 @@ import XCTest
 
 @MainActor
 final class AppModelTests: XCTestCase {
+    func testTunModeStartsWithPrivilegedRuntimeWithoutUserMihomoAndStopsCleanly()
+        async throws
+    {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        try await bootstrapper.replaceProfile(with: validProfile(), selectedIP: "2606::1")
+        _ = try await bootstrapper.replaceLocalProxyConfiguration(
+            with: LocalProxyConfiguration(
+                networkAccessMode: .virtualInterface,
+                tunStack: .gvisor,
+                tunMTU: 1_400,
+                tunStrictRoute: true
+            ),
+            selectedIP: "2606::1"
+        )
+        let tunCoordinator = ControlledTunModeCoordinator()
+        let model = makeModel(
+            paths: paths,
+            bootstrapper: bootstrapper,
+            tunCoordinator: tunCoordinator
+        )
+
+        model.start()
+        try await waitUntilReady(model)
+        XCTAssertTrue(model.canUseTunMode)
+        XCTAssertTrue(model.activeProxyRuntimeIsAvailable)
+        XCTAssertFalse(model.hasProxyCoreExecutable)
+
+        model.startProxy()
+        try await waitUntil {
+            model.state.proxyCorePhase == .running && model.state.tun.isRunning
+        }
+
+        let startCount = await tunCoordinator.startCount
+        let startedPlanValue = await tunCoordinator.startedPlan
+        XCTAssertEqual(startCount, 1)
+        let startedPlan = try XCTUnwrap(startedPlanValue)
+        XCTAssertEqual(startedPlan.options.tun?.stack, .gvisor)
+        XCTAssertEqual(startedPlan.options.tun?.mtu, 1_400)
+        XCTAssertEqual(startedPlan.options.tun?.strictRoute, true)
+
+        model.setNetworkAccessMode(.localProxy)
+        XCTAssertEqual(
+            model.state.localProxyConfiguration.networkAccessMode,
+            .virtualInterface
+        )
+        XCTAssertTrue(model.state.notice?.message.contains("请先停止代理") == true)
+
+        model.stopProxy()
+        try await waitUntil {
+            model.state.proxyCorePhase == .stopped
+                && model.state.tun.sessionPhase == .inactive
+        }
+        let stopCount = await tunCoordinator.stopCount
+        XCTAssertEqual(stopCount, 1)
+        let didShutdown = await model.shutdown()
+        XCTAssertTrue(didShutdown)
+    }
+
+    func testBootstrapAdoptsOwnedTunSessionAndShutdownStopsIt() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        _ = try await bootstrapper.replaceLocalProxyConfiguration(
+            with: LocalProxyConfiguration(
+                routingMode: .direct,
+                networkAccessMode: .virtualInterface
+            )
+        )
+        let tunCoordinator = ControlledTunModeCoordinator(sessionIsRunning: true)
+        let model = makeModel(
+            paths: paths,
+            bootstrapper: bootstrapper,
+            tunCoordinator: tunCoordinator
+        )
+
+        model.start()
+        try await waitUntilReady(model)
+        XCTAssertEqual(model.state.proxyCorePhase, .running)
+        XCTAssertTrue(model.state.tun.isRunning)
+
+        let didShutdown = await model.shutdown()
+        XCTAssertTrue(didShutdown)
+        let stopCount = await tunCoordinator.stopCount
+        let phase = await tunCoordinator.sessionPhase
+        XCTAssertEqual(stopCount, 1)
+        XCTAssertEqual(phase, .inactive)
+    }
+
+    func testForeignTunSessionCannotBeStoppedStartedOrUsedForMaintenance() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        _ = try await bootstrapper.replaceLocalProxyConfiguration(
+            with: LocalProxyConfiguration(
+                routingMode: .direct,
+                networkAccessMode: .virtualInterface
+            )
+        )
+        let tunCoordinator = ControlledTunModeCoordinator(
+            sessionPhase: .running,
+            sessionOwnedByCaller: false
+        )
+        let model = makeModel(
+            paths: paths,
+            bootstrapper: bootstrapper,
+            tunCoordinator: tunCoordinator
+        )
+
+        model.start()
+        try await waitUntilReady(model)
+
+        XCTAssertTrue(model.hasForeignTunSession)
+        XCTAssertFalse(model.canStopTunSession)
+        XCTAssertFalse(model.canMaintainTunInstallation)
+        XCTAssertEqual(model.state.proxyCorePhase, .stopped)
+
+        model.stopProxy()
+        model.installTunService()
+        model.repairTunService()
+        model.installOrRepairTunRuntime()
+        model.startProxy()
+        try await Task.sleep(for: .milliseconds(50))
+
+        let stopCountBeforeShutdown = await tunCoordinator.stopCount
+        let startCount = await tunCoordinator.startCount
+        let registerCount = await tunCoordinator.registerCount
+        let repairCount = await tunCoordinator.repairCount
+        let runtimeInstallCount = await tunCoordinator.runtimeInstallCount
+        XCTAssertEqual(stopCountBeforeShutdown, 0)
+        XCTAssertEqual(startCount, 0)
+        XCTAssertEqual(registerCount, 0)
+        XCTAssertEqual(repairCount, 0)
+        XCTAssertEqual(runtimeInstallCount, 0)
+        XCTAssertTrue(model.state.notice?.message.contains("其他登录用户") == true)
+
+        let didShutdown = await model.shutdown()
+        XCTAssertTrue(didShutdown)
+        let stopCountAfterShutdown = await tunCoordinator.stopCount
+        XCTAssertEqual(stopCountAfterShutdown, 0)
+    }
+
+    func testBootstrapDoesNotRecoverAnotherUsersTunJournal() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let tunCoordinator = ControlledTunModeCoordinator(
+            sessionPhase: .recoveryRequired,
+            sessionOwnedByCaller: false
+        )
+        let model = makeModel(paths: paths, tunCoordinator: tunCoordinator)
+
+        model.start()
+        try await waitUntilReady(model)
+
+        XCTAssertEqual(model.state.tun.sessionPhase, .recoveryRequired)
+        XCTAssertTrue(model.hasForeignTunSession)
+        XCTAssertFalse(model.canRecoverTunSession)
+        var recoverCount = await tunCoordinator.recoverCount
+        XCTAssertEqual(recoverCount, 0)
+
+        model.recoverTunSession()
+        try await Task.sleep(for: .milliseconds(50))
+        recoverCount = await tunCoordinator.recoverCount
+        XCTAssertEqual(recoverCount, 0)
+
+        let didShutdown = await model.shutdown()
+        XCTAssertTrue(didShutdown)
+    }
+
+    func testFailedTunSessionWithCompletedCleanupAllowsMaintenance() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let tunCoordinator = ControlledTunModeCoordinator(
+            sessionPhase: .failed,
+            sessionOwnedByCaller: true
+        )
+        let model = makeModel(paths: paths, tunCoordinator: tunCoordinator)
+
+        model.start()
+        try await waitUntilReady(model)
+
+        XCTAssertTrue(model.canMaintainTunInstallation)
+        XCTAssertFalse(model.canRecoverTunSession)
+
+        model.installOrRepairTunRuntime()
+        try await waitUntilAsync {
+            await tunCoordinator.runtimeInstallCount == 1
+        }
+
+        let didShutdown = await model.shutdown()
+        XCTAssertTrue(didShutdown)
+    }
+
+    func testBecomingActiveRefreshesTunApprovalState() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let tunCoordinator = ControlledTunModeCoordinator(
+            registration: .requiresApproval
+        )
+        let model = makeModel(paths: paths, tunCoordinator: tunCoordinator)
+
+        model.start()
+        try await waitUntilReady(model)
+        XCTAssertEqual(model.state.tun.servicePhase, .requiresApproval)
+
+        await tunCoordinator.setRegistration(.enabled)
+        model.applicationDidBecomeActive()
+        try await waitUntil {
+            model.state.tun.servicePhase == .ready
+                && model.state.tun.runtimePhase == .ready
+        }
+
+        let statusCount = await tunCoordinator.statusCount
+        XCTAssertGreaterThan(statusCount, 0)
+        let didShutdown = await model.shutdown()
+        XCTAssertTrue(didShutdown)
+    }
+
     func testBootstrapUsesPersistedSelectionInsteadOfInferringItFromGeneratedProfile()
         async throws
     {
@@ -2329,6 +2552,7 @@ final class AppModelTests: XCTestCase {
         exitDetector: (any ExitIPDetecting)? = nil,
         profileReplacer: (any ProxyProfileReplacing)? = nil,
         systemProxyManager: (any SystemProxyManaging)? = nil,
+        tunCoordinator: (any TunModeCoordinating)? = nil,
         proxyCoreControllerFactory: ProxyCoreControllerFactory? = nil,
         mihomoAPIClientFactory: MihomoAPIClientFactory? = nil
     ) -> AppModel {
@@ -2340,6 +2564,7 @@ final class AppModelTests: XCTestCase {
             exitDetector: exitDetector ?? ExitIPDetector(),
             profileReplacer: profileReplacer,
             systemProxyManager: systemProxyManager,
+            tunCoordinator: tunCoordinator,
             proxyCoreControllerFactory: proxyCoreControllerFactory,
             mihomoAPIClientFactory: mihomoAPIClientFactory
         )
@@ -2491,6 +2716,136 @@ final class AppModelTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(
             to: destination,
             options: .atomic
+        )
+    }
+}
+
+private actor ControlledTunModeCoordinator: TunModeCoordinating {
+    private(set) var registration: TunHelperRegistrationState
+    private(set) var runtimeState: TunPrivilegedRuntimeState = .ready
+    private(set) var sessionPhase: TunHelperSessionPhase
+    private(set) var sessionIdentifier: UUID?
+    private(set) var sessionOwnedByCaller: Bool
+    private(set) var recoveryRequired: Bool
+    private(set) var statusCount = 0
+    private(set) var registerCount = 0
+    private(set) var repairCount = 0
+    private(set) var runtimeInstallCount = 0
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    private(set) var recoverCount = 0
+    private(set) var startedPlan: MihomoPrivilegedRuntimePlan?
+
+    private let features: TunHelperFeature = [
+        .fixedRuntimeManagement,
+        .sessionLifecycle,
+        .recovery,
+        .ipv4,
+        .ipv6,
+        .systemRouting,
+        .loopbackPrevention,
+        .dnsManagement,
+        .networkChangeRecovery,
+        .loopbackController,
+    ]
+
+    init(
+        sessionIsRunning: Bool = false,
+        registration: TunHelperRegistrationState = .enabled
+    ) {
+        self.registration = registration
+        sessionPhase = sessionIsRunning ? .running : .inactive
+        sessionIdentifier = sessionIsRunning ? UUID() : nil
+        sessionOwnedByCaller = sessionIsRunning
+        recoveryRequired = false
+    }
+
+    init(
+        sessionPhase: TunHelperSessionPhase,
+        sessionOwnedByCaller: Bool,
+        registration: TunHelperRegistrationState = .enabled
+    ) {
+        self.registration = registration
+        self.sessionPhase = sessionPhase
+        self.sessionOwnedByCaller = sessionOwnedByCaller
+        sessionIdentifier =
+            sessionPhase != .inactive && sessionOwnedByCaller ? UUID() : nil
+        recoveryRequired = sessionPhase == .recoveryRequired
+    }
+
+    func registrationState() -> TunHelperRegistrationState { registration }
+
+    func registerService() throws -> TunHelperRegistrationState {
+        registerCount += 1
+        registration = .enabled
+        return registration
+    }
+
+    func repairService() throws -> TunHelperRegistrationState {
+        repairCount += 1
+        registration = .enabled
+        return registration
+    }
+
+    func setRegistration(_ registration: TunHelperRegistrationState) {
+        self.registration = registration
+    }
+
+    func openApprovalSettings() {}
+
+    func helperStatus() throws -> TunHelperStatusSnapshot {
+        statusCount += 1
+        return try snapshot()
+    }
+
+    func installOrRepairRuntime() throws -> TunHelperStatusSnapshot {
+        runtimeInstallCount += 1
+        runtimeState = .ready
+        return try snapshot()
+    }
+
+    func startSession(envelopePayload: Data) throws -> TunHelperStatusSnapshot {
+        startedPlan = try MihomoPrivilegedEnvelope.decodeRuntimePlan(from: envelopePayload)
+        startCount += 1
+        sessionPhase = .running
+        sessionIdentifier = UUID()
+        sessionOwnedByCaller = true
+        recoveryRequired = false
+        return try snapshot()
+    }
+
+    func stopSession() throws -> TunHelperStatusSnapshot {
+        stopCount += 1
+        sessionPhase = .inactive
+        sessionIdentifier = nil
+        sessionOwnedByCaller = false
+        recoveryRequired = false
+        return try snapshot()
+    }
+
+    func recover() throws -> TunHelperStatusSnapshot {
+        recoverCount += 1
+        sessionPhase = .inactive
+        sessionIdentifier = nil
+        sessionOwnedByCaller = false
+        recoveryRequired = false
+        return try snapshot()
+    }
+
+    func invalidate() {}
+
+    private func snapshot() throws -> TunHelperStatusSnapshot {
+        try TunHelperStatusSnapshot(
+            supportedFeatures: features.rawValue,
+            runtimeState: runtimeState,
+            runtimeVersion: runtimeState == .ready ? "1.19.29" : nil,
+            sessionPhase: sessionPhase,
+            sessionIdentifier: sessionOwnedByCaller ? sessionIdentifier : nil,
+            sessionOwnedByCaller: sessionOwnedByCaller,
+            recoveryRequired: recoveryRequired,
+            routingMode: sessionOwnedByCaller && sessionPhase != .inactive ? .rule : nil,
+            observedAt: Date(),
+            lastError: nil
         )
     }
 }

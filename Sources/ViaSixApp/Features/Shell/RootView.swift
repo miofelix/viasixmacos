@@ -316,7 +316,9 @@ struct RootView: View {
             return false
         case .stopped, .failed:
             return model.switchingIP != nil
-                || !model.hasProxyCoreExecutable
+                || (model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+                    && model.hasForeignTunSession)
+                || !model.activeProxyRuntimeIsAvailable
                 || !model.isProxyConfigurationReady
         case .stopping:
             return true
@@ -344,8 +346,14 @@ struct RootView: View {
         case .stopping:
             "正在停止本地代理"
         case .stopped, .failed:
-            if !model.hasProxyCoreExecutable {
-                "请先在设置中安装 Mihomo"
+            if model.state.localProxyConfiguration.networkAccessMode == .virtualInterface,
+                model.hasForeignTunSession
+            {
+                "虚拟网卡会话正由其他登录用户使用"
+            } else if !model.activeProxyRuntimeIsAvailable {
+                model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+                    ? "请先在设置中准备虚拟网卡服务"
+                    : "请先在设置中安装 Mihomo"
             } else if let issue = model.proxyConfigurationIssue {
                 "请先在设置中修复代理配置：\(issue)"
             } else {

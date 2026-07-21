@@ -33,6 +33,53 @@ final class LocalProxyConfigurationTests: XCTestCase {
         }
     }
 
+    func testTunFieldsRoundTripAndDefaultForOlderPayloads() throws {
+        let legacy = try XCTUnwrap(
+            #"{"networkAccessMode":"virtualInterface"}"#.data(using: .utf8)
+        )
+        let decoded = try JSONDecoder().decode(LocalProxyConfiguration.self, from: legacy)
+        XCTAssertEqual(decoded.tunStack, .mixed)
+        XCTAssertEqual(decoded.tunMTU, 1_500)
+        XCTAssertFalse(decoded.tunStrictRoute)
+
+        let configured = LocalProxyConfiguration(
+            networkAccessMode: .virtualInterface,
+            tunStack: .gvisor,
+            tunMTU: 1_400,
+            tunStrictRoute: true
+        )
+        let roundTrip = try JSONDecoder().decode(
+            LocalProxyConfiguration.self,
+            from: JSONEncoder().encode(configured)
+        )
+        XCTAssertEqual(roundTrip, configured)
+    }
+
+    func testTunMTUValidationUsesSafePlatformRange() throws {
+        for mtu in [1_279, 9_001] {
+            XCTAssertThrowsError(
+                try LocalProxyConfiguration(
+                    networkAccessMode: .virtualInterface,
+                    tunMTU: mtu
+                ).validated()
+            ) { error in
+                XCTAssertEqual(error as? LocalProxyConfigurationError, .invalidTunMTU)
+            }
+        }
+        XCTAssertNoThrow(
+            try LocalProxyConfiguration(
+                networkAccessMode: .virtualInterface,
+                tunMTU: 1_280
+            ).validated()
+        )
+        XCTAssertNoThrow(
+            try LocalProxyConfiguration(
+                networkAccessMode: .virtualInterface,
+                tunMTU: 9_000
+            ).validated()
+        )
+    }
+
     func testLegacyLocalProxyFieldsMigrateToNeutralValues() throws {
         let legacy = Data(
             #"{"logLevel":"none","systemProxyEnabled":true}"#.utf8

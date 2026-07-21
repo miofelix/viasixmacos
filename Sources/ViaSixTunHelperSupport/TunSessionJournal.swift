@@ -18,6 +18,9 @@ public struct TunSessionJournal: Codable, Equatable, Sendable {
     public let ownerUserIdentifier: UInt32
     public var phase: TunSessionPhase
     public var cleanupRequired: Bool
+    public var processIdentifier: Int32?
+    public var routingModeRawValue: Int?
+    public var tunInterfaceName: String?
     public let createdAt: Date
     public var updatedAt: Date
     public var lastError: String?
@@ -27,6 +30,9 @@ public struct TunSessionJournal: Codable, Equatable, Sendable {
         ownerUserIdentifier: UInt32,
         phase: TunSessionPhase,
         cleanupRequired: Bool,
+        processIdentifier: Int32? = nil,
+        routingModeRawValue: Int? = nil,
+        tunInterfaceName: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date? = nil,
         lastError: String? = nil
@@ -36,6 +42,9 @@ public struct TunSessionJournal: Codable, Equatable, Sendable {
         self.ownerUserIdentifier = ownerUserIdentifier
         self.phase = phase
         self.cleanupRequired = cleanupRequired
+        self.processIdentifier = processIdentifier
+        self.routingModeRawValue = routingModeRawValue
+        self.tunInterfaceName = tunInterfaceName
         self.createdAt = createdAt
         self.updatedAt = updatedAt ?? createdAt
         self.lastError = lastError
@@ -55,10 +64,27 @@ public struct TunSessionJournal: Codable, Equatable, Sendable {
         guard ownerUserIdentifier > 0 else {
             throw TunSessionJournalError.invalidJournal("会话用户无效")
         }
+        if let processIdentifier, processIdentifier <= 1 {
+            throw TunSessionJournalError.invalidJournal("会话进程标识无效")
+        }
+        if let routingModeRawValue, !(0...2).contains(routingModeRawValue) {
+            throw TunSessionJournalError.invalidJournal("会话路由模式无效")
+        }
+        if let tunInterfaceName,
+            !Self.isValidTunInterfaceName(tunInterfaceName)
+        {
+            throw TunSessionJournalError.invalidJournal("TUN 接口名称无效")
+        }
         if let lastError, lastError.utf8.count > Self.maximumLastErrorBytes {
             throw TunSessionJournalError.invalidJournal("错误信息过长")
         }
         return self
+    }
+
+    private static func isValidTunInterfaceName(_ name: String) -> Bool {
+        guard name.hasPrefix("utun") else { return false }
+        let suffix = name.dropFirst(4)
+        return !suffix.isEmpty && suffix.allSatisfy(\.isNumber)
     }
 }
 
@@ -468,6 +494,74 @@ public final class TunSessionJournalController: @unchecked Sendable {
     }
 
     @discardableResult
+    public func recordProcess(
+        sessionIdentifier: UUID,
+        processIdentifier: Int32,
+        routingModeRawValue: Int
+    ) throws -> TunSessionJournal {
+        try lock.withLock {
+            guard var journal = try store.load() else {
+                throw TunSessionJournalError.invalidJournal("会话不存在")
+            }
+            try requireSession(journal, sessionIdentifier: sessionIdentifier)
+            guard processIdentifier > 1 else {
+                throw TunSessionJournalError.invalidJournal("会话进程标识无效")
+            }
+            guard (0...2).contains(routingModeRawValue) else {
+                throw TunSessionJournalError.invalidJournal("会话路由模式无效")
+            }
+            journal.processIdentifier = processIdentifier
+            journal.routingModeRawValue = routingModeRawValue
+            journal.updatedAt = max(now(), journal.createdAt)
+            try store.save(journal)
+            return journal
+        }
+    }
+
+    @discardableResult
+    public func updateRoutingMode(
+        sessionIdentifier: UUID,
+        routingModeRawValue: Int
+    ) throws -> TunSessionJournal {
+        try lock.withLock {
+            guard var journal = try store.load() else {
+                throw TunSessionJournalError.invalidJournal("会话不存在")
+            }
+            try requireSession(journal, sessionIdentifier: sessionIdentifier)
+            guard (0...2).contains(routingModeRawValue) else {
+                throw TunSessionJournalError.invalidJournal("会话路由模式无效")
+            }
+            journal.routingModeRawValue = routingModeRawValue
+            journal.updatedAt = max(now(), journal.createdAt)
+            try store.save(journal)
+            return journal
+        }
+    }
+
+    @discardableResult
+    public func recordTunInterface(
+        sessionIdentifier: UUID,
+        interfaceName: String
+    ) throws -> TunSessionJournal {
+        try lock.withLock {
+            guard var journal = try store.load() else {
+                throw TunSessionJournalError.invalidJournal("会话不存在")
+            }
+            try requireSession(journal, sessionIdentifier: sessionIdentifier)
+            guard interfaceName.hasPrefix("utun"),
+                !interfaceName.dropFirst(4).isEmpty,
+                interfaceName.dropFirst(4).allSatisfy(\.isNumber)
+            else {
+                throw TunSessionJournalError.invalidJournal("TUN 接口名称无效")
+            }
+            journal.tunInterfaceName = interfaceName
+            journal.updatedAt = max(now(), journal.createdAt)
+            try store.save(journal)
+            return journal
+        }
+    }
+
+    @discardableResult
     public func markRestoring(sessionIdentifier: UUID) throws -> TunSessionJournal {
         try transition(
             sessionIdentifier: sessionIdentifier,
@@ -477,11 +571,15 @@ public final class TunSessionJournalController: @unchecked Sendable {
         )
     }
 
-    public func markFailed(sessionIdentifier: UUID, error: any Error) throws {
+    public func markFailed(
+        sessionIdentifier: UUID,
+        error: any Error,
+        cleanupRequired: Bool = true
+    ) throws {
         _ = try transition(
             sessionIdentifier: sessionIdentifier,
             phase: .failed,
-            cleanupRequired: true,
+            cleanupRequired: cleanupRequired,
             lastError: boundedUTF8Prefix(
                 error.localizedDescription,
                 maximumBytes: TunSessionJournal.maximumLastErrorBytes

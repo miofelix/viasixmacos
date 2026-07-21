@@ -1,5 +1,15 @@
 import Foundation
 
+public struct MihomoPrivilegedRuntimePlan: Equatable, Sendable {
+    public let configuration: Data
+    public let options: MihomoRuntimeOptions
+
+    public init(configuration: Data, options: MihomoRuntimeOptions) {
+        self.configuration = configuration
+        self.options = options
+    }
+}
+
 /// A versioned, binary-property-list transport for the already-sanitized
 /// privileged Mihomo plan. The payload is not runnable Mihomo YAML: the helper
 /// must decode it, repeat the privileged allowlist projection, and generate a
@@ -29,6 +39,10 @@ public enum MihomoPrivilegedEnvelope {
     }
 
     public static func decodeRuntimeConfiguration(from data: Data) throws -> Data {
+        try decodeRuntimePlan(from: data).configuration
+    }
+
+    public static func decodeRuntimePlan(from data: Data) throws -> MihomoPrivilegedRuntimePlan {
         guard data.count <= maximumBytes else {
             throw MihomoConfigurationError.privilegedEnvelopeTooLarge(data.count)
         }
@@ -85,7 +99,10 @@ public enum MihomoPrivilegedEnvelope {
         guard canonical == wire else {
             throw MihomoConfigurationError.nonCanonicalPrivilegedEnvelope
         }
-        return runtime
+        return MihomoPrivilegedRuntimePlan(
+            configuration: runtime,
+            options: wire.options
+        )
     }
 
     private static func encoded(_ wire: WireEnvelope) throws -> Data {

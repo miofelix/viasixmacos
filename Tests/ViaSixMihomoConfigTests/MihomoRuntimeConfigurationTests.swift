@@ -4,7 +4,7 @@ import XCTest
 @testable import ViaSixMihomoConfig
 
 final class MihomoRuntimeConfigurationTests: XCTestCase {
-    func testUserProjectionAddsLoopbackControllerAndPrivilegedProjectionDropsIt() throws {
+    func testUserAndPrivilegedProjectionsKeepAuthenticatedLoopbackController() throws {
         let controller = MihomoExternalControllerConfiguration(port: 9_090, secret: "local-secret")
         let user = try MihomoYAML.mapping(
             from: sampleServer().runtimeConfiguration(
@@ -23,8 +23,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
                 projection: .privilegedTun
             )
         )
-        XCTAssertNil(privileged["external-controller"])
-        XCTAssertNil(privileged["secret"])
+        XCTAssertEqual(privileged.string("external-controller"), "127.0.0.1:9090")
+        XCTAssertEqual(privileged.string("secret"), "local-secret")
     }
 
     func testRuleModeBuildsManagedGroupAndPrivateBypassRules() throws {

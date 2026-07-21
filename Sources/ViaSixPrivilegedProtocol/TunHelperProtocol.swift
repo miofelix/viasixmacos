@@ -8,7 +8,7 @@ public enum TunHelperConstants {
     public static let launchDaemonPlistName = "\(helperBundleIdentifier).plist"
     public static let errorDomain = "com.felix.viasix.tun-helper.error"
     public static let protocolVersion = 2
-    public static let implementationVersion = 2
+    public static let implementationVersion = 4
 }
 
 public struct TunHelperFeature: OptionSet, Hashable, Sendable {
@@ -22,12 +22,26 @@ public struct TunHelperFeature: OptionSet, Hashable, Sendable {
     public static let sessionLifecycle = Self(rawValue: 1 << 1)
     public static let routingModeControl = Self(rawValue: 1 << 2)
     public static let recovery = Self(rawValue: 1 << 3)
+    public static let ipv4 = Self(rawValue: 1 << 4)
+    public static let ipv6 = Self(rawValue: 1 << 5)
+    public static let systemRouting = Self(rawValue: 1 << 6)
+    public static let loopbackPrevention = Self(rawValue: 1 << 7)
+    public static let dnsManagement = Self(rawValue: 1 << 8)
+    public static let networkChangeRecovery = Self(rawValue: 1 << 9)
+    public static let loopbackController = Self(rawValue: 1 << 10)
 
     public static let allKnown: Self = [
         .fixedRuntimeManagement,
         .sessionLifecycle,
         .routingModeControl,
         .recovery,
+        .ipv4,
+        .ipv6,
+        .systemRouting,
+        .loopbackPrevention,
+        .dnsManagement,
+        .networkChangeRecovery,
+        .loopbackController,
     ]
 }
 
@@ -85,6 +99,10 @@ public struct TunHelperProbeResult: Equatable, Sendable {
     case invalidConfigurationEnvelope = 2
     case invalidRoutingMode = 3
     case invalidStatusSnapshot = 4
+    case runtimeUnavailable = 5
+    case sessionBusy = 6
+    case sessionNotOwned = 7
+    case operationFailed = 8
 }
 
 public enum TunConfigurationEnvelopeError: LocalizedError, Equatable, Sendable {
@@ -693,6 +711,17 @@ public enum TunHelperRemoteError {
             domain: TunHelperConstants.errorDomain,
             code: TunHelperErrorCode.invalidRoutingMode.rawValue,
             userInfo: [NSLocalizedDescriptionKey: "虚拟网卡路由模式无效"]
+        )
+    }
+
+    public static func operationFailed(
+        _ error: any Error,
+        code: TunHelperErrorCode = .operationFailed
+    ) -> NSError {
+        NSError(
+            domain: TunHelperConstants.errorDomain,
+            code: code.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: error.localizedDescription]
         )
     }
 }

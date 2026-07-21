@@ -206,9 +206,9 @@ struct MenuBarView: View {
             Toggle("使用系统代理", isOn: systemProxyRequestedBinding)
                 .disabled(systemProxyToggleDisabled)
 
-            Toggle("虚拟网卡模式", isOn: .constant(false))
-                .disabled(true)
-                .help("需要安装并授权虚拟网卡服务")
+            Toggle("虚拟网卡模式", isOn: tunRequestedBinding)
+                .disabled(tunToggleDisabled)
+                .help(tunToggleHelp)
 
             Divider()
 
@@ -223,6 +223,12 @@ struct MenuBarView: View {
             Label(
                 "macOS：\(presentation.text)",
                 systemImage: systemProxyStatusIcon(presentation)
+            )
+            .foregroundStyle(.secondary)
+
+            Label(
+                "TUN：\(tunStatusTitle)",
+                systemImage: tunStatusIcon
             )
             .foregroundStyle(.secondary)
 
@@ -368,6 +374,58 @@ struct MenuBarView: View {
         )
     }
 
+    private var tunRequestedBinding: Binding<Bool> {
+        Binding {
+            model.state.localProxyConfiguration.networkAccessMode.usesVirtualInterface
+        } set: { enabled in
+            model.setNetworkAccessMode(enabled ? .virtualInterface : .localProxy)
+        }
+    }
+
+    private var tunToggleDisabled: Bool {
+        guard model.state.launchPhase == .ready else { return true }
+        if model.isRoutingModeChanging
+            || model.isSystemProxyTransitioning
+            || model.isTunTransitioning
+            || model.state.runtimeOperation != nil
+            || model.isTemplateOperationBusy
+            || model.switchingIP != nil
+            || model.state.isProxyRunning
+        {
+            return true
+        }
+        return !model.state.localProxyConfiguration.networkAccessMode.usesVirtualInterface
+            && !model.canUseTunMode
+    }
+
+    private var tunToggleHelp: String {
+        if model.state.isProxyRunning { return "请先停止代理，再切换虚拟网卡接入方式" }
+        if !model.canUseTunMode { return "请先在设置中安装、批准并准备虚拟网卡服务" }
+        return "切换 TUN 网络接入"
+    }
+
+    private var tunStatusTitle: String {
+        switch model.state.tun.sessionPhase {
+        case .inactive: model.canUseTunMode ? "已就绪" : "未就绪"
+        case .starting: "正在启动"
+        case .running: "运行中"
+        case .stopping: "正在停止"
+        case .recovering: "正在恢复"
+        case .recoveryRequired: "需要恢复"
+        case .failed: "运行异常"
+        }
+    }
+
+    private var tunStatusIcon: String {
+        switch model.state.tun.sessionPhase {
+        case .running: "checkmark.circle.fill"
+        case .starting, .stopping, .recovering: "hourglass"
+        case .recoveryRequired: "exclamationmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        case .inactive: model.canUseTunMode ? "checkmark.circle" : "circle"
+        }
+    }
+
     private var routingModeDisabled: Bool {
         guard model.state.launchPhase == .ready else { return true }
         if model.isRoutingModeChanging
@@ -411,7 +469,9 @@ struct MenuBarView: View {
         if model.state.runtimeOperation != nil
             || model.isTemplateOperationBusy
             || model.switchingIP != nil
-            || !model.hasProxyCoreExecutable
+            || (model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+                && model.hasForeignTunSession)
+            || !model.activeProxyRuntimeIsAvailable
             || !model.isProxyConfigurationReady
         {
             return true

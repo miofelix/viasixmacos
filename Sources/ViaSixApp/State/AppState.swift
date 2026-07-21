@@ -88,6 +88,73 @@ struct AppState: Equatable, Sendable {
         }
     }
 
+    struct TunState: Equatable, Sendable {
+        enum ServicePhase: Equatable, Sendable {
+            case checking
+            case notInstalled
+            case requiresApproval
+            case ready
+            case unavailable(String)
+        }
+
+        enum RuntimePhase: Equatable, Sendable {
+            case unknown
+            case notInstalled
+            case ready
+            case repairRequired
+            case installing
+            case failed(String)
+        }
+
+        enum SessionPhase: Equatable, Sendable {
+            case inactive
+            case starting
+            case running
+            case stopping
+            case recovering
+            case recoveryRequired
+            case failed(String)
+
+            var isTransitioning: Bool {
+                switch self {
+                case .starting, .stopping, .recovering: true
+                case .inactive, .running, .recoveryRequired, .failed: false
+                }
+            }
+
+            var isFailed: Bool {
+                if case .failed = self { return true }
+                return false
+            }
+        }
+
+        var servicePhase: ServicePhase = .checking
+        var runtimePhase: RuntimePhase = .unknown
+        var sessionPhase: SessionPhase = .inactive
+        var runtimeVersion: String?
+        var supportedFeatures: UInt64 = 0
+        var sessionIdentifier: UUID?
+        var sessionOwnedByCurrentUser = false
+        var lastError: String?
+        var operationInProgress = false
+
+        var serviceIsReady: Bool {
+            servicePhase == .ready
+        }
+
+        var runtimeIsReady: Bool {
+            runtimePhase == .ready
+        }
+
+        var isAvailable: Bool {
+            serviceIsReady && runtimeIsReady
+        }
+
+        var isRunning: Bool {
+            sessionPhase == .running
+        }
+    }
+
     enum TemplateOperationPhase: Equatable, Sendable {
         case idle
         case importing
@@ -201,6 +268,7 @@ struct AppState: Equatable, Sendable {
     /// Actual macOS proxy state, kept separate from the user's local
     /// preference (`localProxyConfiguration.networkAccessMode`).
     var systemProxyPhase: SystemProxyPhase = .disabled
+    var tun = TunState()
     var templateOperationPhase: TemplateOperationPhase = .idle
     var templateOperationError: String?
     var proxyEndpoint = ProxyEndpoint()

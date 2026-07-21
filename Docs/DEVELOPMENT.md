@@ -137,7 +137,7 @@ SwiftPM 的主要边界：
 - `ViaSixCore` 负责平台逻辑和用户态进程，不应反向依赖 App target。
 - `ViaSixApp` 负责呈现与工作流编排。
 - `ViaSixPrivilegedProtocol` 只暴露固定 typed XPC 协议，不能接受路径、argv、shell 或任意 YAML。
-- `ViaSixTunHelperSupport` 与 `ViaSixTunHelper` 保持最小特权面；当前没有真实 TUN 后端。
+- `ViaSixTunHelperSupport` 与 `ViaSixTunHelper` 保持最小特权面；真实 TUN 后端只运行固定签名 Mihomo，并通过 typed XPC 暴露会话生命周期。
 
 更详细的模块关系见[架构说明](ARCHITECTURE.md)。
 
@@ -299,14 +299,14 @@ Mihomo 用户态运行
 
 ## 虚拟网卡开发边界
 
-`NetworkAccessMode` 已定义本地代理、系统代理和虚拟网卡三个互斥值，但当前配置生成和应用启动对 `virtualInterface` fail closed，UI 控制项不可用。Mihomo YAML 生成器具备受约束的 `tun` 配置模型，不代表应用已经具备安全启用条件。
+`NetworkAccessMode` 定义本地代理、系统代理和虚拟网卡三个互斥值。`virtualInterface` 只有在 helper 注册/批准、特权 Mihomo 完整性通过、feature set 满足要求且没有待恢复会话时才开放；否则配置、启动和 UI 都 fail closed。Mihomo YAML 生成器和 typed envelope 共同约束 `tun` 参数，helper 不接受用户路径或原始 YAML。
 
 真实 TUN 前必须满足[虚拟网卡能力边界](VIRTUAL_NETWORK.md)中的签名、特权、路由、DNS、进程监督和崩溃恢复要求。尤其是：
 
 - helper 不能执行用户可写的 `Runtime/mihomo`。
 - XPC 不能接收路径、argv、shell 或原始 YAML。
-- 特权执行必须使用固定、root-owned、已签名的 Mihomo，并直接 `posix_spawn`。
-- journal 必须能精确识别会话进程、utun、路由、DNS 和配置摘要；不能用空 cleanup 宣告恢复成功。
+- 特权执行必须使用固定、root-owned、已签名的 Mihomo，并直接启动固定 `-d`/`-f` 参数。
+- journal 必须精确记录会话、PID、路由模式和清理阶段；进程路径与会话目录身份不匹配时不能终止或删除恢复记录。
 - 系统代理与 TUN 的切换必须由同一 `NetworkAccessMode` 状态机协调。
 
 ## 测速结果约定

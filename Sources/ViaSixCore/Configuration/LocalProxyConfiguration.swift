@@ -85,6 +85,7 @@ public enum LocalProxyConfigurationError: LocalizedError, Equatable, Sendable {
     case invalidPort
     case invalidControllerPort
     case conflictingControllerPort
+    case invalidTunMTU
 
     public var errorDescription: String? {
         switch self {
@@ -96,6 +97,8 @@ public enum LocalProxyConfigurationError: LocalizedError, Equatable, Sendable {
             "内核控制端口必须在 1–65535 之间"
         case .conflictingControllerPort:
             "内核控制端口不能与本地代理端口相同"
+        case .invalidTunMTU:
+            "TUN MTU 必须在 1280–9000 之间"
         }
     }
 }
@@ -110,6 +113,9 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
     public var logLevel: ProxyLogLevel
     public var routingMode: ProxyRoutingMode
     public var networkAccessMode: NetworkAccessMode
+    public var tunStack: VirtualInterfaceStack
+    public var tunMTU: Int
+    public var tunStrictRoute: Bool
 
     public init(
         listenAddress: String = AppMetadata.proxyHost,
@@ -120,7 +126,10 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         bypassPrivateNetworks: Bool = true,
         logLevel: ProxyLogLevel = .warning,
         routingMode: ProxyRoutingMode = .rule,
-        networkAccessMode: NetworkAccessMode = .localProxy
+        networkAccessMode: NetworkAccessMode = .localProxy,
+        tunStack: VirtualInterfaceStack = .mixed,
+        tunMTU: Int = 1_500,
+        tunStrictRoute: Bool = false
     ) {
         self.listenAddress = listenAddress
         self.port = port
@@ -131,6 +140,9 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         self.logLevel = logLevel
         self.routingMode = routingMode
         self.networkAccessMode = networkAccessMode
+        self.tunStack = tunStack
+        self.tunMTU = tunMTU
+        self.tunStrictRoute = tunStrictRoute
     }
 
     /// Source-compatible initializer for callers that have not yet adopted
@@ -144,7 +156,10 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         bypassPrivateNetworks: Bool = true,
         logLevel: ProxyLogLevel = .warning,
         routingMode: ProxyRoutingMode = .rule,
-        systemProxyEnabled: Bool
+        systemProxyEnabled: Bool,
+        tunStack: VirtualInterfaceStack = .mixed,
+        tunMTU: Int = 1_500,
+        tunStrictRoute: Bool = false
     ) {
         self.init(
             listenAddress: listenAddress,
@@ -155,7 +170,10 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
             bypassPrivateNetworks: bypassPrivateNetworks,
             logLevel: logLevel,
             routingMode: routingMode,
-            networkAccessMode: systemProxyEnabled ? .systemProxy : .localProxy
+            networkAccessMode: systemProxyEnabled ? .systemProxy : .localProxy,
+            tunStack: tunStack,
+            tunMTU: tunMTU,
+            tunStrictRoute: tunStrictRoute
         )
     }
 
@@ -172,6 +190,9 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         case routingMode
         case networkAccessMode
         case systemProxyEnabled
+        case tunStack
+        case tunMTU
+        case tunStrictRoute
     }
 
     public init(from decoder: Decoder) throws {
@@ -210,6 +231,13 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
                 try container.decodeIfPresent(Bool.self, forKey: .systemProxyEnabled) == true
                 ? .systemProxy : .localProxy
         }
+        tunStack =
+            try container.decodeIfPresent(VirtualInterfaceStack.self, forKey: .tunStack)
+            ?? .mixed
+        tunMTU = try container.decodeIfPresent(Int.self, forKey: .tunMTU) ?? 1_500
+        tunStrictRoute =
+            try container.decodeIfPresent(Bool.self, forKey: .tunStrictRoute)
+            ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -223,6 +251,9 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         try container.encode(logLevel, forKey: .logLevel)
         try container.encode(routingMode, forKey: .routingMode)
         try container.encode(networkAccessMode, forKey: .networkAccessMode)
+        try container.encode(tunStack, forKey: .tunStack)
+        try container.encode(tunMTU, forKey: .tunMTU)
+        try container.encode(tunStrictRoute, forKey: .tunStrictRoute)
     }
 
     public func validated() throws -> LocalProxyConfiguration {
@@ -240,6 +271,9 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         }
         guard copy.controllerPort != copy.port else {
             throw LocalProxyConfigurationError.conflictingControllerPort
+        }
+        guard (1_280...9_000).contains(copy.tunMTU) else {
+            throw LocalProxyConfigurationError.invalidTunMTU
         }
         return copy
     }

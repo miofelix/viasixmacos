@@ -256,7 +256,7 @@ public struct MihomoServerConfiguration: Equatable, Sendable {
             ],
         ]
 
-        if projection == .user, let controller = options.externalController {
+        if let controller = options.externalController {
             runtime["external-controller"] = "127.0.0.1:\(controller.port)"
             runtime["secret"] = controller.secret
         }

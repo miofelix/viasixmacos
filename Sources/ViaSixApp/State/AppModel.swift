@@ -3,6 +3,7 @@ import Network
 import Observation
 import ViaSixCore
 import ViaSixMihomoConfig
+import ViaSixPrivilegedProtocol
 
 protocol ProxyProfileReplacing: Sendable {
     func replaceProfile(
@@ -128,6 +129,59 @@ final class AppModel {
 
     var isSystemProxyTransitioning: Bool {
         state.systemProxyPhase.isTransitioning
+    }
+
+    var isTunTransitioning: Bool {
+        state.tun.operationInProgress || state.tun.sessionPhase.isTransitioning
+    }
+
+    var hasForeignTunSession: Bool {
+        state.tun.sessionPhase != .inactive
+            && !state.tun.sessionPhase.isFailed
+            && !state.tun.sessionOwnedByCurrentUser
+            && proxyStartTask == nil
+    }
+
+    var canMaintainTunInstallation: Bool {
+        !state.isProxyRunning
+            && (state.tun.sessionPhase == .inactive
+                || state.tun.sessionPhase.isFailed)
+            && proxyStartTask == nil
+            && proxyStopTask == nil
+    }
+
+    var canStopTunSession: Bool {
+        state.tun.sessionPhase == .running
+            && state.tun.sessionOwnedByCurrentUser
+    }
+
+    var canRecoverTunSession: Bool {
+        state.tun.sessionOwnedByCurrentUser
+            && state.tun.sessionPhase == .recoveryRequired
+    }
+
+    var canUseTunMode: Bool {
+        let required: TunHelperFeature = [
+            .fixedRuntimeManagement,
+            .sessionLifecycle,
+            .recovery,
+            .ipv4,
+            .ipv6,
+            .systemRouting,
+            .loopbackPrevention,
+            .dnsManagement,
+            .networkChangeRecovery,
+            .loopbackController,
+        ]
+        return state.tun.isAvailable
+            && TunHelperFeature(rawValue: state.tun.supportedFeatures).isSuperset(of: required)
+    }
+
+    var activeProxyRuntimeIsAvailable: Bool {
+        if state.localProxyConfiguration.networkAccessMode == .virtualInterface {
+            return canUseTunMode
+        }
+        return hasProxyCoreExecutable
     }
 
     var isRoutingModeChanging: Bool {
@@ -269,6 +323,7 @@ final class AppModel {
     @ObservationIgnored private let exitDetector: any ExitIPDetecting
     @ObservationIgnored private let profileReplacer: any ProxyProfileReplacing
     @ObservationIgnored private let systemProxyManager: any SystemProxyManaging
+    @ObservationIgnored private let tunCoordinator: any TunModeCoordinating
     @ObservationIgnored private let proxyCoreControllerFactory: ProxyCoreControllerFactory
     @ObservationIgnored private let mihomoAPIClientFactory: MihomoAPIClientFactory?
 
@@ -289,6 +344,9 @@ final class AppModel {
     @ObservationIgnored private var proxyStopTask: Task<Void, Never>?
     @ObservationIgnored private var systemProxyTask: Task<Void, Never>?
     @ObservationIgnored private var systemProxyCleanupTask: Task<Void, Never>?
+    @ObservationIgnored private var tunOperationTask: Task<Void, Never>?
+    @ObservationIgnored private var tunMonitorTask: Task<Void, Never>?
+    @ObservationIgnored private var activeTunMonitorID: UUID?
     @ObservationIgnored private var routingModeTask: Task<Void, Never>?
     @ObservationIgnored private var mihomoMonitorTask: Task<Void, Never>?
     @ObservationIgnored private var mihomoMetadataTask: Task<Void, Never>?
@@ -310,6 +368,7 @@ final class AppModel {
         exitDetector: any ExitIPDetecting,
         profileReplacer: (any ProxyProfileReplacing)? = nil,
         systemProxyManager: (any SystemProxyManaging)? = nil,
+        tunCoordinator: (any TunModeCoordinating)? = nil,
         proxyCoreControllerFactory: ProxyCoreControllerFactory? = nil,
         mihomoAPIClientFactory: MihomoAPIClientFactory? = nil
     ) {
@@ -320,6 +379,7 @@ final class AppModel {
         self.exitDetector = exitDetector
         self.profileReplacer = profileReplacer ?? bootstrapper
         self.systemProxyManager = systemProxyManager ?? SystemProxyManager(paths: paths)
+        self.tunCoordinator = tunCoordinator ?? TunModeCoordinator()
         self.proxyCoreControllerFactory =
             proxyCoreControllerFactory ?? { configuration in
                 MihomoController(
@@ -361,6 +421,216 @@ final class AppModel {
         guard !isShuttingDown, case .failed = state.launchPhase, bootstrapTask == nil else { return }
         state.launchPhase = .idle
         start()
+    }
+
+    func refreshTunState() {
+        guard !isShuttingDown, tunOperationTask == nil else { return }
+        tunOperationTask = Task { [weak self] in
+            guard let self else { return }
+            defer { tunOperationTask = nil }
+            await refreshTunState(recoverIfNeeded: false)
+        }
+    }
+
+    func applicationDidBecomeActive() {
+        guard state.launchPhase == .ready else { return }
+        refreshTunState()
+    }
+
+    func installTunService() {
+        guard
+            !isShuttingDown,
+            tunOperationTask == nil,
+            canMaintainTunInstallation
+        else { return }
+        state.tun.operationInProgress = true
+        state.tun.lastError = nil
+        tunOperationTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                state.tun.operationInProgress = false
+                tunOperationTask = nil
+            }
+            do {
+                let registration = try await tunCoordinator.registerService()
+                applyTunRegistrationState(registration)
+                if registration == .enabled {
+                    let snapshot = try await tunCoordinator.installOrRepairRuntime()
+                    applyTunSnapshot(snapshot)
+                    showNotice("虚拟网卡服务已安装", style: .success)
+                } else if registration == .requiresApproval {
+                    showNotice("请在系统设置的登录项中允许 ViaSix 虚拟网卡服务")
+                }
+            } catch {
+                recordTunFailure("安装虚拟网卡服务失败", error: error)
+            }
+        }
+    }
+
+    func repairTunService() {
+        guard
+            !isShuttingDown,
+            tunOperationTask == nil,
+            canMaintainTunInstallation
+        else { return }
+        state.tun.operationInProgress = true
+        state.tun.lastError = nil
+        tunOperationTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                state.tun.operationInProgress = false
+                tunOperationTask = nil
+            }
+            do {
+                let registration = try await tunCoordinator.repairService()
+                applyTunRegistrationState(registration)
+                if registration == .enabled {
+                    let snapshot = try await tunCoordinator.installOrRepairRuntime()
+                    applyTunSnapshot(snapshot)
+                    showNotice("虚拟网卡服务已修复", style: .success)
+                } else if registration == .requiresApproval {
+                    showNotice("服务已重新注册，请在系统设置中批准")
+                }
+            } catch {
+                recordTunFailure("修复虚拟网卡服务失败", error: error)
+            }
+        }
+    }
+
+    func installOrRepairTunRuntime() {
+        guard
+            !isShuttingDown,
+            tunOperationTask == nil,
+            canMaintainTunInstallation,
+            state.tun.serviceIsReady
+        else { return }
+        state.tun.operationInProgress = true
+        state.tun.runtimePhase = .installing
+        state.tun.lastError = nil
+        tunOperationTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                state.tun.operationInProgress = false
+                tunOperationTask = nil
+            }
+            do {
+                let snapshot = try await tunCoordinator.installOrRepairRuntime()
+                applyTunSnapshot(snapshot)
+                showNotice("特权 Mihomo 已就绪", style: .success)
+            } catch {
+                state.tun.runtimePhase = .failed(error.localizedDescription)
+                recordTunFailure("安装特权 Mihomo 失败", error: error)
+            }
+        }
+    }
+
+    func recoverTunSession() {
+        guard
+            !isShuttingDown,
+            tunOperationTask == nil,
+            state.tun.serviceIsReady,
+            canRecoverTunSession
+        else { return }
+        state.tun.operationInProgress = true
+        state.tun.sessionPhase = .recovering
+        state.tun.lastError = nil
+        tunOperationTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                state.tun.operationInProgress = false
+                tunOperationTask = nil
+            }
+            do {
+                let snapshot = try await tunCoordinator.recover()
+                applyTunSnapshot(snapshot)
+                if state.proxyCorePhase != .running {
+                    state.proxyCorePhase = .stopped
+                }
+                showNotice("虚拟网卡状态已恢复", style: .success)
+            } catch {
+                state.tun.sessionPhase = .recoveryRequired
+                recordTunFailure("恢复虚拟网卡失败", error: error)
+            }
+        }
+    }
+
+    func openTunApprovalSettings() {
+        Task { [tunCoordinator] in
+            await tunCoordinator.openApprovalSettings()
+        }
+    }
+
+    private func refreshTunState(recoverIfNeeded: Bool) async {
+        let registration = await tunCoordinator.registrationState()
+        applyTunRegistrationState(registration)
+        guard registration == .enabled else { return }
+        do {
+            var snapshot = try await tunCoordinator.helperStatus()
+            if recoverIfNeeded,
+                snapshot.recoveryRequired,
+                snapshot.sessionOwnedByCaller
+            {
+                state.tun.sessionPhase = .recovering
+                snapshot = try await tunCoordinator.recover()
+            }
+            applyTunSnapshot(snapshot)
+        } catch {
+            state.tun.servicePhase = .unavailable(error.localizedDescription)
+            state.tun.lastError = error.localizedDescription
+            appendLog(
+                source: .app,
+                level: .warning,
+                message: "读取虚拟网卡服务状态失败：\(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func applyTunRegistrationState(_ registration: TunHelperRegistrationState) {
+        state.tun.servicePhase =
+            switch registration {
+            case .notRegistered: .notInstalled
+            case .enabled: .ready
+            case .requiresApproval: .requiresApproval
+            case .notFound: .unavailable("当前应用包中未找到虚拟网卡服务")
+            }
+        if registration != .enabled {
+            state.tun.runtimePhase = .unknown
+            state.tun.supportedFeatures = 0
+        }
+    }
+
+    private func applyTunSnapshot(_ snapshot: TunHelperStatusSnapshot) {
+        state.tun.servicePhase = .ready
+        state.tun.supportedFeatures = snapshot.supportedFeatures
+        state.tun.runtimeVersion = snapshot.runtimeVersion
+        state.tun.runtimePhase =
+            switch snapshot.runtimeState {
+            case .unavailable: .failed("当前 helper 不支持特权运行组件")
+            case .notInstalled: .notInstalled
+            case .ready: .ready
+            case .repairRequired: .repairRequired
+            case .installing: .installing
+            case .failed: .failed(snapshot.lastError ?? "特权运行组件异常")
+            }
+        state.tun.sessionIdentifier = snapshot.sessionIdentifier
+        state.tun.sessionOwnedByCurrentUser = snapshot.sessionOwnedByCaller
+        state.tun.lastError = snapshot.lastError
+        state.tun.sessionPhase =
+            switch snapshot.sessionPhase {
+            case .inactive: .inactive
+            case .starting: .starting
+            case .running: .running
+            case .stopping: .stopping
+            case .recovering: .recovering
+            case .recoveryRequired: .recoveryRequired
+            case .failed: .failed(snapshot.lastError ?? "TUN 会话异常")
+            }
+    }
+
+    private func recordTunFailure(_ prefix: String, error: any Error) {
+        state.tun.lastError = error.localizedDescription
+        appendLog(source: .app, level: .error, message: "\(prefix)：\(error.localizedDescription)")
+        showNotice("\(prefix)：\(error.localizedDescription)", style: .error)
     }
 
     func installRuntime(_ component: RuntimeComponent) {
@@ -418,6 +688,8 @@ final class AppModel {
             return activeProxyCore == nil
                 && proxyStartTask == nil
                 && proxyStopTask == nil
+                && !state.tun.isRunning
+                && !state.tun.sessionPhase.isTransitioning
         }
     }
 
@@ -628,7 +900,7 @@ final class AppModel {
     func saveLocalProxyConfiguration(_ configuration: LocalProxyConfiguration) async throws {
         guard state.launchPhase != .loading else { throw AppModelError.appNotReady }
         guard !isShuttingDown else { throw CancellationError() }
-        guard configuration.networkAccessMode != .virtualInterface else {
+        if configuration.networkAccessMode == .virtualInterface, !canUseTunMode {
             throw AppModelError.virtualInterfaceUnavailable
         }
         switch state.proxyCorePhase {
@@ -743,12 +1015,18 @@ final class AppModel {
         case .stopped, .running, .failed:
             break
         }
-        guard mode != .virtualInterface else {
-            showNotice("虚拟网卡服务尚未就绪", style: .error)
+        if mode == .virtualInterface, !canUseTunMode {
+            showNotice("请先在设置中安装、批准并准备虚拟网卡服务", style: .error)
+            return
+        }
+        let previous = state.localProxyConfiguration
+        if state.isProxyRunning,
+            mode == .virtualInterface || previous.networkAccessMode == .virtualInterface
+        {
+            showNotice("请先停止代理，再切换虚拟网卡接入方式")
             return
         }
 
-        let previous = state.localProxyConfiguration
         guard previous.networkAccessMode != mode else { return }
         var updated = previous
         updated.networkAccessMode = mode
@@ -768,7 +1046,7 @@ final class AppModel {
 
                 if mode == .systemProxy, state.isProxyRunning {
                     try await applySystemProxyIfRequested(endpoint: state.proxyEndpoint)
-                } else if mode == .localProxy {
+                } else if mode == .localProxy || mode == .virtualInterface {
                     try await restoreSystemProxyIfNeeded()
                 } else {
                     state.systemProxyPhase = .disabled
@@ -778,6 +1056,8 @@ final class AppModel {
                         "系统代理已启用"
                     } else if mode == .systemProxy {
                         "系统代理将在本地代理运行时启用"
+                    } else if mode == .virtualInterface {
+                        "已切换到虚拟网卡模式，启动代理后接管系统流量"
                     } else {
                         "已切换到本地代理模式"
                     }
@@ -1130,7 +1410,7 @@ final class AppModel {
         }
 
         appendLog(source: .app, level: .success, message: "已切换节点：\(ip)")
-        if shouldRestartProxy, activeProxyCore != nil {
+        if shouldRestartProxy, activeProxyCore != nil || state.tun.isRunning {
             state.proxyCorePhase = .stopping
             do {
                 try await restartActiveProxy()
@@ -1152,14 +1432,20 @@ final class AppModel {
             !isShuttingDown,
             runtimeTask == nil,
             state.templateOperationPhase == .idle,
+            !state.isProxyRunning,
             activeProxyCore == nil,
             proxyStartTask == nil,
             proxyStopTask == nil,
-            selectionTask == nil
+            selectionTask == nil,
+            tunOperationTask == nil
         else { return }
         guard isProxyConfigurationReady else {
             let message = proxyConfigurationIssue ?? "代理配置正在检查，请稍候"
             showNotice(message, style: .error, action: .openSettings)
+            return
+        }
+        if state.localProxyConfiguration.networkAccessMode == .virtualInterface {
+            startTunProxy()
             return
         }
         guard
@@ -1250,8 +1536,118 @@ final class AppModel {
         }
     }
 
+    private func startTunProxy() {
+        guard !hasForeignTunSession else {
+            showNotice(
+                "虚拟网卡会话正由其他登录用户使用，当前用户无法启动或接管",
+                style: .error,
+                action: .openSettings
+            )
+            return
+        }
+        guard canUseTunMode else {
+            let message: String =
+                switch state.tun.servicePhase {
+                case .notInstalled:
+                    "请先在设置中安装虚拟网卡服务"
+                case .requiresApproval:
+                    "请先在系统设置中批准虚拟网卡服务"
+                case .unavailable(let detail):
+                    detail
+                case .checking:
+                    "正在检查虚拟网卡服务，请稍候"
+                case .ready:
+                    switch state.tun.runtimePhase {
+                    case .notInstalled: "请先安装特权 Mihomo"
+                    case .repairRequired: "请先修复特权 Mihomo"
+                    case .failed(let detail): detail
+                    case .unknown, .installing: "特权 Mihomo 尚未就绪"
+                    case .ready: "虚拟网卡能力不完整，请修复服务"
+                    }
+                }
+            showNotice(message, style: .error, action: .openSettings)
+            return
+        }
+
+        cancelExitIPDetection()
+        proxyStopRequested = false
+        state.proxyCorePhase = .validating
+        state.tun.sessionPhase = .starting
+        proxyStartTask = Task { [weak self] in
+            guard let self else { return }
+            defer { proxyStartTask = nil }
+            do {
+                try await restoreSystemProxyIfNeeded()
+                let selectedIP = state.preferences.selectedIP
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let endpoint = try await bootstrapper.validateProfileForLaunch(
+                    selectedIP: selectedIP
+                )
+                let envelope = try await bootstrapper.privilegedTunConfigurationEnvelope(
+                    selectedIP: selectedIP
+                )
+                try Task.checkCancellation()
+                state.proxyEndpoint = endpoint
+                state.proxyCorePhase = .starting
+                let snapshot = try await tunCoordinator.startSession(
+                    envelopePayload: envelope
+                )
+                applyTunSnapshot(snapshot)
+                guard snapshot.sessionPhase == .running,
+                    snapshot.sessionOwnedByCaller
+                else {
+                    throw AppModelError.virtualInterfaceStartNotConfirmed
+                }
+                state.proxyCorePhase = .running
+                beginMihomoMonitoring()
+                beginTunStatusMonitoring()
+                appendLog(
+                    source: .proxy,
+                    level: .success,
+                    message: "虚拟网卡已启动，TUN 接管系统流量"
+                )
+                showNotice("虚拟网卡模式已启用", style: .success)
+                refreshExitIPAfterNetworkChangeIfNeeded()
+            } catch is CancellationError where proxyStopRequested || isShuttingDown {
+                state.proxyCorePhase = .stopped
+            } catch {
+                await refreshTunState(recoverIfNeeded: false)
+                if state.tun.isRunning, state.tun.sessionOwnedByCurrentUser {
+                    state.proxyCorePhase = .running
+                    beginMihomoMonitoring()
+                    beginTunStatusMonitoring()
+                    showNotice("虚拟网卡已启动，但启动确认曾中断", style: .success)
+                    return
+                }
+                state.tun.sessionPhase = .failed(error.localizedDescription)
+                state.proxyCorePhase = .failed(error.localizedDescription)
+                stopMihomoMonitoring()
+                appendLog(
+                    source: .proxy,
+                    level: .error,
+                    message: "虚拟网卡启动失败：\(error.localizedDescription)"
+                )
+                showNotice(
+                    "虚拟网卡启动失败：\(error.localizedDescription)",
+                    style: .error,
+                    action: .openSettings
+                )
+            }
+        }
+    }
+
     func stopProxy() {
         guard proxyStopTask == nil else { return }
+        let isStartingTun =
+            state.localProxyConfiguration.networkAccessMode == .virtualInterface
+            && proxyStartTask != nil
+        if isStartingTun
+            || (state.tun.sessionPhase != .inactive
+                && state.tun.sessionOwnedByCurrentUser)
+        {
+            stopTunProxy()
+            return
+        }
         let controller = activeProxyCore
         let startTask = proxyStartTask
         let pendingSelectionTask = selectionTask
@@ -1310,13 +1706,65 @@ final class AppModel {
         }
     }
 
+    private func stopTunProxy() {
+        let startTask = proxyStartTask
+        guard
+            startTask != nil
+                || (state.tun.sessionPhase != .inactive
+                    && state.tun.sessionOwnedByCurrentUser)
+        else { return }
+
+        cancelExitIPDetection()
+        proxyStopRequested = true
+        state.proxyCorePhase = .stopping
+        state.tun.sessionPhase = .stopping
+        proxyStopTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                proxyStopRequested = false
+                proxyStopTask = nil
+            }
+            do {
+                try await restoreSystemProxyIfNeeded()
+                startTask?.cancel()
+                if let startTask {
+                    await startTask.value
+                }
+                let snapshot = try await tunCoordinator.stopSession()
+                applyTunSnapshot(snapshot)
+                state.proxyCorePhase = .stopped
+                stopTunStatusMonitoring()
+                stopMihomoMonitoring()
+                appendLog(source: .proxy, level: .warning, message: "虚拟网卡已停止")
+                showNotice("虚拟网卡模式已停止")
+                refreshExitIPAfterNetworkChangeIfNeeded()
+            } catch {
+                await refreshTunState(recoverIfNeeded: false)
+                if state.tun.sessionPhase == .inactive {
+                    state.proxyCorePhase = .stopped
+                    stopTunStatusMonitoring()
+                    stopMihomoMonitoring()
+                    return
+                }
+                state.proxyCorePhase = .failed(error.localizedDescription)
+                appendLog(
+                    source: .app,
+                    level: .error,
+                    message: "停止虚拟网卡失败：\(error.localizedDescription)"
+                )
+                showNotice("停止虚拟网卡失败：\(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+
     func restartProxy() {
         guard !isShuttingDown,
             runtimeTask == nil,
             state.templateOperationPhase == .idle,
             state.isProxyRunning,
             isProxyConfigurationReady,
-            activeProxyCore != nil,
+            state.localProxyConfiguration.networkAccessMode == .virtualInterface
+                ? state.tun.isRunning : activeProxyCore != nil,
             proxyStartTask == nil,
             proxyStopTask == nil,
             selectionTask == nil
@@ -1547,6 +1995,8 @@ final class AppModel {
             proxyStopTask,
             systemProxyTask,
             systemProxyCleanupTask,
+            tunOperationTask,
+            tunMonitorTask,
             routingModeTask,
             mihomoMonitorTask,
             mihomoMetadataTask,
@@ -1583,9 +2033,35 @@ final class AppModel {
             )
             return false
         }
+        if state.tun.sessionPhase != .inactive,
+            state.tun.sessionOwnedByCurrentUser
+        {
+            do {
+                let snapshot = try await tunCoordinator.stopSession()
+                applyTunSnapshot(snapshot)
+                state.proxyCorePhase = .stopped
+            } catch {
+                await refreshTunState(recoverIfNeeded: false)
+                if state.tun.sessionPhase != .inactive {
+                    appendLog(
+                        source: .app,
+                        level: .error,
+                        message: "退出前停止虚拟网卡失败：\(error.localizedDescription)"
+                    )
+                    isShuttingDown = false
+                    showNotice(
+                        "无法安全退出：虚拟网卡仍在运行。\(error.localizedDescription)",
+                        style: .error
+                    )
+                    return false
+                }
+            }
+        }
         if let activeProxyCore {
             await activeProxyCore.stop()
         }
+        await tunCoordinator.invalidate()
+        stopTunStatusMonitoring()
         stopMihomoMonitoring()
         state.templateOperationPhase = .idle
         if state.launchPhase == .ready {
@@ -1709,6 +2185,25 @@ final class AppModel {
             state.systemProxyPhase = recoveredSystemProxyPhase
             refreshRuntimePhase()
             state.launchPhase = .ready
+            await refreshTunState(recoverIfNeeded: true)
+            if state.tun.isRunning, state.tun.sessionOwnedByCurrentUser {
+                if localProxyConfiguration.networkAccessMode == .virtualInterface {
+                    state.proxyCorePhase = .running
+                    beginMihomoMonitoring()
+                    beginTunStatusMonitoring()
+                    appendLog(source: .app, level: .success, message: "已接管现有虚拟网卡会话")
+                } else {
+                    do {
+                        applyTunSnapshot(try await tunCoordinator.stopSession())
+                    } catch {
+                        appendLog(
+                            source: .app,
+                            level: .error,
+                            message: "清理未请求的虚拟网卡会话失败：\(error.localizedDescription)"
+                        )
+                    }
+                }
+            }
             if preferences != loadedPreferences || preferencesRecoveryWarning != nil {
                 schedulePreferencesSave()
             }
@@ -1899,6 +2394,10 @@ final class AppModel {
     }
 
     private func restartActiveProxy() async throws {
+        if state.localProxyConfiguration.networkAccessMode == .virtualInterface {
+            try await restartTunSession()
+            return
+        }
         guard let controller = activeProxyCore, let controllerID = activeProxyCoreID else {
             throw AppModelError.proxyNotActive
         }
@@ -1927,6 +2426,48 @@ final class AppModel {
                 activeProxyCoreID = nil
             }
             await restoreSystemProxyAfterProxyFailure()
+            throw error
+        }
+    }
+
+    private func restartTunSession() async throws {
+        stopTunStatusMonitoring()
+        stopMihomoMonitoring()
+        let selectedIP = state.preferences.selectedIP
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            if state.tun.sessionPhase != .inactive {
+                guard state.tun.sessionOwnedByCurrentUser else {
+                    throw AppModelError.virtualInterfaceOwnedByAnotherUser
+                }
+                state.tun.sessionPhase = .stopping
+                applyTunSnapshot(try await tunCoordinator.stopSession())
+            }
+            let envelope = try await bootstrapper.privilegedTunConfigurationEnvelope(
+                selectedIP: selectedIP
+            )
+            state.proxyCorePhase = .starting
+            state.tun.sessionPhase = .starting
+            let snapshot = try await tunCoordinator.startSession(envelopePayload: envelope)
+            applyTunSnapshot(snapshot)
+            guard snapshot.sessionPhase == .running, snapshot.sessionOwnedByCaller else {
+                throw AppModelError.virtualInterfaceStartNotConfirmed
+            }
+            state.proxyCorePhase = .running
+            beginMihomoMonitoring()
+            beginTunStatusMonitoring()
+            appendLog(source: .proxy, level: .success, message: "虚拟网卡已应用最新配置")
+            refreshExitIPAfterNetworkChangeIfNeeded()
+        } catch {
+            state.proxyCorePhase = .failed(error.localizedDescription)
+            state.tun.sessionPhase = .failed(error.localizedDescription)
+            stopTunStatusMonitoring()
+            stopMihomoMonitoring()
+            appendLog(
+                source: .proxy,
+                level: .error,
+                message: "虚拟网卡重新启动失败：\(error.localizedDescription)"
+            )
             throw error
         }
     }
@@ -1981,6 +2522,55 @@ final class AppModel {
                 state.mihomoRuntime.phase = .failed(error.localizedDescription)
             }
         }
+    }
+
+    private func beginTunStatusMonitoring() {
+        stopTunStatusMonitoring()
+        let monitorID = UUID()
+        activeTunMonitorID = monitorID
+        tunMonitorTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled,
+                activeTunMonitorID == monitorID,
+                state.localProxyConfiguration.networkAccessMode == .virtualInterface,
+                state.proxyCorePhase == .running
+            {
+                do {
+                    try await Task.sleep(for: .seconds(2))
+                    let snapshot = try await tunCoordinator.helperStatus()
+                    guard !Task.isCancelled, activeTunMonitorID == monitorID else { return }
+                    applyTunSnapshot(snapshot)
+                    guard snapshot.sessionPhase == .running,
+                        snapshot.sessionOwnedByCaller
+                    else {
+                        let detail = snapshot.lastError ?? "特权 TUN 会话已停止"
+                        state.proxyCorePhase = .failed(detail)
+                        stopMihomoMonitoring()
+                        appendLog(source: .proxy, level: .error, message: detail)
+                        showNotice("虚拟网卡异常停止：\(detail)", style: .error)
+                        activeTunMonitorID = nil
+                        tunMonitorTask = nil
+                        return
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled, activeTunMonitorID == monitorID else { return }
+                    state.tun.lastError = error.localizedDescription
+                    appendLog(
+                        source: .app,
+                        level: .warning,
+                        message: "刷新虚拟网卡状态失败：\(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+    }
+
+    private func stopTunStatusMonitoring() {
+        activeTunMonitorID = nil
+        tunMonitorTask?.cancel()
+        tunMonitorTask = nil
     }
 
     private func beginMihomoMetadataMonitoring(using client: any MihomoAPIControlling) {
@@ -2571,6 +3161,8 @@ enum AppModelError: LocalizedError, Equatable {
     case nodeSelectionUnsupported
     case systemProxyRecoveryRequired(String)
     case virtualInterfaceUnavailable
+    case virtualInterfaceOwnedByAnotherUser
+    case virtualInterfaceStartNotConfirmed
     case configurationTestResultMismatch(expected: String, actual: String)
 
     var errorDescription: String? {
@@ -2587,6 +3179,8 @@ enum AppModelError: LocalizedError, Equatable {
         case .nodeSelectionUnsupported: "当前代理配置不支持直接应用测速节点"
         case .systemProxyRecoveryRequired(let message): "系统代理尚未安全恢复：\(message)"
         case .virtualInterfaceUnavailable: "虚拟网卡服务尚未就绪"
+        case .virtualInterfaceOwnedByAnotherUser: "虚拟网卡会话正由其他登录用户使用"
+        case .virtualInterfaceStartNotConfirmed: "虚拟网卡服务未确认 TUN 会话已运行"
         case .configurationTestResultMismatch(let expected, let actual):
             "CFST 返回的节点与当前配置不一致（期望 \(expected)，实际 \(actual)）"
         }

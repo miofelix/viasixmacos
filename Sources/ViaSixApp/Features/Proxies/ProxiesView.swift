@@ -149,7 +149,7 @@ struct ProxiesView: View {
             } actions: {
                 Button("启动本地代理", systemImage: "play.fill", action: model.startProxy)
                     .buttonStyle(.borderedProminent)
-                    .disabled(!model.hasProxyCoreExecutable || !model.isProxyConfigurationReady)
+                    .disabled(!model.activeProxyRuntimeIsAvailable || !model.isProxyConfigurationReady)
             }
             .frame(maxWidth: .infinity, minHeight: 320)
         }

@@ -18,6 +18,7 @@ struct SettingsView: View {
 
                 serverConfigurationCard
                 localProxyCard
+                tunServiceCard
                 runtimeCard
                 dataCard
             }
@@ -34,6 +35,196 @@ struct SettingsView: View {
                 exitIPEndpointDraft = endpoint
                 exitIPEndpointError = nil
             }
+        }
+    }
+
+    private var tunServiceCard: some View {
+        SurfaceCard {
+            CardHeader(
+                "虚拟网卡服务",
+                systemImage: "point.3.filled.connected.trianglepath.dotted",
+                tone: tunServiceTone
+            ) {
+                StatusBadge(
+                    tunServiceStatusTitle,
+                    tone: tunServiceTone,
+                    systemImage: tunServiceStatusSystemImage
+                )
+            }
+            Divider()
+
+            VStack(alignment: .leading, spacing: 0) {
+                SettingRow(
+                    "系统服务",
+                    detail: tunRegistrationDetail,
+                    systemImage: "gearshape.2"
+                ) {
+                    tunRegistrationAction
+                }
+
+                Divider()
+                    .padding(.leading, 52)
+
+                SettingRow(
+                    "特权 Mihomo",
+                    detail: tunRuntimeDetail,
+                    systemImage: "shield.lefthalf.filled"
+                ) {
+                    tunRuntimeAction
+                }
+
+                Divider()
+                    .padding(.leading, 52)
+
+                SettingRow(
+                    "TUN 会话",
+                    detail: tunSessionDetail,
+                    systemImage: "network"
+                ) {
+                    tunSessionAction
+                }
+
+                if let error = model.state.tun.lastError, !error.isEmpty {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.vertical, VisualStyle.spacing8)
+                }
+
+                Text("TUN 使用应用内固定签名的 Mihomo，由 macOS 后台服务以最小权限启动；不会使用自定义可执行文件。首次安装后可能需要在“系统设置 → 通用 → 登录项”中批准。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, VisualStyle.spacing8)
+            }
+            .padding(.horizontal, VisualStyle.spacing16)
+            .padding(.bottom, VisualStyle.spacing8)
+        }
+    }
+
+    @ViewBuilder
+    private var tunRegistrationAction: some View {
+        if model.state.tun.operationInProgress {
+            ProgressView()
+                .controlSize(.small)
+        } else {
+            switch model.state.tun.servicePhase {
+            case .checking:
+                Button("刷新", systemImage: "arrow.clockwise") {
+                    model.refreshTunState()
+                }
+                .controlSize(.small)
+            case .notInstalled:
+                Button("安装服务", systemImage: "plus.circle") {
+                    model.installTunService()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(!model.canMaintainTunInstallation)
+            case .requiresApproval:
+                Button("打开系统设置", systemImage: "gear") {
+                    model.openTunApprovalSettings()
+                }
+                .controlSize(.small)
+            case .ready:
+                Button("刷新", systemImage: "arrow.clockwise") {
+                    model.refreshTunState()
+                }
+                .controlSize(.small)
+            case .unavailable:
+                Button("修复服务", systemImage: "wrench.and.screwdriver") {
+                    model.repairTunService()
+                }
+                .controlSize(.small)
+                .disabled(!model.canMaintainTunInstallation)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tunRuntimeAction: some View {
+        if model.state.tun.operationInProgress || model.state.tun.runtimePhase == .installing {
+            ProgressView()
+                .controlSize(.small)
+        } else if model.state.tun.serviceIsReady {
+            switch model.state.tun.runtimePhase {
+            case .unknown:
+                Button("检查", systemImage: "arrow.clockwise") {
+                    model.refreshTunState()
+                }
+                .controlSize(.small)
+            case .notInstalled:
+                Button("安装", systemImage: "arrow.down.circle") {
+                    model.installOrRepairTunRuntime()
+                }
+                .controlSize(.small)
+                .disabled(!model.canMaintainTunInstallation)
+            case .ready:
+                Button("重新安装", systemImage: "arrow.clockwise.circle") {
+                    model.installOrRepairTunRuntime()
+                }
+                .controlSize(.small)
+                .disabled(!model.canMaintainTunInstallation)
+            case .repairRequired, .failed:
+                Button("修复", systemImage: "wrench.and.screwdriver") {
+                    model.installOrRepairTunRuntime()
+                }
+                .controlSize(.small)
+                .disabled(!model.canMaintainTunInstallation)
+            case .installing:
+                EmptyView()
+            }
+        } else {
+            Text("等待服务")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var tunSessionAction: some View {
+        switch model.state.tun.sessionPhase {
+        case .running:
+            if model.canStopTunSession {
+                Button("停止", systemImage: "stop.fill") {
+                    model.stopProxy()
+                }
+                .controlSize(.small)
+            } else {
+                Text("其他用户运行中")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .recoveryRequired:
+            if model.canRecoverTunSession {
+                Button("恢复", systemImage: "arrow.counterclockwise") {
+                    model.recoverTunSession()
+                }
+                .controlSize(.small)
+                .disabled(model.state.tun.operationInProgress)
+            } else {
+                Text("等待会话所有者处理")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .failed:
+            Text("已停止，可检查后重试")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .starting, .stopping, .recovering:
+            if model.hasForeignTunSession {
+                Text("其他用户处理中")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        case .inactive:
+            Text("未运行")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -341,6 +532,102 @@ struct SettingsView: View {
 
     private var serverConfigurationExists: Bool {
         FileManager.default.fileExists(atPath: model.paths.profileConfig.path)
+    }
+
+    private var tunServiceTone: AppTone {
+        if model.state.tun.operationInProgress || model.isTunTransitioning { return .accent }
+        if model.state.tun.isRunning { return .positive }
+        if model.state.tun.lastError != nil { return .negative }
+        if model.canUseTunMode { return .positive }
+        return switch model.state.tun.servicePhase {
+        case .checking: .neutral
+        case .notInstalled, .requiresApproval: .warning
+        case .ready:
+            switch model.state.tun.runtimePhase {
+            case .failed: .negative
+            case .unknown, .notInstalled, .ready, .repairRequired, .installing: .warning
+            }
+        case .unavailable: .negative
+        }
+    }
+
+    private var tunServiceStatusTitle: String {
+        if model.state.tun.operationInProgress || model.isTunTransitioning { return "处理中" }
+        if model.state.tun.isRunning { return "运行中" }
+        if model.canUseTunMode { return "已就绪" }
+        return switch model.state.tun.servicePhase {
+        case .checking: "检查中"
+        case .notInstalled: "未安装"
+        case .requiresApproval: "待批准"
+        case .unavailable: "不可用"
+        case .ready:
+            switch model.state.tun.runtimePhase {
+            case .unknown: "检查中"
+            case .notInstalled: "缺少内核"
+            case .ready: "能力不完整"
+            case .repairRequired: "需修复"
+            case .installing: "安装中"
+            case .failed: "安装失败"
+            }
+        }
+    }
+
+    private var tunServiceStatusSystemImage: String {
+        switch tunServiceTone {
+        case .accent: "arrow.triangle.2.circlepath"
+        case .positive: "checkmark.circle.fill"
+        case .warning: "exclamationmark.circle.fill"
+        case .negative: "xmark.circle.fill"
+        case .neutral: "circle"
+        }
+    }
+
+    private var tunRegistrationDetail: String {
+        switch model.state.tun.servicePhase {
+        case .checking:
+            "正在检查 macOS 后台服务注册状态"
+        case .notInstalled:
+            "尚未安装用于管理 TUN 的 LaunchDaemon"
+        case .requiresApproval:
+            "已注册，等待在系统设置中允许后台运行"
+        case .ready:
+            "后台服务已注册并可建立受签名约束的 XPC 连接"
+        case .unavailable(let detail):
+            detail
+        }
+    }
+
+    private var tunRuntimeDetail: String {
+        let version = model.state.tun.runtimeVersion.map { " · \($0)" } ?? ""
+        return switch model.state.tun.runtimePhase {
+        case .unknown: "等待后台服务检查固定签名内核"
+        case .notInstalled: "尚未安装应用内置的固定签名 Mihomo"
+        case .ready: "签名与完整性校验通过\(version)"
+        case .repairRequired: "已安装文件未通过签名或完整性校验"
+        case .installing: "正在以 root-only 权限安装并验证"
+        case .failed(let detail): detail
+        }
+    }
+
+    private var tunSessionDetail: String {
+        switch model.state.tun.sessionPhase {
+        case .inactive:
+            "当前没有特权 TUN 会话"
+        case .starting:
+            "正在创建虚拟网卡并应用路由与 DNS"
+        case .running:
+            model.state.tun.sessionOwnedByCurrentUser
+                ? "正在接管流量，退出应用前会安全停止"
+                : "已有其他用户的 TUN 会话正在运行"
+        case .stopping:
+            "正在撤销路由、DNS 与虚拟网卡"
+        case .recovering:
+            "正在核验并恢复上次会话状态"
+        case .recoveryRequired:
+            "检测到未完成清理的会话，需要恢复"
+        case .failed(let detail):
+            detail
+        }
     }
 
     private var serverEditorDisabled: Bool {

@@ -41,6 +41,25 @@ public enum NetworkAccessMode: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// Packet-processing stack used by Mihomo's TUN listener.
+///
+/// `mixed` is the balanced default used by Clash-compatible macOS clients;
+/// `system` favors the native network stack, while `gvisor` provides a fully
+/// userspace stack for compatibility troubleshooting.
+public enum VirtualInterfaceStack: String, Codable, CaseIterable, Sendable {
+    case mixed
+    case system
+    case gvisor
+
+    public var displayName: String {
+        switch self {
+        case .mixed: "Mixed"
+        case .system: "System"
+        case .gvisor: "gVisor"
+        }
+    }
+}
+
 /// A comparable Mihomo semantic version parsed from the core's own banner.
 public struct MihomoRuntimeVersion: Codable, Comparable, Hashable, Sendable,
     CustomStringConvertible
@@ -211,8 +230,9 @@ public struct VirtualInterfaceFeature: OptionSet, Codable, Hashable, Sendable {
     ]
 
     /// Features required before ViaSix can advertise a user-facing
-    /// full-traffic mode. A reversible macOS DNS manager remains required even
-    /// when Mihomo receives DNS settings in its own configuration.
+    /// full-traffic mode. In the current backend, Mihomo owns routing and DNS
+    /// hijack for the lifetime of the verified TUN process; the helper must be
+    /// able to stop that process and verify that its `utun` disappears.
     public static let minimumSafe: Self = .all
 
     // Naming aliases keep the domain vocabulary clear at call sites.

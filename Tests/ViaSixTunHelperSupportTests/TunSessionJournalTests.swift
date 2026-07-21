@@ -83,6 +83,28 @@ final class TunSessionJournalTests: XCTestCase {
             )
             XCTAssertEqual(running.phase, .running)
 
+            let withProcess = try controller.recordProcess(
+                sessionIdentifier: preparing.sessionIdentifier,
+                processIdentifier: 4_242,
+                routingModeRawValue: 0
+            )
+            XCTAssertEqual(withProcess.processIdentifier, 4_242)
+            XCTAssertEqual(withProcess.routingModeRawValue, 0)
+
+            let withInterface = try controller.recordTunInterface(
+                sessionIdentifier: preparing.sessionIdentifier,
+                interfaceName: "utun42"
+            )
+            XCTAssertEqual(withInterface.tunInterfaceName, "utun42")
+
+            let changedMode = try controller.updateRoutingMode(
+                sessionIdentifier: preparing.sessionIdentifier,
+                routingModeRawValue: 1
+            )
+            XCTAssertEqual(changedMode.routingModeRawValue, 1)
+            XCTAssertEqual(try controller.currentJournal()?.processIdentifier, 4_242)
+            XCTAssertEqual(try controller.currentJournal()?.tunInterfaceName, "utun42")
+
             try controller.complete(sessionIdentifier: preparing.sessionIdentifier)
             XCTAssertFalse(try controller.recoveryPending())
             XCTAssertNil(try controller.currentJournal())

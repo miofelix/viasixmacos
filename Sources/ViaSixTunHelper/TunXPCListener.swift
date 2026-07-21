@@ -3,14 +3,14 @@ import ViaSixPrivilegedProtocol
 import ViaSixTunHelperSupport
 
 final class TunXPCListener: NSObject, NSXPCListenerDelegate {
-    private let journalController: TunSessionJournalController
+    private let backend: any TunSessionBackend
     private let identityValidator: ClientIdentityValidator
 
     init(
-        journalController: TunSessionJournalController,
+        backend: any TunSessionBackend,
         identityValidator: ClientIdentityValidator = ClientIdentityValidator()
     ) {
-        self.journalController = journalController
+        self.backend = backend
         self.identityValidator = identityValidator
     }
 
@@ -24,7 +24,7 @@ final class TunXPCListener: NSObject, NSXPCListenerDelegate {
         newConnection.exportedInterface = TunHelperXPCInterfaceFactory.make()
         newConnection.exportedObject = TunHelperService(
             clientUserIdentifier: userIdentifier,
-            journalController: journalController
+            backend: backend
         )
         newConnection.activate()
         return true

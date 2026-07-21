@@ -5,28 +5,41 @@ import ViaSixTunHelperSupport
 
 final class TunHelperService: NSObject, TunHelperXPCProtocol {
     private let clientUserIdentifier: UInt32
-    private let journalController: TunSessionJournalController
+    private let backend: any TunSessionBackend
     private let now: @Sendable () -> Date
 
     init(
         clientUserIdentifier: UInt32,
-        journalController: TunSessionJournalController,
-        now: @escaping @Sendable () -> Date = { Date() }
+        backend: any TunSessionBackend,
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.clientUserIdentifier = clientUserIdentifier
-        self.journalController = journalController
+        self.backend = backend
         self.now = now
+    }
+
+    convenience init(
+        clientUserIdentifier: UInt32,
+        journalController: TunSessionJournalController,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
+        self.init(
+            clientUserIdentifier: clientUserIdentifier,
+            backend: PrivilegedTunBackend(journalController: journalController),
+            now: now
+        )
     }
 
     func probe(
         reply: @escaping (Int, Int, UInt64, Bool, NSError?) -> Void
     ) {
         do {
+            let snapshot = try backend.probe()
             reply(
                 TunHelperConstants.protocolVersion,
                 TunHelperConstants.implementationVersion,
-                0,
-                try journalController.recoveryPending(),
+                snapshot.supportedFeatures.rawValue,
+                snapshot.recoveryRequired,
                 nil
             )
         } catch {
@@ -35,7 +48,7 @@ final class TunHelperService: NSObject, TunHelperXPCProtocol {
                 TunHelperConstants.implementationVersion,
                 0,
                 false,
-                error as NSError
+                remoteError(for: error)
             )
         }
     }
@@ -43,19 +56,17 @@ final class TunHelperService: NSObject, TunHelperXPCProtocol {
     func status(
         reply: @escaping (TunHelperStatusSnapshot?, NSError?) -> Void
     ) {
-        do {
-            reply(try statusSnapshot(), nil)
-        } catch {
-            reply(nil, error as NSError)
+        respond(reply) {
+            try backend.status()
         }
     }
 
     func installOrRepairRuntime(
         reply: @escaping (TunHelperStatusSnapshot?, NSError?) -> Void
     ) {
-        // Runtime installation will use only the signed runtime embedded at a
-        // fixed app-relative location. Until that backend exists, do nothing.
-        reply(nil, TunHelperRemoteError.backendUnavailable())
+        respond(reply) {
+            try backend.installOrRepairRuntime()
+        }
     }
 
     func startSession(
@@ -63,103 +74,97 @@ final class TunHelperService: NSObject, TunHelperXPCProtocol {
         reply: @escaping (TunHelperStatusSnapshot?, NSError?) -> Void
     ) {
         do {
-            // Validate again at the privilege boundary even though secure XPC
-            // decoding already rejects malformed transport objects. Decoding
-            // the typed payload rebuilds the Mihomo document through the
-            // privileged allowlist instead of accepting executable YAML.
             try configuration.validate()
-            _ = try MihomoPrivilegedEnvelope.decodeRuntimeConfiguration(
+            let plan = try MihomoPrivilegedEnvelope.decodeRuntimePlan(
                 from: configuration.payload
             )
+            guard plan.options.externalController != nil else {
+                throw MihomoConfigurationError.invalidControllerSecret
+            }
+            respond(reply) {
+                try backend.startSession(
+                    plan: plan,
+                    ownerUserIdentifier: clientUserIdentifier
+                )
+            }
         } catch {
             reply(nil, TunHelperRemoteError.invalidConfigurationEnvelope(error))
-            return
         }
-
-        // No journal, process, route, or DNS state may change before a fully
-        // recoverable single-owner backend is installed.
-        reply(nil, TunHelperRemoteError.backendUnavailable())
     }
 
     func stopSession(
         reply: @escaping (TunHelperStatusSnapshot?, NSError?) -> Void
     ) {
-        reply(nil, TunHelperRemoteError.backendUnavailable())
+        respond(reply) {
+            try backend.stopSession(requestingUserIdentifier: clientUserIdentifier)
+        }
     }
 
     func setRoutingMode(
         _ routingMode: TunHelperRoutingMode,
         reply: @escaping (TunHelperStatusSnapshot?, NSError?) -> Void
     ) {
-        guard
-            TunHelperRoutingMode.allCases.contains(where: {
-                $0.rawValue == routingMode.rawValue
-            })
-        else {
+        guard TunHelperRoutingMode.allCases.contains(routingMode) else {
             reply(nil, TunHelperRemoteError.invalidRoutingMode())
             return
         }
-        reply(nil, TunHelperRemoteError.backendUnavailable())
+        respond(reply) {
+            try backend.setRoutingMode(
+                routingMode,
+                requestingUserIdentifier: clientUserIdentifier
+            )
+        }
     }
 
     func recover(
         reply: @escaping (TunHelperStatusSnapshot?, NSError?) -> Void
     ) {
-        // Refuse even when no journal is present: reporting mutation success
-        // without a recovery backend would make lifecycle coordination unsafe.
-        reply(nil, TunHelperRemoteError.backendUnavailable())
+        respond(reply) {
+            try backend.recover(requestingUserIdentifier: clientUserIdentifier)
+        }
     }
 
-    private func statusSnapshot() throws -> TunHelperStatusSnapshot {
-        guard let journal = try journalController.currentJournal() else {
-            return try TunHelperStatusSnapshot(
-                supportedFeatures: 0,
-                runtimeState: .unavailable,
-                runtimeVersion: nil,
-                sessionPhase: .inactive,
-                sessionIdentifier: nil,
-                sessionOwnedByCaller: false,
-                recoveryRequired: false,
-                routingMode: nil,
-                observedAt: now(),
-                lastError: nil
-            )
+    private func respond(
+        _ reply: @escaping (TunHelperStatusSnapshot?, NSError?) -> Void,
+        _ operation: () throws -> TunBackendSnapshot
+    ) {
+        do {
+            reply(try makeSnapshot(from: operation()), nil)
+        } catch {
+            reply(nil, remoteError(for: error))
         }
+    }
 
-        let ownedByCaller = journal.ownerUserIdentifier == clientUserIdentifier
-        let phase: TunHelperSessionPhase
-        let recoveryRequired: Bool
-        if journal.recoveryPending {
-            // A persisted active/cleanup-required journal is evidence that a
-            // concrete backend must reconcile state; it is not proof that a
-            // live Mihomo process or route currently exists.
-            phase = .recoveryRequired
-            recoveryRequired = true
-        } else {
-            recoveryRequired = false
-            switch journal.phase {
-            case .stopped:
-                phase = .inactive
-            case .failed:
-                phase = .failed
-            case .preparing, .running, .restoring:
-                // These phases are recovery-pending by journal definition.
-                phase = .recoveryRequired
-            }
-        }
-
-        let exposesSession = ownedByCaller && phase != .inactive
+    private func makeSnapshot(from snapshot: TunBackendSnapshot) throws -> TunHelperStatusSnapshot {
+        let ownsSession =
+            snapshot.ownerUserIdentifier == clientUserIdentifier
+            && snapshot.sessionPhase != .inactive
+        let phase = snapshot.sessionPhase
         return try TunHelperStatusSnapshot(
-            supportedFeatures: 0,
-            runtimeState: .unavailable,
-            runtimeVersion: nil,
+            supportedFeatures: snapshot.supportedFeatures.rawValue,
+            runtimeState: snapshot.runtimeState,
+            runtimeVersion: snapshot.runtimeVersion,
             sessionPhase: phase,
-            sessionIdentifier: exposesSession ? journal.sessionIdentifier : nil,
-            sessionOwnedByCaller: exposesSession,
-            recoveryRequired: recoveryRequired,
-            routingMode: nil,
+            sessionIdentifier: ownsSession ? snapshot.sessionIdentifier : nil,
+            sessionOwnedByCaller: ownsSession,
+            recoveryRequired: snapshot.recoveryRequired,
+            routingMode: ownsSession ? snapshot.routingMode : nil,
             observedAt: now(),
-            lastError: exposesSession ? journal.lastError : nil
+            lastError: ownsSession ? snapshot.lastError : nil
         )
+    }
+
+    private func remoteError(for error: any Error) -> NSError {
+        if let error = error as? PrivilegedTunBackendError {
+            let code: TunHelperErrorCode =
+                switch error {
+                case .runtimeNotReady: .runtimeUnavailable
+                case .sessionAlreadyActive: .sessionBusy
+                case .sessionOwnedByAnotherUser: .sessionNotOwned
+                default: .operationFailed
+                }
+            return TunHelperRemoteError.operationFailed(error, code: code)
+        }
+        return TunHelperRemoteError.operationFailed(error)
     }
 }

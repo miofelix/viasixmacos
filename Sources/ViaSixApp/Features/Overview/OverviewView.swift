@@ -335,12 +335,12 @@ struct OverviewView: View {
                 CardHeader(
                     "网络接入",
                     systemImage: "macbook.and.iphone",
-                    tone: systemProxyPresentation.appTone
+                    tone: networkAccessTone
                 ) {
                     StatusBadge(
-                        systemProxyStatusText,
-                        tone: systemProxyPresentation.appTone,
-                        systemImage: systemProxyIsTransitioning ? "hourglass" : nil
+                        networkAccessStatusText,
+                        tone: networkAccessTone,
+                        systemImage: networkAccessStatusSystemImage
                     )
                 }
 
@@ -367,11 +367,13 @@ struct OverviewView: View {
                         detail: "通过 TUN 接管不支持系统代理的应用流量",
                         systemImage: "point.3.filled.connected.trianglepath.dotted"
                     ) {
-                        Toggle("虚拟网卡模式", isOn: .constant(false))
+                        Toggle("虚拟网卡模式", isOn: tunEnabledBinding)
                             .labelsHidden()
                             .toggleStyle(.switch)
-                            .disabled(true)
-                            .help("需要安装并授权虚拟网卡服务")
+                            .disabled(tunToggleDisabled)
+                            .help(tunToggleHelp)
+                            .accessibilityLabel("虚拟网卡模式")
+                            .accessibilityValue(tunStatusText)
                     }
 
                     Divider()
@@ -388,7 +390,17 @@ struct OverviewView: View {
                             .truncationMode(.middle)
                     }
 
-                    if case .failed(let message) = model.state.systemProxyPhase {
+                    if model.state.localProxyConfiguration.networkAccessMode == .virtualInterface,
+                        let message = model.state.tun.lastError
+                    {
+                        Divider()
+                        inlineMessage(
+                            message,
+                            systemImage: "exclamationmark.triangle.fill",
+                            tone: .negative
+                        )
+                        .padding(.vertical, VisualStyle.spacing12)
+                    } else if case .failed(let message) = model.state.systemProxyPhase {
                         Divider()
                         inlineMessage(
                             message,
@@ -398,7 +410,7 @@ struct OverviewView: View {
                         .padding(.vertical, VisualStyle.spacing12)
                     }
 
-                    Text("系统代理不会接管不遵循 macOS 代理设置的应用流量。")
+                    Text(networkAccessFooter)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -864,6 +876,14 @@ struct OverviewView: View {
         }
     }
 
+    private var tunEnabledBinding: Binding<Bool> {
+        Binding {
+            model.state.localProxyConfiguration.networkAccessMode.usesVirtualInterface
+        } set: { enabled in
+            model.setNetworkAccessMode(enabled ? .virtualInterface : .localProxy)
+        }
+    }
+
     private var systemProxyToggleDisabled: Bool {
         guard model.state.launchPhase == .ready else { return true }
         if model.isRoutingModeChanging
@@ -879,11 +899,107 @@ struct OverviewView: View {
         case .stopped, .running, .failed:
             break
         }
+        if model.state.isProxyRunning,
+            model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+        {
+            return true
+        }
         return switch model.state.systemProxyPhase {
         case .enabling, .disabling:
             true
         case .disabled, .enabled, .failed:
             false
+        }
+    }
+
+    private var tunToggleDisabled: Bool {
+        guard model.state.launchPhase == .ready else { return true }
+        if model.isRoutingModeChanging
+            || model.isSystemProxyTransitioning
+            || model.isTunTransitioning
+            || model.state.runtimeOperation != nil
+            || model.isTemplateOperationBusy
+            || model.switchingIP != nil
+            || model.state.isProxyRunning
+        {
+            return true
+        }
+        switch model.state.proxyCorePhase {
+        case .validating, .starting, .stopping:
+            return true
+        case .stopped, .running, .failed:
+            break
+        }
+        return !model.state.localProxyConfiguration.networkAccessMode.usesVirtualInterface
+            && !model.canUseTunMode
+    }
+
+    private var tunToggleHelp: String {
+        if model.state.isProxyRunning { return "请先停止代理，再切换虚拟网卡接入方式" }
+        if !model.canUseTunMode { return "请先在设置中安装、批准并准备虚拟网卡服务" }
+        return model.state.localProxyConfiguration.networkAccessMode.usesVirtualInterface
+            ? "关闭虚拟网卡，改为仅保留本地监听"
+            : "使用 TUN 接管系统流量"
+    }
+
+    private var tunStatusText: String {
+        switch model.state.tun.sessionPhase {
+        case .inactive: model.canUseTunMode ? "已就绪" : "未就绪"
+        case .starting: "正在启动"
+        case .running: "运行中"
+        case .stopping: "正在停止"
+        case .recovering: "正在恢复"
+        case .recoveryRequired: "需要恢复"
+        case .failed: "运行异常"
+        }
+    }
+
+    private var networkAccessStatusText: String {
+        switch model.state.localProxyConfiguration.networkAccessMode {
+        case .localProxy: "仅本地监听"
+        case .systemProxy: systemProxyStatusText
+        case .virtualInterface: tunStatusText
+        }
+    }
+
+    private var networkAccessTone: AppTone {
+        switch model.state.localProxyConfiguration.networkAccessMode {
+        case .localProxy: .neutral
+        case .systemProxy: systemProxyPresentation.appTone
+        case .virtualInterface:
+            switch model.state.tun.sessionPhase {
+            case .running: .positive
+            case .starting, .stopping, .recovering: .accent
+            case .recoveryRequired: .warning
+            case .failed: .negative
+            case .inactive: model.canUseTunMode ? .accent : .warning
+            }
+        }
+    }
+
+    private var networkAccessStatusSystemImage: String? {
+        switch model.state.localProxyConfiguration.networkAccessMode {
+        case .localProxy: "circle"
+        case .systemProxy: systemProxyIsTransitioning ? "hourglass" : nil
+        case .virtualInterface:
+            switch model.state.tun.sessionPhase {
+            case .running: "checkmark.circle.fill"
+            case .starting, .stopping, .recovering: "hourglass"
+            case .recoveryRequired: "exclamationmark.circle.fill"
+            case .failed: "xmark.circle.fill"
+            case .inactive: model.canUseTunMode ? "checkmark.circle" : "exclamationmark.circle.fill"
+            }
+        }
+    }
+
+    private var networkAccessFooter: String {
+        switch model.state.localProxyConfiguration.networkAccessMode {
+        case .localProxy:
+            "仅提供回环地址上的 mixed 代理端口，不修改 macOS 网络设置。"
+        case .systemProxy:
+            "系统代理不会接管不遵循 macOS 代理设置的应用流量。"
+        case .virtualInterface:
+            "TUN 由固定签名内核管理路由与 DNS，可接管不支持系统代理的应用流量。"
         }
     }
 
@@ -944,7 +1060,9 @@ struct OverviewView: View {
             return false
         case .stopped, .failed:
             return model.switchingIP != nil
-                || !model.hasProxyCoreExecutable
+                || (model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+                    && model.hasForeignTunSession)
+                || !model.activeProxyRuntimeIsAvailable
                 || !model.isProxyConfigurationReady
         }
     }
@@ -971,7 +1089,15 @@ struct OverviewView: View {
         if let issue = model.proxyConfigurationIssue {
             return "代理配置尚未就绪：\(issue)。请在设置中导入或编辑配置。"
         }
-        if !model.hasProxyCoreExecutable {
+        if model.state.localProxyConfiguration.networkAccessMode == .virtualInterface,
+            model.hasForeignTunSession
+        {
+            return "虚拟网卡会话正由其他登录用户使用，当前用户无法接管。"
+        }
+        if !model.activeProxyRuntimeIsAvailable {
+            if model.state.localProxyConfiguration.networkAccessMode == .virtualInterface {
+                return "虚拟网卡服务尚未就绪，请在设置中安装、批准或修复。"
+            }
             return "尚未找到 Mihomo，请在设置中安装或指定路径。"
         }
         return "本地代理当前未启动。"

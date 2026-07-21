@@ -9,6 +9,7 @@ struct LocalProxySettingsView: View {
     @State private var originalConfiguration: LocalProxyConfiguration?
     @State private var portText = "11451"
     @State private var controllerPortText = "9090"
+    @State private var tunMTUText = "1500"
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -72,6 +73,9 @@ struct LocalProxySettingsView: View {
                 }
 
                 listenerSection
+                if configuration.networkAccessMode == .virtualInterface {
+                    tunSection
+                }
                 behaviorSection
 
                 if let errorMessage {
@@ -104,11 +108,11 @@ struct LocalProxySettingsView: View {
 
     private var networkAccessSection: some View {
         ConfigurationSection("网络接入", systemImage: "network") {
-            Picker("网络接入", selection: $configuration.networkAccessMode) {
+            Picker("网络接入", selection: networkAccessModeSelection) {
                 ForEach(NetworkAccessMode.allCases, id: \.self) { mode in
                     Text(mode.displayName)
                         .tag(mode)
-                        .disabled(mode == .virtualInterface)
+                        .disabled(mode == .virtualInterface && !model.canUseTunMode)
                 }
             }
             .pickerStyle(.segmented)
@@ -124,7 +128,63 @@ struct LocalProxySettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if !model.canUseTunMode {
+                Label(tunAvailabilityDescription, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+    }
+
+    private var tunSection: some View {
+        ConfigurationSection(
+            "虚拟网卡",
+            systemImage: "point.3.filled.connected.trianglepath.dotted"
+        ) {
+            localRow("网络栈") {
+                Picker("TUN 网络栈", selection: $configuration.tunStack) {
+                    ForEach(VirtualInterfaceStack.allCases, id: \.self) { stack in
+                        Text(stack.displayName).tag(stack)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .disabled(isSaving)
+            }
+
+            localRow("MTU") {
+                TextField("1500", text: $tunMTUText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 130)
+            }
+
+            behaviorRow(
+                "严格路由",
+                detail: "加强路由规则，减少流量绕过 TUN；与部分 VPN 共存时可关闭",
+                isOn: $configuration.tunStrictRoute
+            )
+
+            Text("Mixed 适合日常使用；System 偏向原生栈，gVisor 可用于兼容性排查。TUN 自动管理路由、DNS 劫持与回环防护。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var networkAccessModeSelection: Binding<NetworkAccessMode> {
+        Binding(
+            get: { configuration.networkAccessMode },
+            set: { mode in
+                guard mode != .virtualInterface || model.canUseTunMode else {
+                    errorMessage = tunAvailabilityDescription
+                    return
+                }
+                errorMessage = nil
+                configuration.networkAccessMode = mode
+            }
+        )
     }
 
     private var listenerSection: some View {
@@ -250,6 +310,7 @@ struct LocalProxySettingsView: View {
         return configuration != originalConfiguration
             || portText != String(originalConfiguration.port)
             || controllerPortText != String(originalConfiguration.controllerPort)
+            || tunMTUText != String(originalConfiguration.tunMTU)
     }
 
     private var systemProxyCurrentStateDescription: String {
@@ -274,16 +335,39 @@ struct LocalProxySettingsView: View {
         }
     }
 
+    private var tunAvailabilityDescription: String {
+        switch model.state.tun.servicePhase {
+        case .checking:
+            "正在检查虚拟网卡服务。"
+        case .notInstalled:
+            "虚拟网卡服务尚未安装，请关闭此窗口后在设置中安装。"
+        case .requiresApproval:
+            "虚拟网卡服务等待系统批准，请在系统设置的登录项中允许。"
+        case .unavailable(let detail):
+            "虚拟网卡服务不可用：\(detail)"
+        case .ready:
+            switch model.state.tun.runtimePhase {
+            case .notInstalled: "特权 Mihomo 尚未安装，请在设置中安装。"
+            case .repairRequired: "特权 Mihomo 需要修复。"
+            case .failed(let detail): "特权 Mihomo 不可用：\(detail)"
+            case .unknown, .installing: "正在准备特权 Mihomo。"
+            case .ready: "虚拟网卡服务能力不完整，请刷新或修复。"
+            }
+        }
+    }
+
     private func load() {
         do {
             let data = try Data(contentsOf: model.paths.localProxyConfig)
             configuration = try JSONDecoder().decode(LocalProxyConfiguration.self, from: data).validated()
             portText = String(configuration.port)
             controllerPortText = String(configuration.controllerPort)
+            tunMTUText = String(configuration.tunMTU)
         } catch {
             configuration = model.state.localProxyConfiguration
             portText = String(configuration.port)
             controllerPortText = String(configuration.controllerPort)
+            tunMTUText = String(configuration.tunMTU)
             errorMessage = "读取本机设置失败：\(error.localizedDescription)"
         }
         originalConfiguration = configuration
@@ -306,6 +390,11 @@ struct LocalProxySettingsView: View {
         }
         configuration.port = port
         configuration.controllerPort = controllerPort
+        guard let tunMTU = Int(tunMTUText.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            errorMessage = "TUN MTU 必须是数字。"
+            return
+        }
+        configuration.tunMTU = tunMTU
         do {
             let validated = try configuration.validated()
             isSaving = true

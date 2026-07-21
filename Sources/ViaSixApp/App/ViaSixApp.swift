@@ -5,6 +5,7 @@ import ViaSixCore
 @main
 struct ViaSixMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @Environment(\.scenePhase) private var scenePhase
     @State private var model: AppModel
     @State private var router = AppRouter()
 
@@ -22,6 +23,11 @@ struct ViaSixMacApp: App {
                 .task {
                     model.start()
                 }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active {
+                        model.applicationDidBecomeActive()
+                    }
+                }
         }
         .defaultSize(width: 1_240, height: 800)
         .windowStyle(.hiddenTitleBar)
@@ -36,6 +42,11 @@ struct ViaSixMacApp: App {
                 .task {
                     model.start()
                 }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active {
+                        model.applicationDidBecomeActive()
+                    }
+                }
         }
 
         MenuBarExtra {
@@ -44,6 +55,11 @@ struct ViaSixMacApp: App {
                 .environment(router)
                 .task {
                     model.start()
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active {
+                        model.applicationDidBecomeActive()
+                    }
                 }
         } label: {
             Label(AppMetadata.name, systemImage: menuBarIcon)
