@@ -164,15 +164,15 @@ Sources/ViaSixCore/Runtime/RuntimeManifest.swift
 4. `/usr/local/bin`
 5. 当前进程的 `PATH`
 
-在线安装流程：
+在线安装流程（CFST 与 Mihomo 可分别执行）：
 
 1. 从固定清单选择当前 CPU 架构对应的 HTTPS 资产，不查询 GitHub `latest`。
 2. 下载到临时目录并核对压缩包 SHA-256。
 3. 用受限 ZIP/GZIP 解压器提取清单声明的 payload。
 4. 核对解压后文件大小、SHA-256 和可执行属性。
-5. 完整验证后事务性替换 `Runtime/`；任何失败都保留旧的可用副本。
+5. 完整验证后事务性替换所选 payload，并原样保留另一个受管组件；任何失败都保留旧的可用副本。
 
-本地导入支持可执行文件、目录或多个相关文件。Mihomo 管理副本只需要 `mihomo` 可执行文件；其 home、Provider 缓存和规则数据位于 `Data/Mihomo/`。旧 `xray`、`geoip.dat` 与 `geosite.dat` 不是当前组件，成功安装 Mihomo 后会从受管 Runtime 中清理。
+设置页中的“导入”表示为对应组件选择自定义可执行文件路径，不会复制到受管 Runtime。Mihomo 管理副本只需要 `mihomo` 可执行文件；其 home、Provider 缓存和规则数据位于 `Data/Mihomo/`。旧 `xray`、`geoip.dat` 与 `geosite.dat` 不是当前组件，成功安装 Mihomo 后会从受管 Runtime 中清理。
 
 更新固定清单时，必须同时：
 

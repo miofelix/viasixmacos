@@ -302,6 +302,31 @@ public actor RuntimeComponentManager {
         architecture: RuntimeArchitecture = .current,
         onStage: @escaping RuntimeInstallationStageHandler = { _ in }
     ) async throws -> RuntimeInstallationStatus {
+        try await downloadAndInstall(
+            components: RuntimeComponent.allCases,
+            architecture: architecture,
+            onStage: onStage
+        )
+    }
+
+    @discardableResult
+    public func downloadAndInstall(
+        component: RuntimeComponent,
+        architecture: RuntimeArchitecture = .current,
+        onStage: @escaping RuntimeInstallationStageHandler = { _ in }
+    ) async throws -> RuntimeInstallationStatus {
+        try await downloadAndInstall(
+            components: [component],
+            architecture: architecture,
+            onStage: onStage
+        )
+    }
+
+    private func downloadAndInstall(
+        components: [RuntimeComponent],
+        architecture: RuntimeArchitecture,
+        onStage: @escaping RuntimeInstallationStageHandler
+    ) async throws -> RuntimeInstallationStatus {
         try beginRuntimeOperation()
         defer { finishRuntimeOperation() }
         try Task.checkCancellation()
@@ -313,7 +338,10 @@ public actor RuntimeComponentManager {
         }
         await onStage(.preparingInstallation)
         try Task.checkCancellation()
-        let assets = try assetsForInstallation(architecture: architecture)
+        let assets = try assetsForInstallation(
+            components: components,
+            architecture: architecture
+        )
         try Task.checkCancellation()
         let fileManager = FileManager.default
         let workspace = transactionDirectory(prefix: "download")
@@ -420,9 +448,10 @@ public actor RuntimeComponentManager {
     }
 
     private func assetsForInstallation(
+        components: [RuntimeComponent],
         architecture: RuntimeArchitecture
     ) throws -> [RuntimeAsset] {
-        try RuntimeComponent.allCases.map { component in
+        try components.map { component in
             guard let asset = manifest.asset(for: component, architecture: architecture) else {
                 throw RuntimeComponentError.missingManifestAsset(component, architecture)
             }
@@ -561,6 +590,7 @@ public actor RuntimeComponentManager {
 
         try validateCandidate(
             at: candidateDirectory,
+            payloads: Set(sourceFiles.keys),
             expectedArchitecture: expectedArchitecture,
             fileManager: fileManager
         )
@@ -588,10 +618,11 @@ public actor RuntimeComponentManager {
 
     private func validateCandidate(
         at directoryURL: URL,
+        payloads: Set<RuntimePayloadFile>,
         expectedArchitecture: RuntimeArchitecture,
         fileManager: FileManager
     ) throws {
-        for payload in RuntimePayloadFile.allCases {
+        for payload in payloads.sorted(by: { $0.rawValue < $1.rawValue }) {
             try Task.checkCancellation()
             let fileURL = directoryURL.appendingPathComponent(payload.rawValue)
             var isDirectory: ObjCBool = false

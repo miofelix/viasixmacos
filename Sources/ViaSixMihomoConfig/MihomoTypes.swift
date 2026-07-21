@@ -133,6 +133,7 @@ public struct MihomoRuntimeOptions: Codable, Equatable, Sendable {
     public var udpEnabled: Bool
     public var sniffingEnabled: Bool
     public var bypassPrivateNetworks: Bool
+    public var externalController: MihomoExternalControllerConfiguration?
     public var tun: MihomoTunConfiguration?
 
     public init(
@@ -144,6 +145,7 @@ public struct MihomoRuntimeOptions: Codable, Equatable, Sendable {
         udpEnabled: Bool = true,
         sniffingEnabled: Bool = true,
         bypassPrivateNetworks: Bool = true,
+        externalController: MihomoExternalControllerConfiguration? = nil,
         tun: MihomoTunConfiguration? = nil
     ) {
         self.listenAddress = listenAddress
@@ -154,7 +156,18 @@ public struct MihomoRuntimeOptions: Codable, Equatable, Sendable {
         self.udpEnabled = udpEnabled
         self.sniffingEnabled = sniffingEnabled
         self.bypassPrivateNetworks = bypassPrivateNetworks
+        self.externalController = externalController
         self.tun = tun
+    }
+}
+
+public struct MihomoExternalControllerConfiguration: Codable, Equatable, Sendable {
+    public var port: Int
+    public var secret: String
+
+    public init(port: Int, secret: String) {
+        self.port = port
+        self.secret = secret
     }
 }
 
@@ -175,6 +188,8 @@ public enum MihomoConfigurationError: LocalizedError, Equatable, Sendable {
     case placeholderConfiguration
     case invalidListenAddress
     case invalidMixedPort
+    case invalidControllerPort
+    case invalidControllerSecret
     case missingTunConfiguration
     case invalidTunMTU
     case tooManyTunRouteExclusions
@@ -223,6 +238,10 @@ public enum MihomoConfigurationError: LocalizedError, Equatable, Sendable {
             "本地监听地址必须是回环地址"
         case .invalidMixedPort:
             "本地 mixed 端口必须在 1–65535 之间"
+        case .invalidControllerPort:
+            "Mihomo Controller 端口必须在 1–65535 之间，且不能与 mixed 端口相同"
+        case .invalidControllerSecret:
+            "Mihomo Controller 密钥无效"
         case .missingTunConfiguration:
             "特权 TUN 投影需要明确的 TUN 配置"
         case .invalidTunMTU:

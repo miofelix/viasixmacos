@@ -7,6 +7,7 @@ public enum AppBootstrapperError: LocalizedError, Equatable, Sendable {
     case invalidConfigurationFile(URL)
     case profileChangedExternally
     case virtualInterfaceRequiresPrivilegedService
+    case invalidControllerSecret
 
     public var errorDescription: String? {
         switch self {
@@ -20,6 +21,8 @@ public enum AppBootstrapperError: LocalizedError, Equatable, Sendable {
             "代理配置在编辑期间发生变化，请重新载入后再保存"
         case .virtualInterfaceRequiresPrivilegedService:
             "虚拟网卡模式必须由受信任的系统服务启动"
+        case .invalidControllerSecret:
+            "Mihomo Controller 本机密钥缺失或无效"
         }
     }
 }
@@ -77,10 +80,59 @@ public actor AppBootstrapper {
     public func prepareDefaults() throws {
         try paths.prepare()
         try recoverPendingConfigurationTransaction()
+        try prepareControllerSecret()
         try migrateLegacyLocalConfigurationIfNeeded()
         try DefaultResourceInstaller.install(into: paths)
         try migrateLegacyProfileIfNeeded()
         try removeStaleSpeedTestResults()
+    }
+
+    private func prepareControllerSecret() throws {
+        let fileManager = FileManager.default
+        if let data = try Self.regularFileDataIfPresent(
+            at: paths.mihomoControllerSecret,
+            using: fileManager,
+            maximumBytes: 513
+        ) {
+            _ = try Self.validatedControllerSecret(from: data)
+            try FilePermissions.restrictFile(paths.mihomoControllerSecret, using: fileManager)
+            return
+        }
+
+        let secret =
+            UUID().uuidString.replacingOccurrences(of: "-", with: "")
+            + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        try Self.writeRestrictedConfigurationFile(
+            Data((secret + "\n").utf8),
+            to: paths.mihomoControllerSecret
+        )
+    }
+
+    public func mihomoAPIConfiguration() throws -> MihomoAPIConfiguration {
+        let local = try loadLocalProxyConfiguration()
+        let data = try Self.regularFileDataIfPresent(
+            at: paths.mihomoControllerSecret,
+            using: .default,
+            maximumBytes: 513
+        )
+        guard let data else { throw AppBootstrapperError.invalidControllerSecret }
+        return MihomoAPIConfiguration(
+            host: "127.0.0.1",
+            port: local.controllerPort,
+            secret: try Self.validatedControllerSecret(from: data)
+        )
+    }
+
+    private static func validatedControllerSecret(from data: Data) throws -> String {
+        guard data.count <= 512,
+            let value = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty,
+            value.utf8.count <= 512
+        else {
+            throw AppBootstrapperError.invalidControllerSecret
+        }
+        return value
     }
 
     /// Migrates only when no native profile exists. The legacy server split is
@@ -526,6 +578,16 @@ public actor AppBootstrapper {
         for local: LocalProxyConfiguration,
         projection: MihomoRuntimeProjection
     ) throws -> MihomoRuntimeOptions {
+        let externalController: MihomoExternalControllerConfiguration?
+        if projection == .user {
+            let configuration = try mihomoAPIConfiguration()
+            externalController = MihomoExternalControllerConfiguration(
+                port: configuration.port,
+                secret: configuration.secret
+            )
+        } else {
+            externalController = nil
+        }
         return MihomoRuntimeOptions(
             listenAddress: local.listenAddress,
             mixedPort: local.port,
@@ -535,6 +597,7 @@ public actor AppBootstrapper {
             udpEnabled: local.udpEnabled,
             sniffingEnabled: local.sniffingEnabled,
             bypassPrivateNetworks: local.bypassPrivateNetworks,
+            externalController: externalController,
             tun: projection == .privilegedTun ? MihomoTunConfiguration() : nil
         )
     }

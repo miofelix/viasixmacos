@@ -22,34 +22,36 @@ struct AppState: Equatable, Sendable {
     }
 
     enum RuntimeOperation: Equatable, Sendable {
-        case installing(RuntimeInstallationStage)
-        case importing
+        case installing(RuntimeComponent, RuntimeInstallationStage)
         case cancelling
 
         var description: String {
             switch self {
-            case .installing(.preparingInstallation):
-                "正在准备安装运行组件"
-            case .installing(.downloading(let component)):
+            case .installing(let component, .preparingInstallation):
+                "正在准备安装 \(component.displayName)"
+            case .installing(_, .downloading(let component)):
                 "正在下载 \(component.displayName)"
-            case .installing(.verifying(let component)):
+            case .installing(_, .verifying(let component)):
                 "正在校验 \(component.displayName) 的 SHA-256"
-            case .installing(.extracting(let component)):
+            case .installing(_, .extracting(let component)):
                 "正在解压 \(component.displayName)"
-            case .installing(.committing):
-                "正在完成安装，现有组件会保留到成功"
-            case .importing:
-                "正在检查并导入本地组件"
+            case .installing(let component, .committing):
+                "正在安装 \(component.displayName)，现有组件会保留到成功"
             case .cancelling:
                 "正在取消，现有组件不会被修改"
             }
         }
 
+        var installingComponent: RuntimeComponent? {
+            guard case .installing(let component, _) = self else { return nil }
+            return component
+        }
+
         var canCancel: Bool {
             switch self {
-            case .installing(.committing), .cancelling:
+            case .installing(_, .committing), .cancelling:
                 false
-            case .installing, .importing:
+            case .installing:
                 true
             }
         }
@@ -90,6 +92,56 @@ struct AppState: Equatable, Sendable {
         case idle
         case importing
         case saving
+    }
+
+    enum MihomoRuntimePhase: Equatable, Sendable {
+        case unavailable
+        case loading
+        case available
+        case failed(String)
+    }
+
+    enum MihomoProvidersPhase: Equatable, Sendable {
+        case unavailable
+        case loading
+        case available
+        case failed(String)
+    }
+
+    enum MihomoConnectionMonitorPhase: Equatable, Sendable {
+        case unavailable
+        case connecting
+        case streaming
+        case reconnecting
+    }
+
+    struct MihomoTrafficSample: Identifiable, Equatable, Sendable {
+        var id: Date { timestamp }
+        let timestamp: Date
+        let uploadSpeed: Int64
+        let downloadSpeed: Int64
+    }
+
+    struct MihomoClosedConnection: Identifiable, Equatable, Sendable {
+        var id: String { connection.id }
+        let connection: MihomoConnection
+        let closedAt: Date
+    }
+
+    struct MihomoRuntimeState: Equatable, Sendable {
+        var phase: MihomoRuntimePhase = .unavailable
+        var snapshot: MihomoRuntimeSnapshot?
+        var uploadSpeed: Int64 = 0
+        var downloadSpeed: Int64 = 0
+        var lastUpdatedAt: Date?
+        var trafficSamples: [MihomoTrafficSample] = []
+        var providersPhase: MihomoProvidersPhase = .unavailable
+        var providerSnapshot: MihomoProviderSnapshot?
+        var updatingProxyProviders: Set<String> = []
+        var updatingRuleProviders: Set<String> = []
+        var testingProxyGroup: String?
+        var closedConnections: [MihomoClosedConnection] = []
+        var connectionMonitorPhase: MihomoConnectionMonitorPhase = .unavailable
     }
 
     struct SpeedTestState: Equatable, Sendable {
@@ -153,6 +205,7 @@ struct AppState: Equatable, Sendable {
     var templateOperationError: String?
     var proxyEndpoint = ProxyEndpoint()
     var localProxyConfiguration = LocalProxyConfiguration()
+    var mihomoRuntime = MihomoRuntimeState()
     var exit = ExitState()
     var logs: [AppLogEntry] = []
     var notice: AppNotice?

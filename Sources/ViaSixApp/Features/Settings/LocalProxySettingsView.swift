@@ -8,6 +8,7 @@ struct LocalProxySettingsView: View {
     @State private var configuration = LocalProxyConfiguration()
     @State private var originalConfiguration: LocalProxyConfiguration?
     @State private var portText = "11451"
+    @State private var controllerPortText = "9090"
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -137,7 +138,15 @@ struct LocalProxySettingsView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 130)
             }
+            localRow("内核控制端口") {
+                TextField("9090", text: $controllerPortText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 130)
+            }
             Text("仅允许 localhost、127.0.0.0/8 或 ::1。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Controller 仅绑定 127.0.0.1，并使用 ViaSix 自动生成的本机密钥。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -240,6 +249,7 @@ struct LocalProxySettingsView: View {
         guard let originalConfiguration else { return false }
         return configuration != originalConfiguration
             || portText != String(originalConfiguration.port)
+            || controllerPortText != String(originalConfiguration.controllerPort)
     }
 
     private var systemProxyCurrentStateDescription: String {
@@ -269,9 +279,11 @@ struct LocalProxySettingsView: View {
             let data = try Data(contentsOf: model.paths.localProxyConfig)
             configuration = try JSONDecoder().decode(LocalProxyConfiguration.self, from: data).validated()
             portText = String(configuration.port)
+            controllerPortText = String(configuration.controllerPort)
         } catch {
             configuration = model.state.localProxyConfiguration
             portText = String(configuration.port)
+            controllerPortText = String(configuration.controllerPort)
             errorMessage = "读取本机设置失败：\(error.localizedDescription)"
         }
         originalConfiguration = configuration
@@ -284,7 +296,16 @@ struct LocalProxySettingsView: View {
             errorMessage = "监听端口必须是数字。"
             return
         }
+        guard
+            let controllerPort = Int(
+                controllerPortText.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        else {
+            errorMessage = "内核控制端口必须是数字。"
+            return
+        }
         configuration.port = port
+        configuration.controllerPort = controllerPort
         do {
             let validated = try configuration.validated()
             isSaving = true

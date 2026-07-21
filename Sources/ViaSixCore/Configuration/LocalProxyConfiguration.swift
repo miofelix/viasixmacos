@@ -83,6 +83,8 @@ public enum ProxyRoutingMode: String, Codable, CaseIterable, Sendable {
 public enum LocalProxyConfigurationError: LocalizedError, Equatable, Sendable {
     case invalidListenAddress
     case invalidPort
+    case invalidControllerPort
+    case conflictingControllerPort
 
     public var errorDescription: String? {
         switch self {
@@ -90,6 +92,10 @@ public enum LocalProxyConfigurationError: LocalizedError, Equatable, Sendable {
             "本地监听地址必须是 127.0.0.0/8、::1 或 localhost"
         case .invalidPort:
             "本地监听端口必须在 1–65535 之间"
+        case .invalidControllerPort:
+            "内核控制端口必须在 1–65535 之间"
+        case .conflictingControllerPort:
+            "内核控制端口不能与本地代理端口相同"
         }
     }
 }
@@ -97,6 +103,7 @@ public enum LocalProxyConfigurationError: LocalizedError, Equatable, Sendable {
 public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
     public var listenAddress: String
     public var port: Int
+    public var controllerPort: Int
     public var udpEnabled: Bool
     public var sniffingEnabled: Bool
     public var bypassPrivateNetworks: Bool
@@ -107,6 +114,7 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
     public init(
         listenAddress: String = AppMetadata.proxyHost,
         port: Int = AppMetadata.proxyPort,
+        controllerPort: Int = AppMetadata.controllerPort,
         udpEnabled: Bool = true,
         sniffingEnabled: Bool = true,
         bypassPrivateNetworks: Bool = true,
@@ -116,6 +124,7 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
     ) {
         self.listenAddress = listenAddress
         self.port = port
+        self.controllerPort = controllerPort
         self.udpEnabled = udpEnabled
         self.sniffingEnabled = sniffingEnabled
         self.bypassPrivateNetworks = bypassPrivateNetworks
@@ -129,6 +138,7 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
     public init(
         listenAddress: String = AppMetadata.proxyHost,
         port: Int = AppMetadata.proxyPort,
+        controllerPort: Int = AppMetadata.controllerPort,
         udpEnabled: Bool = true,
         sniffingEnabled: Bool = true,
         bypassPrivateNetworks: Bool = true,
@@ -139,6 +149,7 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         self.init(
             listenAddress: listenAddress,
             port: port,
+            controllerPort: controllerPort,
             udpEnabled: udpEnabled,
             sniffingEnabled: sniffingEnabled,
             bypassPrivateNetworks: bypassPrivateNetworks,
@@ -153,6 +164,7 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case listenAddress
         case port
+        case controllerPort
         case udpEnabled
         case sniffingEnabled
         case bypassPrivateNetworks
@@ -170,6 +182,9 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         port =
             try container.decodeIfPresent(Int.self, forKey: .port)
             ?? AppMetadata.proxyPort
+        controllerPort =
+            try container.decodeIfPresent(Int.self, forKey: .controllerPort)
+            ?? AppMetadata.controllerPort
         udpEnabled =
             try container.decodeIfPresent(Bool.self, forKey: .udpEnabled)
             ?? true
@@ -201,6 +216,7 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(listenAddress, forKey: .listenAddress)
         try container.encode(port, forKey: .port)
+        try container.encode(controllerPort, forKey: .controllerPort)
         try container.encode(udpEnabled, forKey: .udpEnabled)
         try container.encode(sniffingEnabled, forKey: .sniffingEnabled)
         try container.encode(bypassPrivateNetworks, forKey: .bypassPrivateNetworks)
@@ -218,6 +234,12 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         }
         guard (1...65_535).contains(copy.port) else {
             throw LocalProxyConfigurationError.invalidPort
+        }
+        guard (1...65_535).contains(copy.controllerPort) else {
+            throw LocalProxyConfigurationError.invalidControllerPort
+        }
+        guard copy.controllerPort != copy.port else {
+            throw LocalProxyConfigurationError.conflictingControllerPort
         }
         return copy
     }

@@ -5,7 +5,6 @@ import ViaSixCore
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
-    @State private var showsCustomExecutables = false
     @State private var showsTemplateEditor = false
     @State private var showsLocalProxyEditor = false
     @State private var presentedServerEditorMode: ServerConfigurationInputMode?
@@ -46,44 +45,26 @@ struct SettingsView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 0) {
-                componentRow(
-                    component: .cfst,
-                    url: resolvedDisplayURL(for: .cfst),
-                    ready: componentReady(.cfst)
-                )
+                runtimeComponentSection(.cfst)
                 Divider()
-                    .padding(.leading, 52)
-                componentRow(
-                    component: .mihomo,
-                    url: resolvedDisplayURL(for: .mihomo),
-                    ready: componentReady(.mihomo)
-                )
+                    .padding(.vertical, VisualStyle.spacing4)
+                runtimeComponentSection(.mihomo)
 
-                Divider()
+                if model.state.runtimeOperation != nil {
+                    Divider()
+                        .padding(.top, VisualStyle.spacing8)
 
-                HStack(spacing: VisualStyle.spacing8) {
-                    Button(runtimeInstallTitle, systemImage: "arrow.down.circle") {
-                        model.installRuntime()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(runtimeActionsDisabled)
-
-                    Button("导入组件", systemImage: "square.and.arrow.down") {
-                        importRuntime()
-                    }
-                    .disabled(runtimeActionsDisabled)
-
-                    Spacer()
-
-                    if model.state.runtimeOperation?.canCancel == true {
-                        Button("取消", systemImage: "xmark.circle") {
-                            model.cancelRuntimeOperation()
+                    HStack(spacing: VisualStyle.spacing12) {
+                        runtimeOperationStatus
+                        Spacer()
+                        if model.state.runtimeOperation?.canCancel == true {
+                            Button("取消", systemImage: "xmark.circle") {
+                                model.cancelRuntimeOperation()
+                            }
                         }
                     }
+                    .padding(.vertical, VisualStyle.spacing12)
                 }
-                .padding(.vertical, VisualStyle.spacing12)
-
-                runtimeOperationStatus
 
                 if let issue = model.runtimeIntegrityIssue {
                     Label(issue, systemImage: "exclamationmark.triangle.fill")
@@ -99,43 +80,6 @@ struct SettingsView: View {
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.bottom, VisualStyle.spacing12)
-                }
-
-                Divider()
-
-                DisclosureControl(
-                    title: "自定义可执行文件",
-                    summary: "指定开发版或自行构建的组件",
-                    isExpanded: $showsCustomExecutables
-                ) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("自定义可执行文件")
-                            .font(.subheadline.weight(.medium))
-                        Text("指定开发版或自行构建的组件")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if showsCustomExecutables {
-                    VStack(alignment: .leading, spacing: 14) {
-                        executablePicker(
-                            title: "CFST 路径",
-                            value: model.state.preferences.cfstPath,
-                            component: .cfst
-                        )
-                        executablePicker(
-                            title: "Mihomo 路径",
-                            value: model.state.preferences.mihomoPath,
-                            component: .mihomo
-                        )
-
-                        Text("留空时使用 ViaSix 管理的组件，也会检查 Homebrew 与 PATH。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.top, 12)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
             .padding(.horizontal, VisualStyle.spacing16)
@@ -492,15 +436,19 @@ struct SettingsView: View {
         return StatusBadge(label, tone: tone, systemImage: systemImage)
     }
 
-    private var runtimeInstallTitle: String {
-        if model.state.runtimeOperationError != nil {
-            return model.hasCfstExecutable && model.hasProxyCoreExecutable
-                ? "重试更新"
-                : "重试安装"
+    private func runtimeComponentSection(_ component: RuntimeComponent) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            componentRow(
+                component: component,
+                url: resolvedDisplayURL(for: component),
+                ready: componentReady(component)
+            )
+
+            Divider()
+                .padding(.leading, 52)
+
+            customExecutableRow(component)
         }
-        return model.hasCfstExecutable && model.hasProxyCoreExecutable
-            ? "重新安装组件"
-            : "安装组件"
     }
 
     private func componentRow(
@@ -531,54 +479,125 @@ struct SettingsView: View {
                     .truncationMode(.middle)
             }
             Spacer()
+
+            Button(
+                componentInstallTitle(component),
+                systemImage: componentOperationIsActive(component)
+                    ? "arrow.triangle.2.circlepath"
+                    : "arrow.down.circle"
+            ) {
+                model.installRuntime(component)
+            }
+            .buttonStyle(.bordered)
+            .tint(VisualStyle.accent)
+            .controlSize(.small)
+            .disabled(componentInstallDisabled(component))
         }
         .frame(minHeight: VisualStyle.settingsRowHeight)
     }
 
-    private func executablePicker(
-        title: String,
-        value: String,
-        component: RuntimeComponent
-    ) -> some View {
+    private func customExecutableRow(_ component: RuntimeComponent) -> some View {
+        let value = customExecutablePath(component)
         let editingDisabled = componentPathEditingDisabled(component)
-        return VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption.weight(.medium))
-            HStack {
-                TextField(
-                    "自动查找",
-                    text: Binding(
-                        get: { value },
-                        set: { newValue in
-                            model.setCustomExecutable(
-                                component,
-                                url: newValue.isEmpty ? nil : URL(fileURLWithPath: newValue)
-                            )
-                        }
-                    )
-                )
-                .textFieldStyle(.roundedBorder)
-                .accessibilityLabel(title)
-                .disabled(editingDisabled)
+        return VStack(alignment: .leading, spacing: VisualStyle.spacing8) {
+            HStack(spacing: VisualStyle.spacing12) {
+                Image(systemName: "terminal")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24)
 
-                Button("选择…") {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("自定义可执行文件")
+                        .font(.subheadline.weight(.medium))
+                    Text(value.isEmpty ? "未指定；使用托管组件、Homebrew 或 PATH" : value)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer()
+
+                Button(value.isEmpty ? "导入…" : "更换…", systemImage: "folder") {
                     chooseExecutable(component)
                 }
+                .controlSize(.small)
                 .disabled(editingDisabled)
-                Button {
-                    model.setCustomExecutable(component, url: nil)
-                } label: {
-                    Image(systemName: "xmark")
+
+                if !value.isEmpty {
+                    Button {
+                        model.setCustomExecutable(component, url: nil)
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .iconButtonHitTarget()
+                    .help("清除 \(component.displayName) 自定义路径")
+                    .accessibilityLabel("清除 \(component.displayName) 自定义可执行文件")
+                    .disabled(editingDisabled)
                 }
-                .iconButtonHitTarget()
-                .help("清除自定义路径")
-                .accessibilityLabel("清除\(title)")
-                .disabled(value.isEmpty || editingDisabled)
             }
+
             if editingDisabled {
                 Text(componentPathEditingMessage(component))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .padding(.leading, 36)
+            }
+        }
+        .frame(minHeight: VisualStyle.settingsRowHeight)
+    }
+
+    private func customExecutablePath(_ component: RuntimeComponent) -> String {
+        switch component {
+        case .cfst:
+            model.state.preferences.cfstPath
+        case .mihomo:
+            model.state.preferences.mihomoPath
+        }
+    }
+
+    private func componentInstallTitle(_ component: RuntimeComponent) -> String {
+        if componentOperationIsActive(component) { return "安装中" }
+        if managedComponentInvalid(component) { return "修复" }
+        return managedComponentReady(component) ? "重新安装" : "安装"
+    }
+
+    private func componentOperationIsActive(_ component: RuntimeComponent) -> Bool {
+        model.state.runtimeOperation?.installingComponent == component
+    }
+
+    private func managedComponentReady(_ component: RuntimeComponent) -> Bool {
+        switch component {
+        case .cfst:
+            model.state.runtimeStatus?.cfstIsReady == true
+        case .mihomo:
+            model.state.runtimeStatus?.mihomoIsReady == true
+        }
+    }
+
+    private func managedComponentInvalid(_ component: RuntimeComponent) -> Bool {
+        let payload: RuntimePayloadFile =
+            switch component {
+            case .cfst: .cfst
+            case .mihomo: .mihomo
+            }
+        return model.state.runtimeStatus?.invalidFiles.contains(payload) == true
+    }
+
+    private func componentInstallDisabled(_ component: RuntimeComponent) -> Bool {
+        guard model.state.launchPhase == .ready else { return true }
+        guard model.state.runtimeOperation == nil else { return true }
+        guard model.state.templateOperationPhase == .idle else { return true }
+        guard model.switchingIP == nil else { return true }
+
+        return switch component {
+        case .cfst:
+            model.isCfstBusy
+        case .mihomo:
+            switch model.state.proxyCorePhase {
+            case .validating, .starting, .running, .stopping:
+                true
+            case .stopped, .failed:
+                false
             }
         }
     }
@@ -645,31 +664,6 @@ struct SettingsView: View {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
-    private var runtimeActionsDisabled: Bool {
-        guard model.state.launchPhase == .ready else { return true }
-        if model.state.runtimeOperation != nil
-            || model.isTemplateOperationBusy
-            || model.switchingIP != nil
-        {
-            return true
-        }
-        if model.isCfstBusy { return true }
-
-        switch model.state.speedTest.phase {
-        case .running, .stopping:
-            return true
-        case .idle, .failed:
-            break
-        }
-
-        switch model.state.proxyCorePhase {
-        case .validating, .starting, .running, .stopping:
-            return true
-        case .stopped, .failed:
-            return false
-        }
-    }
-
     private var proxyImportDisabled: Bool {
         guard model.state.launchPhase == .ready else { return true }
         guard model.state.templateOperationPhase == .idle else { return true }
@@ -714,10 +708,12 @@ struct SettingsView: View {
 
     private func chooseExecutable(_ component: RuntimeComponent) {
         let panel = NSOpenPanel()
+        panel.title = "导入 \(component.displayName) 自定义可执行文件"
+        panel.message = "该文件只覆盖 \(component.displayName) 的自动查找路径，不会复制或修改另一个组件。"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "选择"
+        panel.prompt = "使用此文件"
         if panel.runModal() == .OK {
             model.setCustomExecutable(component, url: panel.url)
         }
@@ -739,17 +735,6 @@ struct SettingsView: View {
         }
         exitIPEndpointError = nil
         model.exitIPEndpoint = normalized
-    }
-
-    private func importRuntime() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = true
-        panel.prompt = "导入"
-        if panel.runModal() == .OK {
-            model.importRuntime(from: panel.urls)
-        }
     }
 
     private func importProxyProfile() {

@@ -17,6 +17,8 @@ public struct AppPaths: Sendable, Equatable {
     /// deliberately kept away from the user-editable server profile.
     public let mihomoHome: URL
     public let generatedConfig: URL
+    /// Random bearer token for the loopback-only Mihomo Controller API.
+    public let mihomoControllerSecret: URL
     public let mihomoProviders: URL
     public let mihomoRules: URL
 
@@ -44,6 +46,7 @@ public struct AppPaths: Sendable, Equatable {
 
         self.mihomoHome = data.appendingPathComponent("Mihomo", isDirectory: true)
         self.generatedConfig = mihomoHome.appendingPathComponent("config.yaml")
+        self.mihomoControllerSecret = mihomoHome.appendingPathComponent("controller.secret")
         self.mihomoProviders = mihomoHome.appendingPathComponent("providers", isDirectory: true)
         self.mihomoRules = mihomoHome.appendingPathComponent("rules", isDirectory: true)
 

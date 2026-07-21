@@ -3,7 +3,7 @@ import SwiftUI
 import ViaSixCore
 
 enum VisualStyle {
-    static let accent = Color(nsColor: .systemBlue)
+    static let accent = Color(red: 0.29, green: 0.55, blue: 0.96)
     static let positive = Color(nsColor: .systemGreen)
     static let warning = Color(nsColor: .systemOrange)
     static let negative = Color(nsColor: .systemRed)
@@ -11,14 +11,32 @@ enum VisualStyle {
         nsColor: NSColor(name: nil) { appearance in
             let match = appearance.bestMatch(from: [.darkAqua, .aqua])
             if match == .darkAqua {
-                return NSColor(srgbRed: 0.105, green: 0.11, blue: 0.135, alpha: 1)
+                return NSColor(srgbRed: 0.075, green: 0.082, blue: 0.105, alpha: 1)
             }
-            return NSColor(srgbRed: 0.945, green: 0.95, blue: 0.96, alpha: 1)
+            return NSColor(srgbRed: 0.952, green: 0.958, blue: 0.97, alpha: 1)
         }
     )
-    static let sidebarBackgroundColor = Color(nsColor: .windowBackgroundColor)
-    static let surfaceColor = Color(nsColor: .controlBackgroundColor)
-    static let elevatedSurfaceColor = Color(nsColor: .textBackgroundColor)
+    static let sidebarBackgroundColor = Color(
+        nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(srgbRed: 0.15, green: 0.16, blue: 0.205, alpha: 1)
+                : NSColor(srgbRed: 0.975, green: 0.978, blue: 0.985, alpha: 1)
+        }
+    )
+    static let surfaceColor = Color(
+        nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(srgbRed: 0.14, green: 0.15, blue: 0.19, alpha: 1)
+                : NSColor.white
+        }
+    )
+    static let elevatedSurfaceColor = Color(
+        nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(srgbRed: 0.18, green: 0.19, blue: 0.24, alpha: 1)
+                : NSColor(srgbRed: 0.985, green: 0.988, blue: 0.995, alpha: 1)
+        }
+    )
     static let selectedSurfaceColor = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
     static let subtleFill = Color(nsColor: .quaternaryLabelColor).opacity(0.12)
     static let surfaceBorder = Color(nsColor: .separatorColor).opacity(0.58)
@@ -30,13 +48,13 @@ enum VisualStyle {
     static let spacing20: CGFloat = 20
     static let spacing24: CGFloat = 24
 
-    static let radiusSmall: CGFloat = 8
-    static let radiusMedium: CGFloat = 12
-    static let radiusLarge: CGFloat = 16
+    static let radiusSmall: CGFloat = 7
+    static let radiusMedium: CGFloat = 9
+    static let radiusLarge: CGFloat = 12
     static let navigationRowHeight: CGFloat = 42
     static let settingsRowHeight: CGFloat = 52
     static let pageHeaderHeight: CGFloat = 60
-    static let sidebarWidth: CGFloat = 216
+    static let sidebarWidth: CGFloat = 224
     static let pageHorizontalPadding: CGFloat = 22
     static let pageVerticalPadding: CGFloat = 20
     static let controlHeight: CGFloat = 34
@@ -194,7 +212,7 @@ struct CardModifier: ViewModifier {
                 )
                 .stroke(VisualStyle.surfaceBorder, lineWidth: 1)
             }
-            .shadow(color: .black.opacity(0.035), radius: 2, y: 1)
+            .shadow(color: .black.opacity(0.045), radius: 3, y: 1)
     }
 }
 

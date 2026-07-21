@@ -5,6 +5,37 @@ import XCTest
 
 @MainActor
 final class RuntimeOperationStateTests: XCTestCase {
+    func testInstallingOneRuntimeComponentLeavesTheOtherAvailableForSeparateInstall() async throws {
+        let paths = makePaths()
+        let archiveURL = paths.root.appendingPathComponent("archive-fixture")
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+
+        try FileManager.default.createDirectory(at: paths.root, withIntermediateDirectories: true)
+        let archiveData = Data("archive fixture".utf8)
+        try archiveData.write(to: archiveURL)
+        let manager = RuntimeComponentManager(
+            runtimeDirectory: paths.runtime,
+            manifest: makeManifest(sha256: RuntimeSHA256.hexDigest(of: archiveData)),
+            downloadHandler: { _ in
+                RuntimeDownloadedFile(fileURL: archiveURL, statusCode: 200)
+            },
+            archiveExtractor: { _, _, destinationURL in
+                try writeRuntimePayloads(to: destinationURL)
+            }
+        )
+        let model = makeModel(paths: paths, runtimeManager: manager)
+
+        model.installRuntime(.cfst)
+        try await waitUntil { model.state.runtimeOperation == nil }
+
+        XCTAssertTrue(model.state.runtimeStatus?.cfstIsReady == true)
+        XCTAssertFalse(model.state.runtimeStatus?.mihomoIsReady == true)
+        XCTAssertEqual(model.state.runtimeStatus?.missingFiles, [.mihomo])
+        XCTAssertEqual(model.state.runtimePhase, .missing)
+        XCTAssertEqual(model.state.notice?.message, "CloudflareSpeedTest 已安装")
+        await model.shutdown()
+    }
+
     func testCancellingRuntimeInstallRestoresDiskStateWithoutReportingFailure() async throws {
         let paths = makePaths()
         let archiveURL = paths.root.appendingPathComponent("archive-fixture")
@@ -26,9 +57,9 @@ final class RuntimeOperationStateTests: XCTestCase {
         )
         let model = makeModel(paths: paths, runtimeManager: manager)
 
-        model.installRuntime()
+        model.installRuntime(.cfst)
         try await waitUntil {
-            model.state.runtimeOperation == .installing(.downloading(.cfst))
+            model.state.runtimeOperation == .installing(.cfst, .downloading(.cfst))
         }
 
         model.cancelRuntimeOperation()
@@ -62,7 +93,7 @@ final class RuntimeOperationStateTests: XCTestCase {
         )
         let model = makeModel(paths: paths, runtimeManager: manager)
 
-        model.installRuntime()
+        model.installRuntime(.cfst)
         try await waitUntil {
             model.state.runtimeOperation == nil && model.state.runtimeOperationError != nil
         }

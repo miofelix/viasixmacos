@@ -12,6 +12,9 @@ public enum AppMetadata {
     public static let exitIPGeolocationEndpoint = "https://ipwho.is?lang=zh-CN"
     public static let proxyHost = "127.0.0.1"
     public static let proxyPort = 11_451
+    public static let controllerPort = 9_090
+    public static let proxyDelayTestURL = "https://www.gstatic.com/generate_204"
+    public static let proxyDelayTimeoutMilliseconds = 5_000
 
     public static func exitIPEndpoint(
         for mode: ExitIPDetectionMode,

@@ -14,8 +14,23 @@ final class LocalProxyConfigurationTests: XCTestCase {
 
         XCTAssertEqual(local.routingMode, .rule)
         XCTAssertEqual(local.networkAccessMode, .localProxy)
+        XCTAssertEqual(local.controllerPort, AppMetadata.controllerPort)
         XCTAssertEqual(local.endpoint, ProxyEndpoint(host: "127.0.0.2", port: 18_080))
         XCTAssertFalse(local.udpEnabled)
+    }
+
+    func testControllerPortMustBeValidAndDistinctFromProxyPort() throws {
+        XCTAssertThrowsError(
+            try LocalProxyConfiguration(controllerPort: 0).validated()
+        ) { error in
+            XCTAssertEqual(error as? LocalProxyConfigurationError, .invalidControllerPort)
+        }
+
+        XCTAssertThrowsError(
+            try LocalProxyConfiguration(port: 9_090, controllerPort: 9_090).validated()
+        ) { error in
+            XCTAssertEqual(error as? LocalProxyConfigurationError, .conflictingControllerPort)
+        }
     }
 
     func testLegacyLocalProxyFieldsMigrateToNeutralValues() throws {

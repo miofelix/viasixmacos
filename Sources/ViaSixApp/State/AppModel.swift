@@ -33,6 +33,25 @@ protocol ProxyCoreControlling: Sendable {
 
 extension MihomoController: ProxyCoreControlling {}
 
+protocol MihomoAPIControlling: Sendable {
+    func snapshot() async throws -> MihomoRuntimeSnapshot
+    func runtimeMetadata() async throws -> MihomoRuntimeMetadata
+    func connectionSnapshots() async -> AsyncThrowingStream<MihomoConnectionsSnapshot, Error>
+    func providerSnapshot() async throws -> MihomoProviderSnapshot
+    func testProxyGroup(
+        group: String,
+        url: String,
+        timeoutMilliseconds: Int
+    ) async throws -> [String: Int]
+    func selectProxy(group: String, proxy: String) async throws
+    func closeConnection(id: String) async throws
+    func closeAllConnections() async throws
+    func updateProxyProvider(name: String) async throws
+    func updateRuleProvider(name: String) async throws
+}
+
+extension MihomoAPIClient: MihomoAPIControlling {}
+
 struct ProxyCoreControllerConfiguration: Sendable {
     let executableURL: URL
     let configURL: URL
@@ -43,6 +62,12 @@ struct ProxyCoreControllerConfiguration: Sendable {
 }
 
 typealias ProxyCoreControllerFactory = @Sendable (ProxyCoreControllerConfiguration) -> any ProxyCoreControlling
+typealias MihomoAPIClientFactory = @Sendable (MihomoAPIConfiguration) -> any MihomoAPIControlling
+
+private enum MihomoProviderKind {
+    case proxy
+    case rule
+}
 
 extension AppBootstrapper: ProxyProfileReplacing {
     func replaceProfile(
@@ -107,6 +132,10 @@ final class AppModel {
 
     var isRoutingModeChanging: Bool {
         routingModeTask != nil
+    }
+
+    var isMihomoActionBusy: Bool {
+        mihomoActionTask != nil
     }
 
     var currentConfigurationTestUnavailableReason: String? {
@@ -241,6 +270,7 @@ final class AppModel {
     @ObservationIgnored private let profileReplacer: any ProxyProfileReplacing
     @ObservationIgnored private let systemProxyManager: any SystemProxyManaging
     @ObservationIgnored private let proxyCoreControllerFactory: ProxyCoreControllerFactory
+    @ObservationIgnored private let mihomoAPIClientFactory: MihomoAPIClientFactory?
 
     @ObservationIgnored private var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored private var runtimeTask: Task<Void, Never>?
@@ -260,11 +290,15 @@ final class AppModel {
     @ObservationIgnored private var systemProxyTask: Task<Void, Never>?
     @ObservationIgnored private var systemProxyCleanupTask: Task<Void, Never>?
     @ObservationIgnored private var routingModeTask: Task<Void, Never>?
+    @ObservationIgnored private var mihomoMonitorTask: Task<Void, Never>?
+    @ObservationIgnored private var mihomoMetadataTask: Task<Void, Never>?
+    @ObservationIgnored private var mihomoActionTask: Task<Void, Never>?
     @ObservationIgnored private var activeRunner: CfstRunner?
     @ObservationIgnored private var activeSpeedTestID: UUID?
     @ObservationIgnored private var activeConfigurationTestID: UUID?
     @ObservationIgnored private var activeProxyCore: (any ProxyCoreControlling)?
     @ObservationIgnored private var activeProxyCoreID: UUID?
+    @ObservationIgnored private var mihomoAPIClient: (any MihomoAPIControlling)?
     @ObservationIgnored private var proxyStopRequested = false
     @ObservationIgnored private var isShuttingDown = false
 
@@ -276,7 +310,8 @@ final class AppModel {
         exitDetector: any ExitIPDetecting,
         profileReplacer: (any ProxyProfileReplacing)? = nil,
         systemProxyManager: (any SystemProxyManaging)? = nil,
-        proxyCoreControllerFactory: ProxyCoreControllerFactory? = nil
+        proxyCoreControllerFactory: ProxyCoreControllerFactory? = nil,
+        mihomoAPIClientFactory: MihomoAPIClientFactory? = nil
     ) {
         self.paths = paths
         self.preferencesStore = preferencesStore
@@ -296,6 +331,7 @@ final class AppModel {
                     port: configuration.port
                 )
             }
+        self.mihomoAPIClientFactory = mihomoAPIClientFactory
         self.state = AppState(
             preferences: UserPreferences(parameters: .defaults(ipv6File: paths.ipv6List))
         )
@@ -308,7 +344,8 @@ final class AppModel {
             preferencesStore: PreferencesStore(fileURL: paths.preferences),
             bootstrapper: AppBootstrapper(paths: paths),
             runtimeManager: RuntimeComponentManager(paths: paths),
-            exitDetector: ExitIPDetector()
+            exitDetector: ExitIPDetector(),
+            mihomoAPIClientFactory: { MihomoAPIClient(configuration: $0) }
         )
     }
 
@@ -326,30 +363,30 @@ final class AppModel {
         start()
     }
 
-    func installRuntime() {
+    func installRuntime(_ component: RuntimeComponent) {
         guard
             !isShuttingDown,
             runtimeTask == nil,
-            activeRunner == nil,
             state.templateOperationPhase == .idle,
             selectionTask == nil,
-            activeProxyCore == nil,
-            proxyStartTask == nil,
-            proxyStopTask == nil
+            runtimeComponentCanBeReplaced(component)
         else { return }
         let operationID = UUID()
         activeRuntimeOperationID = operationID
-        state.runtimeOperation = .installing(.preparingInstallation)
+        state.runtimeOperation = .installing(component, .preparingInstallation)
         state.runtimeOperationError = nil
-        appendLog(source: .app, message: "正在下载并校验运行组件…")
+        appendLog(source: .app, message: "正在下载并校验 \(component.displayName)…")
 
         runtimeTask = Task { [weak self] in
             guard let self else { return }
             defer { finishRuntimeOperation(operationID: operationID) }
             do {
-                let status = try await runtimeManager.downloadAndInstall { [weak self] stage in
+                let status = try await runtimeManager.downloadAndInstall(
+                    component: component
+                ) { [weak self] stage in
                     await self?.receiveRuntimeInstallationStage(
                         stage,
+                        component: component,
                         operationID: operationID
                     )
                 }
@@ -357,53 +394,30 @@ final class AppModel {
                 state.runtimeStatus = status
                 state.runtimeOperationError = nil
                 refreshRuntimePhase()
-                appendLog(source: .app, level: .success, message: "运行组件安装完成")
-                showNotice("运行组件已安装", style: .success)
+                appendLog(
+                    source: .app,
+                    level: .success,
+                    message: "\(component.displayName) 安装完成"
+                )
+                showNotice("\(component.displayName) 已安装", style: .success)
             } catch {
                 await finishRuntimeOperationFailure(
                     error,
                     operationID: operationID,
-                    failurePrefix: "安装失败"
+                    failurePrefix: "\(component.displayName) 安装失败"
                 )
             }
         }
     }
 
-    func importRuntime(from urls: [URL]) {
-        guard
-            !isShuttingDown,
-            runtimeTask == nil,
-            activeRunner == nil,
-            state.templateOperationPhase == .idle,
-            selectionTask == nil,
-            activeProxyCore == nil,
-            proxyStartTask == nil,
-            proxyStopTask == nil,
-            !urls.isEmpty
-        else { return }
-        let operationID = UUID()
-        activeRuntimeOperationID = operationID
-        state.runtimeOperation = .importing
-        state.runtimeOperationError = nil
-        appendLog(source: .app, message: "正在检查并导入本地运行组件…")
-        runtimeTask = Task { [weak self] in
-            guard let self else { return }
-            defer { finishRuntimeOperation(operationID: operationID) }
-            do {
-                let status = try await runtimeManager.install(from: urls)
-                guard activeRuntimeOperationID == operationID else { return }
-                state.runtimeStatus = status
-                state.runtimeOperationError = nil
-                refreshRuntimePhase()
-                appendLog(source: .app, level: .success, message: "已导入本地运行组件")
-                showNotice("运行组件已导入", style: .success)
-            } catch {
-                await finishRuntimeOperationFailure(
-                    error,
-                    operationID: operationID,
-                    failurePrefix: "导入失败"
-                )
-            }
+    private func runtimeComponentCanBeReplaced(_ component: RuntimeComponent) -> Bool {
+        switch component {
+        case .cfst:
+            return activeRunner == nil
+        case .mihomo:
+            return activeProxyCore == nil
+                && proxyStartTask == nil
+                && proxyStopTask == nil
         }
     }
 
@@ -420,6 +434,7 @@ final class AppModel {
 
     private func receiveRuntimeInstallationStage(
         _ stage: RuntimeInstallationStage,
+        component: RuntimeComponent,
         operationID: UUID
     ) {
         guard
@@ -427,7 +442,7 @@ final class AppModel {
             state.runtimeOperation != nil,
             state.runtimeOperation != .cancelling
         else { return }
-        state.runtimeOperation = .installing(stage)
+        state.runtimeOperation = .installing(component, stage)
     }
 
     private func finishRuntimeOperationFailure(
@@ -651,6 +666,7 @@ final class AppModel {
             routingModeTask == nil,
             systemProxyTask == nil,
             runtimeTask == nil,
+            mihomoActionTask == nil,
             state.templateOperationPhase == .idle,
             selectionTask == nil
         else { return }
@@ -1194,6 +1210,7 @@ final class AppModel {
                     await self?.receiveProxyCoreEvent(event, controllerID: controllerID)
                 }
                 guard activeProxyCoreID == controllerID else { return }
+                beginMihomoMonitoring()
                 try await applySystemProxyIfRequested(endpoint: proxyEndpoint)
                 guard activeProxyCoreID == controllerID, await controller.isRunning else {
                     throw AppModelError.proxyExitedDuringStart
@@ -1218,6 +1235,7 @@ final class AppModel {
                     state.proxyConfigurationPhase = .needsSetup(configError.localizedDescription)
                 }
                 state.proxyCorePhase = .failed(error.localizedDescription)
+                stopMihomoMonitoring()
                 appendLog(source: .proxy, level: .error, message: error.localizedDescription)
                 let recoveryAction: AppNotice.Action? =
                     error is MihomoConfigurationError ? .openSettings : nil
@@ -1272,6 +1290,7 @@ final class AppModel {
                 activeProxyCore = nil
                 activeProxyCoreID = nil
                 state.proxyCorePhase = .stopped
+                stopMihomoMonitoring()
                 appendLog(source: .proxy, level: .warning, message: "本地代理已停止")
                 showNotice("本地代理已停止")
                 refreshExitIPAfterNetworkChangeIfNeeded()
@@ -1389,6 +1408,125 @@ final class AppModel {
         state.notice = nil
     }
 
+    func refreshMihomoRuntime() {
+        guard let client = mihomoAPIClient, mihomoActionTask == nil else { return }
+        mihomoActionTask = Task { [weak self] in
+            guard let self else { return }
+            defer { mihomoActionTask = nil }
+            await fetchMihomoSnapshot(using: client, reportsErrors: true)
+        }
+    }
+
+    func refreshMihomoProviders() {
+        guard state.isProxyRunning, let client = mihomoAPIClient, mihomoActionTask == nil else {
+            return
+        }
+        state.mihomoRuntime.providersPhase = .loading
+        mihomoActionTask = Task { [weak self] in
+            guard let self else { return }
+            defer { mihomoActionTask = nil }
+            do {
+                state.mihomoRuntime.providerSnapshot = try await client.providerSnapshot()
+                state.mihomoRuntime.providersPhase = .available
+            } catch is CancellationError {
+                return
+            } catch {
+                state.mihomoRuntime.providersPhase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func testProxyGroup(_ group: String) {
+        guard let client = mihomoAPIClient, mihomoActionTask == nil else { return }
+        state.mihomoRuntime.testingProxyGroup = group
+        mihomoActionTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                state.mihomoRuntime.testingProxyGroup = nil
+                mihomoActionTask = nil
+            }
+            do {
+                let delays = try await client.testProxyGroup(
+                    group: group,
+                    url: AppMetadata.proxyDelayTestURL,
+                    timeoutMilliseconds: AppMetadata.proxyDelayTimeoutMilliseconds
+                )
+                applyProxyGroupDelays(delays, groupName: group)
+                showNotice("已完成 \(group) 的延迟测试", style: .success)
+            } catch is CancellationError {
+                return
+            } catch {
+                showNotice("延迟测试失败：\(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+
+    func selectProxy(group: String, proxy: String) {
+        guard let client = mihomoAPIClient, mihomoActionTask == nil else { return }
+        mihomoActionTask = Task { [weak self] in
+            guard let self else { return }
+            defer { mihomoActionTask = nil }
+            do {
+                try await client.selectProxy(group: group, proxy: proxy)
+                await fetchMihomoSnapshot(using: client, reportsErrors: false)
+                showNotice("已将 \(group) 切换为 \(proxy)", style: .success)
+            } catch {
+                showNotice("切换代理失败：\(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+
+    func closeConnection(_ id: String) {
+        guard let client = mihomoAPIClient, mihomoActionTask == nil else { return }
+        mihomoActionTask = Task { [weak self] in
+            guard let self else { return }
+            defer { mihomoActionTask = nil }
+            do {
+                try await client.closeConnection(id: id)
+                await fetchMihomoSnapshot(using: client, reportsErrors: false)
+            } catch {
+                showNotice("关闭连接失败：\(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+
+    func closeAllConnections() {
+        guard let client = mihomoAPIClient, mihomoActionTask == nil else { return }
+        mihomoActionTask = Task { [weak self] in
+            guard let self else { return }
+            defer { mihomoActionTask = nil }
+            do {
+                try await client.closeAllConnections()
+                await fetchMihomoSnapshot(using: client, reportsErrors: false)
+                showNotice("已关闭所有活动连接", style: .success)
+            } catch {
+                showNotice("关闭连接失败：\(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+
+    func clearClosedConnections() {
+        state.mihomoRuntime.closedConnections.removeAll()
+    }
+
+    func updateProxyProvider(_ name: String) {
+        updateProviders(names: [name], kind: .proxy)
+    }
+
+    func updateAllProxyProviders() {
+        let names = state.mihomoRuntime.providerSnapshot?.proxyProviders.map(\.name) ?? []
+        updateProviders(names: names, kind: .proxy)
+    }
+
+    func updateRuleProvider(_ name: String) {
+        updateProviders(names: [name], kind: .rule)
+    }
+
+    func updateAllRuleProviders() {
+        let names = state.mihomoRuntime.providerSnapshot?.ruleProviders.map(\.name) ?? []
+        updateProviders(names: names, kind: .rule)
+    }
+
     @discardableResult
     func shutdown() async -> Bool {
         guard !isShuttingDown else { return false }
@@ -1410,6 +1548,9 @@ final class AppModel {
             systemProxyTask,
             systemProxyCleanupTask,
             routingModeTask,
+            mihomoMonitorTask,
+            mihomoMetadataTask,
+            mihomoActionTask,
         ].compactMap { $0 }
         let pendingTemplateSaveTask = templateSaveTask
         pendingTasks.forEach { $0.cancel() }
@@ -1445,6 +1586,7 @@ final class AppModel {
         if let activeProxyCore {
             await activeProxyCore.stop()
         }
+        stopMihomoMonitoring()
         state.templateOperationPhase = .idle
         if state.launchPhase == .ready {
             try? await preferencesStore.save(state.preferences)
@@ -1760,6 +1902,7 @@ final class AppModel {
         guard let controller = activeProxyCore, let controllerID = activeProxyCoreID else {
             throw AppModelError.proxyNotActive
         }
+        stopMihomoMonitoring()
         appendLog(source: .proxy, message: "节点已变更，正在重新连接本地代理")
         do {
             try await controller.restart { [weak self] event in
@@ -1768,11 +1911,13 @@ final class AppModel {
             guard activeProxyCoreID == controllerID else {
                 throw AppModelError.proxyExitedDuringRestart
             }
+            beginMihomoMonitoring()
             appendLog(source: .proxy, level: .success, message: "本地代理已应用新节点")
             refreshExitIPAfterNetworkChangeIfNeeded()
         } catch {
             if activeProxyCoreID == controllerID {
                 state.proxyCorePhase = .failed(error.localizedDescription)
+                stopMihomoMonitoring()
                 appendLog(
                     source: .proxy,
                     level: .error,
@@ -1783,6 +1928,334 @@ final class AppModel {
             }
             await restoreSystemProxyAfterProxyFailure()
             throw error
+        }
+    }
+
+    private func beginMihomoMonitoring() {
+        stopMihomoMonitoring()
+        guard let mihomoAPIClientFactory else { return }
+        state.mihomoRuntime.phase = .loading
+        state.mihomoRuntime.connectionMonitorPhase = .connecting
+        mihomoMonitorTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let configuration = try await bootstrapper.mihomoAPIConfiguration()
+                try Task.checkCancellation()
+                let client = mihomoAPIClientFactory(configuration)
+                mihomoAPIClient = client
+                await fetchMihomoSnapshot(using: client, reportsErrors: false)
+                guard !Task.isCancelled, state.isProxyRunning else { return }
+                beginMihomoMetadataMonitoring(using: client)
+
+                while !Task.isCancelled, state.isProxyRunning {
+                    state.mihomoRuntime.connectionMonitorPhase =
+                        state.mihomoRuntime.snapshot == nil ? .connecting : .reconnecting
+                    let stream = await client.connectionSnapshots()
+                    do {
+                        for try await connections in stream {
+                            try Task.checkCancellation()
+                            guard state.isProxyRunning else { return }
+                            if await applyMihomoConnectionsSnapshot(
+                                connections,
+                                using: client
+                            ) {
+                                state.mihomoRuntime.connectionMonitorPhase = .streaming
+                            }
+                        }
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        if state.mihomoRuntime.snapshot == nil {
+                            state.mihomoRuntime.phase = .failed(error.localizedDescription)
+                        }
+                    }
+                    guard !Task.isCancelled, state.isProxyRunning else { return }
+                    state.mihomoRuntime.connectionMonitorPhase = .reconnecting
+                    try await Task.sleep(for: .seconds(1))
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                state.mihomoRuntime.phase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func beginMihomoMetadataMonitoring(using client: any MihomoAPIControlling) {
+        mihomoMetadataTask?.cancel()
+        mihomoMetadataTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                while !Task.isCancelled, state.isProxyRunning {
+                    try await Task.sleep(for: .seconds(10))
+                    try Task.checkCancellation()
+                    await fetchMihomoMetadata(using: client)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func stopMihomoMonitoring() {
+        mihomoMonitorTask?.cancel()
+        mihomoMonitorTask = nil
+        mihomoMetadataTask?.cancel()
+        mihomoMetadataTask = nil
+        mihomoActionTask?.cancel()
+        mihomoActionTask = nil
+        mihomoAPIClient = nil
+        state.mihomoRuntime = AppState.MihomoRuntimeState()
+    }
+
+    private func fetchMihomoSnapshot(
+        using client: any MihomoAPIControlling,
+        reportsErrors: Bool
+    ) async {
+        do {
+            let snapshot = try await client.snapshot()
+            try Task.checkCancellation()
+            applyMihomoSnapshot(snapshot)
+        } catch is CancellationError {
+            return
+        } catch {
+            if state.mihomoRuntime.snapshot == nil {
+                state.mihomoRuntime.phase = .failed(error.localizedDescription)
+            }
+            if reportsErrors {
+                showNotice("刷新内核状态失败：\(error.localizedDescription)", style: .error)
+            }
+        }
+    }
+
+    private func fetchMihomoMetadata(using client: any MihomoAPIControlling) async {
+        do {
+            let metadata = try await client.runtimeMetadata()
+            try Task.checkCancellation()
+            guard let snapshot = state.mihomoRuntime.snapshot else { return }
+            state.mihomoRuntime.snapshot = MihomoRuntimeSnapshot(
+                version: metadata.version,
+                proxyGroups: metadata.proxyGroups,
+                connections: snapshot.connections,
+                rules: metadata.rules,
+                uploadTotal: snapshot.uploadTotal,
+                downloadTotal: snapshot.downloadTotal,
+                memoryUsage: snapshot.memoryUsage,
+                fetchedAt: snapshot.fetchedAt
+            )
+        } catch {
+            return
+        }
+    }
+
+    private func applyMihomoConnectionsSnapshot(
+        _ connections: MihomoConnectionsSnapshot,
+        using client: any MihomoAPIControlling
+    ) async -> Bool {
+        let snapshot: MihomoRuntimeSnapshot
+        if let current = state.mihomoRuntime.snapshot {
+            snapshot = current
+        } else {
+            do {
+                let metadata = try await client.runtimeMetadata()
+                try Task.checkCancellation()
+                guard state.isProxyRunning else { return false }
+                snapshot = MihomoRuntimeSnapshot(
+                    version: metadata.version,
+                    proxyGroups: metadata.proxyGroups,
+                    connections: [],
+                    rules: metadata.rules,
+                    uploadTotal: 0,
+                    downloadTotal: 0,
+                    memoryUsage: 0,
+                    fetchedAt: connections.fetchedAt
+                )
+            } catch {
+                return false
+            }
+        }
+        applyMihomoSnapshot(
+            MihomoRuntimeSnapshot(
+                version: snapshot.version,
+                proxyGroups: snapshot.proxyGroups,
+                connections: connections.connections,
+                rules: snapshot.rules,
+                uploadTotal: connections.uploadTotal,
+                downloadTotal: connections.downloadTotal,
+                memoryUsage: connections.memoryUsage,
+                fetchedAt: connections.fetchedAt
+            )
+        )
+        return true
+    }
+
+    private func applyMihomoSnapshot(_ snapshot: MihomoRuntimeSnapshot) {
+        let previous = state.mihomoRuntime.snapshot
+        let previousDate = state.mihomoRuntime.lastUpdatedAt
+        let interval = max(
+            0.1,
+            snapshot.fetchedAt.timeIntervalSince(previousDate ?? snapshot.fetchedAt)
+        )
+        if let previous {
+            state.mihomoRuntime.uploadSpeed = max(
+                0,
+                Int64(Double(snapshot.uploadTotal - previous.uploadTotal) / interval)
+            )
+            state.mihomoRuntime.downloadSpeed = max(
+                0,
+                Int64(Double(snapshot.downloadTotal - previous.downloadTotal) / interval)
+            )
+        } else {
+            state.mihomoRuntime.uploadSpeed = 0
+            state.mihomoRuntime.downloadSpeed = 0
+        }
+        recordClosedConnections(
+            previous: previous?.connections ?? [],
+            current: snapshot.connections,
+            closedAt: snapshot.fetchedAt
+        )
+        state.mihomoRuntime.trafficSamples.append(
+            AppState.MihomoTrafficSample(
+                timestamp: snapshot.fetchedAt,
+                uploadSpeed: state.mihomoRuntime.uploadSpeed,
+                downloadSpeed: state.mihomoRuntime.downloadSpeed
+            ))
+        let excessSampleCount = state.mihomoRuntime.trafficSamples.count - 60
+        if excessSampleCount > 0 {
+            state.mihomoRuntime.trafficSamples.removeFirst(excessSampleCount)
+        }
+        state.mihomoRuntime.snapshot = snapshot
+        state.mihomoRuntime.lastUpdatedAt = snapshot.fetchedAt
+        state.mihomoRuntime.phase = .available
+    }
+
+    private func recordClosedConnections(
+        previous: [MihomoConnection],
+        current: [MihomoConnection],
+        closedAt: Date
+    ) {
+        guard !previous.isEmpty else { return }
+        let activeIDs = Set(current.map(\.id))
+        let removed = previous.filter { !activeIDs.contains($0.id) }
+        guard !removed.isEmpty else { return }
+
+        let removedIDs = Set(removed.map(\.id))
+        state.mihomoRuntime.closedConnections.removeAll {
+            removedIDs.contains($0.connection.id)
+        }
+        state.mihomoRuntime.closedConnections.append(
+            contentsOf: removed.map {
+                AppState.MihomoClosedConnection(connection: $0, closedAt: closedAt)
+            }
+        )
+        let overflow = state.mihomoRuntime.closedConnections.count - 200
+        if overflow > 0 {
+            state.mihomoRuntime.closedConnections.removeFirst(overflow)
+        }
+    }
+
+    private func applyProxyGroupDelays(_ delays: [String: Int], groupName: String) {
+        guard let snapshot = state.mihomoRuntime.snapshot else { return }
+        let groups = snapshot.proxyGroups.map { group in
+            guard group.name == groupName else { return group }
+            var measuredDelays: [String: Int] = [:]
+            for candidate in group.candidates {
+                measuredDelays[candidate] = delays[candidate] ?? 0
+            }
+            return MihomoProxyGroup(
+                name: group.name,
+                type: group.type,
+                selected: group.selected,
+                candidates: group.candidates,
+                delays: measuredDelays
+            )
+        }
+        state.mihomoRuntime.snapshot = MihomoRuntimeSnapshot(
+            version: snapshot.version,
+            proxyGroups: groups,
+            connections: snapshot.connections,
+            rules: snapshot.rules,
+            uploadTotal: snapshot.uploadTotal,
+            downloadTotal: snapshot.downloadTotal,
+            memoryUsage: snapshot.memoryUsage,
+            fetchedAt: snapshot.fetchedAt
+        )
+    }
+
+    private func updateProviders(names: [String], kind: MihomoProviderKind) {
+        let normalizedNames = Array(
+            Set(
+                names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            )
+        ).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        guard !normalizedNames.isEmpty else {
+            showNotice("当前没有可更新的 Provider")
+            return
+        }
+        guard let client = mihomoAPIClient, mihomoActionTask == nil else { return }
+
+        switch kind {
+        case .proxy:
+            state.mihomoRuntime.updatingProxyProviders = Set(normalizedNames)
+        case .rule:
+            state.mihomoRuntime.updatingRuleProviders = Set(normalizedNames)
+        }
+
+        mihomoActionTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                state.mihomoRuntime.updatingProxyProviders.removeAll()
+                state.mihomoRuntime.updatingRuleProviders.removeAll()
+                mihomoActionTask = nil
+            }
+            var failedNames: [String] = []
+            for name in normalizedNames {
+                do {
+                    try Task.checkCancellation()
+                    switch kind {
+                    case .proxy:
+                        try await client.updateProxyProvider(name: name)
+                        state.mihomoRuntime.updatingProxyProviders.remove(name)
+                    case .rule:
+                        try await client.updateRuleProvider(name: name)
+                        state.mihomoRuntime.updatingRuleProviders.remove(name)
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    failedNames.append(name)
+                    state.mihomoRuntime.updatingProxyProviders.remove(name)
+                    state.mihomoRuntime.updatingRuleProviders.remove(name)
+                }
+            }
+
+            do {
+                try Task.checkCancellation()
+                state.mihomoRuntime.providerSnapshot = try await client.providerSnapshot()
+                state.mihomoRuntime.providersPhase = .available
+            } catch is CancellationError {
+                return
+            } catch {
+                if state.mihomoRuntime.providerSnapshot == nil {
+                    state.mihomoRuntime.providersPhase = .failed(error.localizedDescription)
+                }
+                if failedNames.isEmpty {
+                    showNotice("Provider 已更新，但刷新列表失败：\(error.localizedDescription)", style: .error)
+                    return
+                }
+            }
+
+            if failedNames.isEmpty {
+                let target = normalizedNames.count == 1 ? normalizedNames[0] : "全部 Provider"
+                showNotice("已更新 \(target)", style: .success)
+            } else {
+                showNotice("以下 Provider 更新失败：\(failedNames.joined(separator: "、"))", style: .error)
+            }
         }
     }
 
@@ -1810,6 +2283,7 @@ final class AppModel {
             }
         case .unexpectedExit(let status, let output):
             cancelExitIPDetection()
+            stopMihomoMonitoring()
             let detail = output.isEmpty ? "状态码 \(status)" : output
             state.proxyCorePhase = .failed("本地代理意外退出：\(detail)")
             appendLog(source: .proxy, level: .error, message: "本地代理意外退出：\(detail)")

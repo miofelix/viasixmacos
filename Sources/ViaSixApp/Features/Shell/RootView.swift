@@ -134,6 +134,28 @@ struct RootView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            if model.state.isProxyRunning, let snapshot = model.state.mihomoRuntime.snapshot {
+                Divider()
+
+                HStack(spacing: 0) {
+                    sidebarMetric(
+                        icon: "arrow.up",
+                        value: RuntimePresentation.speed(model.state.mihomoRuntime.uploadSpeed),
+                        tone: .warning
+                    )
+                    sidebarMetric(
+                        icon: "arrow.down",
+                        value: RuntimePresentation.speed(model.state.mihomoRuntime.downloadSpeed),
+                        tone: .accent
+                    )
+                    sidebarMetric(
+                        icon: "link",
+                        value: "\(snapshot.connections.count)",
+                        tone: .positive
+                    )
+                }
+            }
+
             Button(action: performSidebarAction) {
                 Label(
                     sidebarPresentation.actionTitle,
@@ -166,6 +188,21 @@ struct RootView: View {
             )
             .stroke(VisualStyle.surfaceBorder)
         }
+    }
+
+    private func sidebarMetric(icon: String, value: String, tone: AppTone) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(tone.color)
+            Text(value)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
     private var detail: some View {
@@ -231,9 +268,18 @@ struct RootView: View {
     private func page(for section: AppSection) -> some View {
         switch section {
         case .overview:
-            OverviewView {
-                router.select(.nodes)
-            }
+            OverviewView(
+                onSelectNodes: { router.select(.nodes) },
+                onManageRuntime: { router.select(.settings) }
+            )
+        case .proxies:
+            ProxiesView()
+        case .profiles:
+            ProfilesView()
+        case .connections:
+            ConnectionsView()
+        case .rules:
+            RulesView()
         case .nodes:
             NodesView()
         case .logs:

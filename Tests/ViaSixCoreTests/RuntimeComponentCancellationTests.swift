@@ -4,6 +4,136 @@ import XCTest
 @testable import ViaSixCore
 
 final class RuntimeComponentCancellationTests: XCTestCase {
+    func testSingleComponentInstallPreservesTheOtherManagedComponent() async throws {
+        let root = makeRoot()
+        let archiveURL = root.appendingPathComponent("archive-fixture")
+        let runtimeURL = root.appendingPathComponent("Runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(at: runtimeURL, withIntermediateDirectories: true)
+        for payload in RuntimePayloadFile.allCases {
+            let url = runtimeURL.appendingPathComponent(payload.rawValue)
+            try runtimeFixtureData(for: payload, marker: "existing").write(to: url)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: url.path
+            )
+        }
+        let archiveData = Data("archive fixture".utf8)
+        try archiveData.write(to: archiveURL)
+        let manifest = makeManifest(sha256: RuntimeSHA256.hexDigest(of: archiveData))
+        let recorder = RuntimeComponentDownloadRecorder()
+        let manager = RuntimeComponentManager(
+            runtimeDirectory: runtimeURL,
+            manifest: manifest,
+            downloadHandler: { url in
+                await recorder.append(url)
+                return RuntimeDownloadedFile(fileURL: archiveURL, statusCode: 200)
+            },
+            archiveExtractor: { asset, _, destinationURL in
+                XCTAssertEqual(asset.component, .cfst)
+                try runtimeFixtureData(for: .cfst, marker: "downloaded").write(
+                    to: destinationURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue)
+                )
+            }
+        )
+
+        let status = try await manager.downloadAndInstall(
+            component: .cfst,
+            architecture: .arm64
+        )
+
+        XCTAssertTrue(status.isReady)
+        XCTAssertEqual(
+            try Data(contentsOf: runtimeURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue)),
+            runtimeFixtureData(for: .cfst, marker: "downloaded")
+        )
+        XCTAssertEqual(
+            try Data(
+                contentsOf: runtimeURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue)
+            ),
+            runtimeFixtureData(for: .mihomo, marker: "existing")
+        )
+        let requestedURLs = await recorder.urls
+        XCTAssertEqual(
+            requestedURLs,
+            [manifest.asset(for: .cfst, architecture: .arm64)!.downloadURL]
+        )
+    }
+
+    func testSingleComponentInstallDoesNotRequireTheOtherComponent() async throws {
+        let root = makeRoot()
+        let archiveURL = root.appendingPathComponent("archive-fixture")
+        let runtimeURL = root.appendingPathComponent("Runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let archiveData = Data("archive fixture".utf8)
+        try archiveData.write(to: archiveURL)
+        let manager = RuntimeComponentManager(
+            runtimeDirectory: runtimeURL,
+            manifest: makeManifest(sha256: RuntimeSHA256.hexDigest(of: archiveData)),
+            downloadHandler: { _ in
+                RuntimeDownloadedFile(fileURL: archiveURL, statusCode: 200)
+            },
+            archiveExtractor: { asset, _, destinationURL in
+                XCTAssertEqual(asset.component, .mihomo)
+                try runtimeFixtureData(for: .mihomo, marker: "downloaded").write(
+                    to: destinationURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue)
+                )
+            }
+        )
+
+        let status = try await manager.downloadAndInstall(
+            component: .mihomo,
+            architecture: .arm64
+        )
+
+        XCTAssertTrue(status.mihomoIsReady)
+        XCTAssertFalse(status.cfstIsReady)
+        XCTAssertEqual(status.missingFiles, [.cfst])
+    }
+
+    func testSingleComponentInstallIsNotBlockedByAnInvalidOtherComponent() async throws {
+        let root = makeRoot()
+        let archiveURL = root.appendingPathComponent("archive-fixture")
+        let runtimeURL = root.appendingPathComponent("Runtime", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(at: runtimeURL, withIntermediateDirectories: true)
+        let invalidMihomoURL = runtimeURL.appendingPathComponent(RuntimePayloadFile.mihomo.rawValue)
+        try Data("not an executable".utf8).write(to: invalidMihomoURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: invalidMihomoURL.path
+        )
+        let archiveData = Data("archive fixture".utf8)
+        try archiveData.write(to: archiveURL)
+        let manager = RuntimeComponentManager(
+            runtimeDirectory: runtimeURL,
+            manifest: makeManifest(sha256: RuntimeSHA256.hexDigest(of: archiveData)),
+            downloadHandler: { _ in
+                RuntimeDownloadedFile(fileURL: archiveURL, statusCode: 200)
+            },
+            archiveExtractor: { asset, _, destinationURL in
+                XCTAssertEqual(asset.component, .cfst)
+                try runtimeFixtureData(for: .cfst, marker: "downloaded").write(
+                    to: destinationURL.appendingPathComponent(RuntimePayloadFile.cfst.rawValue)
+                )
+            }
+        )
+
+        let status = try await manager.downloadAndInstall(
+            component: .cfst,
+            architecture: .arm64
+        )
+
+        XCTAssertTrue(status.cfstIsReady)
+        XCTAssertFalse(status.mihomoIsReady)
+        XCTAssertEqual(status.invalidFiles, [.mihomo])
+        XCTAssertEqual(try Data(contentsOf: invalidMihomoURL), Data("not an executable".utf8))
+    }
+
     func testDownloadAndInstallReportsStagesInOrder() async throws {
         let root = makeRoot()
         let archiveURL = root.appendingPathComponent("archive-fixture")
@@ -255,6 +385,14 @@ final class RuntimeComponentCancellationTests: XCTestCase {
                 payloadExpectations: [RuntimePayloadExpectation(file: .mihomo)]
             ),
         ])
+    }
+}
+
+private actor RuntimeComponentDownloadRecorder {
+    private(set) var urls: [URL] = []
+
+    func append(_ url: URL) {
+        urls.append(url)
     }
 }
 

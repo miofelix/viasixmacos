@@ -5,6 +5,7 @@ import ViaSixCore
 struct OverviewView: View {
     @Environment(AppModel.self) private var model
     let onSelectNodes: () -> Void
+    let onManageRuntime: () -> Void
 
     @State private var copiedEndpoint = false
     @State private var copiedExitIP = false
@@ -33,6 +34,7 @@ struct OverviewView: View {
                     connectionCard
                     routingModeCard
                     networkAccessCard
+                    runtimeActivityCard
                     exitIPCard
                 }
             }
@@ -408,6 +410,108 @@ struct OverviewView: View {
         }
     }
 
+    private var runtimeActivityCard: some View {
+        SurfaceCard {
+            CardHeader(
+                "实时活动",
+                systemImage: "waveform.path.ecg",
+                tone: model.state.isProxyRunning ? .positive : .neutral
+            ) {
+                if let version = model.state.mihomoRuntime.snapshot?.version {
+                    StatusBadge(version, tone: .neutral)
+                }
+            }
+            Divider()
+
+            if let snapshot = model.state.mihomoRuntime.snapshot {
+                VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
+                    HStack(spacing: VisualStyle.spacing8) {
+                        overviewRuntimeMetric(
+                            "上传",
+                            value: RuntimePresentation.speed(model.state.mihomoRuntime.uploadSpeed),
+                            icon: "arrow.up",
+                            tone: .warning
+                        )
+                        overviewRuntimeMetric(
+                            "下载",
+                            value: RuntimePresentation.speed(model.state.mihomoRuntime.downloadSpeed),
+                            icon: "arrow.down",
+                            tone: .accent
+                        )
+                        overviewRuntimeMetric(
+                            "连接",
+                            value: "\(snapshot.connections.count)",
+                            icon: "link",
+                            tone: .positive
+                        )
+                        overviewRuntimeMetric(
+                            "内存",
+                            value: RuntimePresentation.byteCount(snapshot.memoryUsage),
+                            icon: "memorychip",
+                            tone: .neutral
+                        )
+                    }
+
+                    RuntimeTrafficChart(samples: model.state.mihomoRuntime.trafficSamples)
+
+                    SettingRow(
+                        "累计流量",
+                        detail: "Mihomo 本次运行会话",
+                        systemImage: "chart.bar"
+                    ) {
+                        Text(
+                            "↑ \(RuntimePresentation.byteCount(snapshot.uploadTotal))  "
+                                + "↓ \(RuntimePresentation.byteCount(snapshot.downloadTotal))"
+                        )
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(VisualStyle.spacing16)
+            } else {
+                VStack(spacing: VisualStyle.spacing8) {
+                    if model.state.isProxyRunning {
+                        ProgressView()
+                        Text("正在连接 Mihomo Controller…")
+                    } else {
+                        Image(systemName: "waveform.path.ecg")
+                            .font(.title2)
+                            .foregroundStyle(.tertiary)
+                        Text("启动本地代理后显示实时流量与连接数")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 142)
+                .padding(VisualStyle.spacing16)
+            }
+        }
+    }
+
+    private func overviewRuntimeMetric(
+        _ title: String,
+        value: String,
+        icon: String,
+        tone: AppTone
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: icon)
+                .font(.caption)
+                .foregroundStyle(tone.color)
+            Text(value)
+                .font(.callout.weight(.semibold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tone.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(tone.color.opacity(0.2))
+        }
+    }
+
     private var exitIPCard: some View {
         SurfaceCard {
             VStack(alignment: .leading, spacing: 0) {
@@ -629,11 +733,10 @@ struct OverviewView: View {
                 .disabled(model.state.runtimeOperation?.canCancel != true)
         } else {
             Button(
-                runtimeInstallTitle,
-                systemImage: "arrow.down.circle",
-                action: model.installRuntime
+                "管理组件",
+                systemImage: "shippingbox",
+                action: onManageRuntime
             )
-            .disabled(runtimeInstallationDisabled)
         }
     }
 
@@ -732,6 +835,7 @@ struct OverviewView: View {
         guard model.state.launchPhase == .ready else { return true }
         if model.isRoutingModeChanging
             || model.isSystemProxyTransitioning
+            || model.isMihomoActionBusy
             || model.state.runtimeOperation != nil
             || model.isTemplateOperationBusy
             || model.switchingIP != nil
@@ -903,31 +1007,6 @@ struct OverviewView: View {
             || model.runtimeIntegrityIssue != nil
     }
 
-    private var runtimeInstallationDisabled: Bool {
-        guard model.state.launchPhase == .ready else { return true }
-        if model.state.runtimeOperation != nil
-            || model.isTemplateOperationBusy
-            || model.switchingIP != nil
-        {
-            return true
-        }
-        if model.isCfstBusy { return true }
-
-        switch model.state.speedTest.phase {
-        case .running, .stopping:
-            return true
-        case .idle, .failed:
-            break
-        }
-
-        switch model.state.proxyCorePhase {
-        case .validating, .starting, .running, .stopping:
-            return true
-        case .stopped, .failed:
-            return false
-        }
-    }
-
     private var isConfigurationTestRunning: Bool {
         switch model.state.configurationTest.phase {
         case .running, .stopping: true
@@ -998,14 +1077,7 @@ struct OverviewView: View {
         if let issue = model.runtimeIntegrityIssue {
             return issue
         }
-        return "节点测速与本地代理需要运行组件。"
-    }
-
-    private var runtimeInstallTitle: String {
-        if model.state.runtimeOperationError != nil {
-            return model.state.runtimePhase == .ready ? "重试更新" : "重试安装"
-        }
-        return model.state.runtimePhase == .ready ? "重新安装组件" : "安装组件"
+        return "CloudflareSpeedTest 与 Mihomo 可在设置中分别安装或指定自定义文件。"
     }
 
     private var runtimeStatusTone: AppTone {

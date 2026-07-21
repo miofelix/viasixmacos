@@ -34,6 +34,18 @@ public struct MihomoServerConfiguration: Equatable, Sendable {
 
     public var data: Data { canonicalData }
 
+    public var summary: MihomoProfileSummary {
+        let root = rawMapping()
+        let proxies = root.mappings("proxies") ?? []
+        return MihomoProfileSummary(
+            inlineProxyCount: proxies.count,
+            providerCount: root.mapping("proxy-providers")?.count ?? 0,
+            groupCount: root.mappings("proxy-groups")?.count ?? 0,
+            ruleCount: (root["rules"] as? [String])?.count ?? 0,
+            primaryProxyName: proxies.first?.string("name")
+        )
+    }
+
     /// Whether ViaSix can safely apply a speed-test result by replacing the
     /// first inline proxy's `server` value. Provider-only profiles remain
     /// launchable, but their remote contents are intentionally not rewritten.
@@ -244,6 +256,11 @@ public struct MihomoServerConfiguration: Equatable, Sendable {
             ],
         ]
 
+        if projection == .user, let controller = options.externalController {
+            runtime["external-controller"] = "127.0.0.1:\(controller.port)"
+            runtime["secret"] = controller.secret
+        }
+
         // Direct mode must be independent from every remote proxy and provider.
         // Besides reducing attack surface, this guarantees that selecting
         // direct cannot trigger subscription refreshes or outbound handshakes.
@@ -405,6 +422,15 @@ public struct MihomoServerConfiguration: Equatable, Sendable {
         guard (1...65_535).contains(options.mixedPort) else {
             throw MihomoConfigurationError.invalidMixedPort
         }
+        if let controller = options.externalController {
+            guard (1...65_535).contains(controller.port), controller.port != options.mixedPort else {
+                throw MihomoConfigurationError.invalidControllerPort
+            }
+            let secret = controller.secret.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !secret.isEmpty, secret.utf8.count <= 512 else {
+                throw MihomoConfigurationError.invalidControllerSecret
+            }
+        }
         if projection == .privilegedTun {
             guard let tun = options.tun else {
                 throw MihomoConfigurationError.missingTunConfiguration
@@ -489,5 +515,27 @@ public struct MihomoServerConfiguration: Equatable, Sendable {
         }
         let prefix = stem.isEmpty ? "provider" : String(stem.prefix(64))
         return "\(prefix)-\(String(hash, radix: 16))"
+    }
+}
+
+public struct MihomoProfileSummary: Equatable, Sendable {
+    public let inlineProxyCount: Int
+    public let providerCount: Int
+    public let groupCount: Int
+    public let ruleCount: Int
+    public let primaryProxyName: String?
+
+    public init(
+        inlineProxyCount: Int,
+        providerCount: Int,
+        groupCount: Int,
+        ruleCount: Int,
+        primaryProxyName: String?
+    ) {
+        self.inlineProxyCount = inlineProxyCount
+        self.providerCount = providerCount
+        self.groupCount = groupCount
+        self.ruleCount = ruleCount
+        self.primaryProxyName = primaryProxyName
     }
 }
