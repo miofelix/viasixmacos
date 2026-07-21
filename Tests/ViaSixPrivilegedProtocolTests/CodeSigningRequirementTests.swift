@@ -30,7 +30,7 @@ final class CodeSigningRequirementTests: XCTestCase {
     }
 
     func testProtocolConstantsRemainStable() {
-        XCTAssertEqual(TunHelperConstants.protocolVersion, 1)
+        XCTAssertEqual(TunHelperConstants.protocolVersion, 2)
         XCTAssertEqual(
             TunHelperConstants.launchDaemonPlistName,
             "com.felix.viasix.tun-helper.plist"

@@ -21,7 +21,7 @@ final class TunXPCListener: NSObject, NSXPCListenerDelegate {
         guard
             let userIdentifier = identityValidator.validatedUserIdentifier(for: newConnection)
         else { return false }
-        newConnection.exportedInterface = NSXPCInterface(with: TunHelperXPCProtocol.self)
+        newConnection.exportedInterface = TunHelperXPCInterfaceFactory.make()
         newConnection.exportedObject = TunHelperService(
             clientUserIdentifier: userIdentifier,
             journalController: journalController

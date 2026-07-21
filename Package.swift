@@ -71,7 +71,11 @@ let package = Package(
         ),
         .executableTarget(
             name: "ViaSixTunHelper",
-            dependencies: ["ViaSixPrivilegedProtocol", "ViaSixTunHelperSupport"]
+            dependencies: [
+                "ViaSixMihomoConfig",
+                "ViaSixPrivilegedProtocol",
+                "ViaSixTunHelperSupport",
+            ]
         ),
         .testTarget(
             name: "ViaSixCoreTests",
@@ -83,7 +87,12 @@ let package = Package(
         ),
         .testTarget(
             name: "ViaSixAppTests",
-            dependencies: ["ViaSixApp", "ViaSixCore", "ViaSixMihomoConfig"]
+            dependencies: [
+                "ViaSixApp",
+                "ViaSixCore",
+                "ViaSixMihomoConfig",
+                "ViaSixPrivilegedProtocol",
+            ]
         ),
         .testTarget(
             name: "ViaSixPrivilegedProtocolTests",
@@ -92,6 +101,15 @@ let package = Package(
         .testTarget(
             name: "ViaSixTunHelperSupportTests",
             dependencies: ["ViaSixTunHelperSupport"]
+        ),
+        .testTarget(
+            name: "ViaSixTunHelperTests",
+            dependencies: [
+                "ViaSixMihomoConfig",
+                "ViaSixPrivilegedProtocol",
+                "ViaSixTunHelper",
+                "ViaSixTunHelperSupport",
+            ]
         ),
     ]
 )
