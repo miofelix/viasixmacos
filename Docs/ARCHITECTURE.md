@@ -216,6 +216,6 @@ local-proxy.json + 模式 ─┤                  + 可选当前节点
 
 ## 分发模型
 
-当前设计面向 Developer ID 签名、公证和非 Mac App Store 分发。包含 LaunchDaemon 的 app 必须公证，并建议安装到 `/Applications`；helper 或 plist 更新后必须先异步 unregister，等待完成后再 register。Mihomo 和 CFST 当前都从 Application Support 以普通用户权限运行，helper 不能执行用户可写 Runtime 中的程序。
+当前设计面向 Developer ID 签名、公证和非 Mac App Store 分发。包含 LaunchDaemon 的 app 必须公证，并建议安装到 `/Applications`；helper 或 plist 更新后必须先异步 unregister，等待完成后再 register。普通本机代理仍可使用 Application Support 中由用户管理的 Mihomo，CFST 也以普通用户权限运行；helper 不能执行用户可写 Runtime 中的程序。供特权路径使用的固定 Mihomo 位于 app 的 `Contents/Library/HelperTools/`，并由签名后的 `PrivilegedRuntime.plist` 绑定完整摘要和 CDHash。
 
-开发运行使用 SwiftPM 的 `Bundle.module` 读取资源。打包构建定义 `VIASIX_PACKAGED_APP`，只从 `Bundle.main` 读取资源并启用 dead stripping，避免把本机 SwiftPM 资源路径带入分发二进制。应用包验证会检查默认本机配置、许可证、签名、架构和本地路径泄漏，并拒绝重新打包旧 Xray 默认资源。
+开发运行使用 SwiftPM 的 `Bundle.module` 读取资源。打包构建定义 `VIASIX_PACKAGED_APP`，只从 `Bundle.main` 读取资源并启用 dead stripping，避免把本机 SwiftPM 资源路径带入分发二进制。应用包验证会检查默认本机配置、许可证、三层签名、Mihomo 版本与架构、运行时清单摘要/CDHash 和本地路径泄漏，并拒绝重新打包旧 Xray 默认资源。

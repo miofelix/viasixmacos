@@ -59,7 +59,7 @@ make app
 open dist/ViaSix.app
 ```
 
-`make app` 默认生成 ad-hoc 签名包，适用于本地开发与冒烟测试。正式签名和公证流程见[发布指南](RELEASING.md)。
+`make app` 默认生成优化后的 ad-hoc 签名包，`make app-debug` 生成调试包，均适用于本地开发与冒烟测试。打包时会取得当前架构的固定 Mihomo v1.19.29；已有上游二进制时可设置 `VIASIX_MIHOMO_SOURCE=/absolute/path/to/mihomo`，但大小、SHA-256、Mach-O 架构和版本校验不会因此放宽。正式签名和公证流程见[发布指南](RELEASING.md)。
 
 打包脚本会定义 `VIASIX_PACKAGED_APP`，使 app bundle 只从 `Bundle.main` 读取默认资源，避免 SwiftPM 的开发期 `Bundle.module` 路径泄露本机检出目录。修改资源加载或打包命令时必须保留对应验证。
 
@@ -143,7 +143,7 @@ SwiftPM 的主要边界：
 
 ## 运行组件
 
-运行组件版本、下载地址、目标架构、压缩格式、压缩包哈希和 payload 预期位于：
+普通用户运行组件的版本、下载地址、目标架构、压缩格式、压缩包哈希和 payload 预期位于：
 
 ```text
 Sources/ViaSixCore/Runtime/RuntimeManifest.swift
@@ -153,6 +153,8 @@ Sources/ViaSixCore/Runtime/RuntimeManifest.swift
 
 - CloudflareSpeedTest `v2.3.5`
 - Mihomo `v1.19.29`
+
+应用包中的特权 Mihomo 由 `Scripts/fetch-mihomo.sh` 独立准备。该脚本与 `RuntimeManifest.swift` 必须保持同一版本、资产 URL、压缩包 SHA-256、payload 大小和 SHA-256；它还会拒绝错误 Mach-O 架构或版本输出。签名后的文件固定放在 `Contents/Library/HelperTools/com.felix.viasix.mihomo`，完整摘要和 CDHash 写入由外层 app seal 保护的 `Contents/Resources/PrivilegedRuntime.plist`。
 
 组件解析优先级：
 
@@ -175,6 +177,7 @@ Sources/ViaSixCore/Runtime/RuntimeManifest.swift
 更新固定清单时，必须同时：
 
 - 更新 `RuntimeManifest.swift` 的版本、URL、资产名、压缩格式和双重校验值
+- 同步更新 `Scripts/fetch-mihomo.sh` 的嵌入资产清单与打包验签预期
 - 更新测试中的预期值
 - 更新[第三方声明](../THIRD_PARTY_NOTICES.md)和离线许可证
 - 在 arm64 与 x86_64 对应环境验证下载、校验和启动

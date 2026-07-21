@@ -26,6 +26,9 @@ swift build "${build_arguments[@]}"
 binary_directory=$(swift build "${build_arguments[@]}" --show-bin-path)
 binary_path="$binary_directory/ViaSix"
 helper_binary_path="$binary_directory/ViaSixTunHelper"
+runtime_relative_path="Contents/Library/HelperTools/com.felix.viasix.mihomo"
+runtime_bundle_identifier="com.felix.viasix.mihomo"
+runtime_version="1.19.29"
 
 if [[ ! -x "$binary_path" ]]; then
     print -u2 "ViaSix executable was not produced at $binary_path"
@@ -33,6 +36,13 @@ if [[ ! -x "$binary_path" ]]; then
 fi
 if [[ ! -x "$helper_binary_path" ]]; then
     print -u2 "ViaSix TUN helper was not produced at $helper_binary_path"
+    exit 1
+fi
+
+application_architectures=$(/usr/bin/lipo -archs "$binary_path")
+if [[ "$application_architectures" != "arm64" && "$application_architectures" != "x86_64" ]]; then
+    print -u2 \
+        "Packaged applications must contain exactly one supported architecture; found: $application_architectures"
     exit 1
 fi
 
@@ -52,6 +62,9 @@ cp "$binary_path" "$contents_dir/MacOS/ViaSix"
 cp \
     "$helper_binary_path" \
     "$contents_dir/Library/HelperTools/com.felix.viasix.tun-helper"
+"$project_root/Scripts/fetch-mihomo.sh" \
+    "$app_bundle/$runtime_relative_path" \
+    "$application_architectures"
 cp \
     "$project_root/Packaging/LaunchDaemons/com.felix.viasix.tun-helper.plist" \
     "$contents_dir/Library/LaunchDaemons/com.felix.viasix.tun-helper.plist"
@@ -94,7 +107,9 @@ for resource_name in ip.txt ipv6.txt local-proxy.json; do
 done
 
 helper_path="$contents_dir/Library/HelperTools/com.felix.viasix.tun-helper"
-chmod 755 "$contents_dir/MacOS/ViaSix" "$helper_path"
+mihomo_path="$app_bundle/$runtime_relative_path"
+privileged_runtime_manifest="$contents_dir/Resources/PrivilegedRuntime.plist"
+chmod 755 "$contents_dir/MacOS/ViaSix" "$helper_path" "$mihomo_path"
 if [[ "$configuration" == "release" ]]; then
     /usr/bin/strip -S -x "$contents_dir/MacOS/ViaSix" "$helper_path"
 fi
@@ -102,16 +117,23 @@ codesign_identity=${VIASIX_CODESIGN_IDENTITY:--}
 if [[ "$codesign_identity" == "-" ]]; then
     codesign \
         --force \
+        --identifier "$runtime_bundle_identifier" \
+        --sign - \
+        "$mihomo_path"
+    codesign \
+        --force \
         --identifier com.felix.viasix.tun-helper \
         --entitlements "$project_root/Packaging/Entitlements/ViaSixTunHelper.entitlements" \
         --sign - \
         "$helper_path"
+else
     codesign \
         --force \
-        --entitlements "$project_root/Packaging/Entitlements/ViaSix.entitlements" \
-        --sign - \
-        "$app_bundle"
-else
+        --options runtime \
+        --timestamp \
+        --identifier "$runtime_bundle_identifier" \
+        --sign "$codesign_identity" \
+        "$mihomo_path"
     codesign \
         --force \
         --options runtime \
@@ -120,6 +142,35 @@ else
         --entitlements "$project_root/Packaging/Entitlements/ViaSixTunHelper.entitlements" \
         --sign "$codesign_identity" \
         "$helper_path"
+fi
+
+mihomo_sha256=$(/usr/bin/shasum -a 256 "$mihomo_path" | /usr/bin/awk '{print $1}')
+mihomo_signing_details=$(codesign -d --verbose=4 "$mihomo_path" 2>&1)
+mihomo_cdhash=$(print -r -- "$mihomo_signing_details" | sed -n 's/^CDHash=//p' | head -n 1)
+sha256_pattern='^[0-9a-f]{64}$'
+cdhash_pattern='^[0-9a-f]{40}$'
+if [[ ! "$mihomo_sha256" =~ $sha256_pattern || ! "$mihomo_cdhash" =~ $cdhash_pattern ]]; then
+    print -u2 "Could not derive the signed Mihomo integrity identity"
+    exit 1
+fi
+
+plutil -create xml1 "$privileged_runtime_manifest"
+plutil -insert SchemaVersion -integer 1 "$privileged_runtime_manifest"
+plutil -insert RuntimeVersion -string "$runtime_version" "$privileged_runtime_manifest"
+plutil -insert Architecture -string "$application_architectures" "$privileged_runtime_manifest"
+plutil -insert RelativePath -string "$runtime_relative_path" "$privileged_runtime_manifest"
+plutil -insert BundleIdentifier -string "$runtime_bundle_identifier" "$privileged_runtime_manifest"
+plutil -insert SHA256 -string "$mihomo_sha256" "$privileged_runtime_manifest"
+plutil -insert CDHash -string "$mihomo_cdhash" "$privileged_runtime_manifest"
+chmod 644 "$privileged_runtime_manifest"
+
+if [[ "$codesign_identity" == "-" ]]; then
+    codesign \
+        --force \
+        --entitlements "$project_root/Packaging/Entitlements/ViaSix.entitlements" \
+        --sign - \
+        "$app_bundle"
+else
     codesign \
         --force \
         --options runtime \

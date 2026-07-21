@@ -36,7 +36,7 @@ CloudflareSpeedTest 是 XIU2 维护的独立第三方项目，并非 Cloudflare 
 - 上游许可证：https://github.com/MetaCubeX/mihomo/blob/v1.19.29/LICENSE
 - 离线原文：[Mihomo · GPL-3.0](ThirdPartyLicenses/mihomo-GPL-3.0.txt)
 
-ViaSix 按 CPU 架构下载 Mihomo v1.19.29 的未修改 macOS 正式发布包，校验压缩包与可执行文件后安装到当前用户的应用数据目录，并以当前用户权限运行本地代理。若发布者把 ViaSix 与 Mihomo 二进制一同分发，或以其他方式构成 GPLv3 所涵盖的分发，发布者有责任满足对应的源码和声明义务。
+ViaSix 构建流程按 CPU 架构取得 Mihomo v1.19.29 的 macOS 正式发布包，在校验压缩包和原始可执行 payload 后为其添加 ViaSix 发布者签名，并作为嵌套代码放入应用包。本机代理也可以使用当前用户应用数据目录中的受管副本。ViaSix 分发包包含 Mihomo 二进制，发布者有责任满足对应的 GPLv3 源码和声明义务。
 
 ## 第三方网络服务
 
