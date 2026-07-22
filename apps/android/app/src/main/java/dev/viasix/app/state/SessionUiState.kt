@@ -9,6 +9,8 @@ import dev.viasix.core.net.Ipv6Address
 import dev.viasix.core.profile.ProfileSummary
 import dev.viasix.core.profile.ProfileSummaryParser
 import dev.viasix.core.projection.RoutingMode
+import dev.viasix.core.speedtest.SpeedTestParameters
+import dev.viasix.core.speedtest.SpeedTestResult
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -61,6 +63,20 @@ data class DelayTestState(
 )
 
 /**
+ * CloudflareSpeedTest (IPv6 优选) session state.
+ * Results feed the same apply-node / reconnect path as manual candidates.
+ */
+data class SpeedTestUiState(
+    val isRunning: Boolean = false,
+    val message: String = "需要先执行 node scripts/fetch-cfst.mjs 下载 CFST（arm64）",
+    val results: List<SpeedTestResult> = emptyList(),
+    val ipRange: String = SpeedTestParameters.DEFAULT_IPV6_RANGE,
+    val useBundledList: Boolean = false,
+    val disableDownload: Boolean = false,
+    val binaryReady: Boolean = false,
+)
+
+/**
  * Full UI state for the Android shell. Session fields persist via [SessionPrefs];
  * runtime is polled from the VPN service + controller.
  */
@@ -73,6 +89,7 @@ data class SessionUiState(
     val runtime: RuntimeSnapshot = RuntimeSnapshot(),
     val exitIP: ExitIPState = ExitIPState(),
     val delayTest: DelayTestState = DelayTestState(),
+    val speedTest: SpeedTestUiState = SpeedTestUiState(),
     val statusMessage: String = "就绪",
     val statusLevel: LogLevel = LogLevel.Info,
     val logs: List<LogEntry> = emptyList(),
@@ -99,6 +116,9 @@ data class SessionUiState(
             candidateAddresses = candidateAddresses,
             exitIPEndpoint = exitIP.endpoint,
             exitIPDetectionMode = exitIP.mode.wire,
+            lastSpeedIpRange = speedTest.ipRange,
+            speedUseBundledList = speedTest.useBundledList,
+            speedDisableDownload = speedTest.disableDownload,
         )
 
     companion object {
@@ -132,6 +152,12 @@ data class SessionUiState(
                     ExitIPState(
                         mode = ExitIPDetectionMode.parse(prefs.exitIPDetectionMode),
                         endpoint = prefs.exitIPEndpoint,
+                    ),
+                speedTest =
+                    SpeedTestUiState(
+                        ipRange = prefs.lastSpeedIpRange,
+                        useBundledList = prefs.speedUseBundledList,
+                        disableDownload = prefs.speedDisableDownload,
                     ),
             )
         }

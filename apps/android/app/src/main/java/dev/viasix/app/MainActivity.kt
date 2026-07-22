@@ -15,6 +15,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import dev.viasix.app.cfst.CfstInstaller
+import dev.viasix.app.cfst.CfstRunOutcome
+import dev.viasix.app.cfst.CfstRunner
 import dev.viasix.app.mihomo.ControllerClient
 import dev.viasix.app.mihomo.TrafficSampler
 import dev.viasix.app.mihomo.TrafficSnapshot
@@ -36,6 +39,7 @@ import dev.viasix.core.projection.MihomoProjection
 import dev.viasix.core.projection.ProjectError
 import dev.viasix.core.projection.ProjectOptions
 import dev.viasix.core.projection.RoutingMode
+import dev.viasix.core.speedtest.SpeedTestParameters
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,6 +49,7 @@ class MainActivity : ComponentActivity() {
     private var pendingStart: Intent? = null
     private lateinit var prefsStore: SessionPrefsStore
     private val trafficSampler = TrafficSampler()
+    private val cfstRunner = CfstRunner()
     private var lastImportedEventId: Long = 0L
     private var wasRunning: Boolean = false
 
@@ -323,6 +328,111 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            fun startSpeedTest() {
+                if (state.speedTest.isRunning || cfstRunner.isRunning) {
+                    update {
+                        it.appendLog("测速已在进行中", LogLevel.Warning, LogSource.Node)
+                    }
+                    return
+                }
+                val useBundled = state.speedTest.useBundledList
+                val ipRange = state.speedTest.ipRange
+                val disableDownload = state.speedTest.disableDownload
+                update {
+                    it.copy(
+                        speedTest =
+                            it.speedTest.copy(
+                                isRunning = true,
+                                message = "正在准备 CFST…",
+                            ),
+                    ).appendLog("开始 IPv6 优选测速", LogLevel.Info, LogSource.Node)
+                }
+                scope.launch {
+                    val outcome =
+                        withContext(Dispatchers.IO) {
+                            try {
+                                val install = CfstInstaller.installIfNeeded(this@MainActivity)
+                                val parameters =
+                                    if (useBundled) {
+                                        SpeedTestParameters(
+                                            ipFile = install.ipv6List.absolutePath,
+                                            disableDownload = disableDownload,
+                                        )
+                                    } else {
+                                        SpeedTestParameters(
+                                            ipRange = ipRange,
+                                            disableDownload = disableDownload,
+                                        )
+                                    }
+                                val work = CfstInstaller.workDir(this@MainActivity)
+                                cfstRunner.run(install.binary, work, parameters) to install
+                            } catch (error: Exception) {
+                                CfstRunOutcome.Failed(error.message ?: "CFST 安装失败") to null
+                            }
+                        }
+                    val (result, install) = outcome
+                    when (result) {
+                        is CfstRunOutcome.Success -> {
+                            update {
+                                it.copy(
+                                    speedTest =
+                                        it.speedTest.copy(
+                                            isRunning = false,
+                                            message = result.message,
+                                            results = result.results,
+                                            binaryReady = true,
+                                        ),
+                                ).appendLog(
+                                    result.message,
+                                    LogLevel.Success,
+                                    LogSource.Node,
+                                )
+                            }
+                        }
+                        is CfstRunOutcome.Cancelled -> {
+                            update {
+                                it.copy(
+                                    speedTest =
+                                        it.speedTest.copy(
+                                            isRunning = false,
+                                            message = "测速已取消",
+                                            binaryReady = install != null,
+                                        ),
+                                ).appendLog("测速已取消", LogLevel.Warning, LogSource.Node)
+                            }
+                        }
+                        is CfstRunOutcome.Failed -> {
+                            update {
+                                it.copy(
+                                    speedTest =
+                                        it.speedTest.copy(
+                                            isRunning = false,
+                                            message = result.message,
+                                            binaryReady = install != null,
+                                        ),
+                                ).appendLog(
+                                    "测速失败：${result.message}",
+                                    LogLevel.Error,
+                                    LogSource.Node,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            fun stopSpeedTest() {
+                val cancelled = cfstRunner.requestCancel()
+                if (cancelled) {
+                    logOnly {
+                        it.copy(
+                            speedTest =
+                                it.speedTest.copy(message = "正在停止测速…"),
+                        ).appendLog("正在停止测速…", LogLevel.Info, LogSource.Node)
+                    }
+                }
+            }
+
             fun detectExitIp() {
                 update {
                     it.copy(exitIP = it.exitIP.copy(isDetecting = true, errorMessage = null))
@@ -477,6 +587,17 @@ class MainActivity : ComponentActivity() {
                             .appendLog("已移除候选 $address", LogLevel.Info, LogSource.Node)
                     }
                 },
+                onSpeedIpRangeChange = { range ->
+                    update { it.copy(speedTest = it.speedTest.copy(ipRange = range)) }
+                },
+                onSpeedUseBundledChange = { bundled ->
+                    update { it.copy(speedTest = it.speedTest.copy(useBundledList = bundled)) }
+                },
+                onSpeedDisableDownloadChange = { disable ->
+                    update { it.copy(speedTest = it.speedTest.copy(disableDownload = disable)) }
+                },
+                onStartSpeedTest = ::startSpeedTest,
+                onStopSpeedTest = ::stopSpeedTest,
                 onRoutingModeChange = ::patchRoutingMode,
                 onFullTunnelChange = { full -> update { it.copy(fullTunnel = full) } },
                 onStart = { startVpn("connect") },

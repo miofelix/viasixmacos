@@ -16,6 +16,11 @@ data class SessionPrefs(
     val candidateAddresses: List<String> = emptyList(),
     val exitIPEndpoint: String = "https://api.myip.la/cn?json",
     val exitIPDetectionMode: String = "automatic",
+    /** Last CFST IP range (comma-separated CIDRs / addresses). */
+    val lastSpeedIpRange: String = "2606:4700::/32",
+    /** When true, CFST uses bundled ipv6.txt (`-f`) instead of [lastSpeedIpRange]. */
+    val speedUseBundledList: Boolean = false,
+    val speedDisableDownload: Boolean = false,
 ) {
     fun toJson(): JSONObject =
         JSONObject()
@@ -31,6 +36,9 @@ data class SessionPrefs(
             )
             .put("exitIPEndpoint", exitIPEndpoint)
             .put("exitIPDetectionMode", exitIPDetectionMode)
+            .put("lastSpeedIpRange", lastSpeedIpRange)
+            .put("speedUseBundledList", speedUseBundledList)
+            .put("speedDisableDownload", speedDisableDownload)
 
     companion object {
         fun fromJson(raw: String?): SessionPrefs {
@@ -55,6 +63,11 @@ data class SessionPrefs(
                         o.optString("exitIPEndpoint", "https://api.myip.la/cn?json")
                             .ifBlank { "https://api.myip.la/cn?json" },
                     exitIPDetectionMode = o.optString("exitIPDetectionMode", "automatic"),
+                    lastSpeedIpRange =
+                        o.optString("lastSpeedIpRange", "2606:4700::/32")
+                            .ifBlank { "2606:4700::/32" },
+                    speedUseBundledList = o.optBoolean("speedUseBundledList", false),
+                    speedDisableDownload = o.optBoolean("speedDisableDownload", false),
                 )
             } catch (_: Exception) {
                 SessionPrefs()

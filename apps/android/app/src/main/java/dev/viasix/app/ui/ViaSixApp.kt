@@ -37,6 +37,11 @@ fun ViaSixApp(
     onSelectedAddressChange: (String) -> Unit,
     onApplyNode: (address: String, reconnect: Boolean) -> Unit,
     onRemoveCandidate: (String) -> Unit,
+    onSpeedIpRangeChange: (String) -> Unit = {},
+    onSpeedUseBundledChange: (Boolean) -> Unit = {},
+    onSpeedDisableDownloadChange: (Boolean) -> Unit = {},
+    onStartSpeedTest: () -> Unit = {},
+    onStopSpeedTest: () -> Unit = {},
     onRoutingModeChange: (RoutingMode) -> Unit,
     onFullTunnelChange: (Boolean) -> Unit,
     onStart: () -> Unit,
@@ -135,6 +140,11 @@ fun ViaSixApp(
                             onApplyNode = onApplyNode,
                             onRemoveCandidate = onRemoveCandidate,
                             onCopy = onCopy,
+                            onSpeedIpRangeChange = onSpeedIpRangeChange,
+                            onSpeedUseBundledChange = onSpeedUseBundledChange,
+                            onSpeedDisableDownloadChange = onSpeedDisableDownloadChange,
+                            onStartSpeedTest = onStartSpeedTest,
+                            onStopSpeedTest = onStopSpeedTest,
                         )
                     AppSection.PROFILES ->
                         ProfilesScreen(

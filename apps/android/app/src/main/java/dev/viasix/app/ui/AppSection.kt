@@ -24,7 +24,7 @@ enum class AppSection(
     ),
     NODES(
         title = "IPv6 优选",
-        subtitle = "选择用于承载流量的 IPv6 地址",
+        subtitle = "测速并选择 IPv6 地址",
         icon = Icons.Outlined.Hub,
     ),
     PROFILES(
