@@ -752,8 +752,17 @@ fn set_virtual_network(
     services: State<'_, SharedServices>,
     enabled: bool,
 ) -> Result<VirtualNetworkStatus, String> {
-    let mut mgr = services.virtual_network.lock();
-    let result = if enabled { mgr.enable() } else { mgr.disable() };
+    // Single lock scope: parking_lot::Mutex is not re-entrant.
+    let (result, preflight) = {
+        let mut mgr = services.virtual_network.lock();
+        let result = if enabled {
+            mgr.enable()
+        } else {
+            mgr.disable()
+        };
+        let preflight = result.as_ref().ok().map(|_| mgr.preflight());
+        (result, preflight)
+    };
     match &result {
         Ok(status) => {
             push_log(
@@ -763,14 +772,15 @@ fn set_virtual_network(
                 "network",
                 status.message.clone(),
             );
-            let pre = services.virtual_network.lock().preflight();
-            push_log(
-                &services,
-                Some(&app),
-                if pre.ready { "info" } else { "warn" },
-                "network",
-                pre.message.clone(),
-            );
+            if let Some(pre) = preflight {
+                push_log(
+                    &services,
+                    Some(&app),
+                    if pre.ready { "info" } else { "warn" },
+                    "network",
+                    pre.message.clone(),
+                );
+            }
         }
         Err(err) => push_log(
             &services,

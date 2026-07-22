@@ -236,4 +236,42 @@ mod tests {
         }
         let _ = fs::remove_dir_all(dir);
     }
+
+    /// Mirrors the fixed set_virtual_network pattern: enable/disable then
+    /// preflight under the *same* guard (no second lock).
+    #[test]
+    fn enable_then_preflight_under_single_guard() {
+        use parking_lot::Mutex;
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("viasix-vn-guard-{stamp}"));
+        let _ = fs::create_dir_all(&dir);
+        if cfg!(windows) {
+            fs::write(dir.join("wintun.dll"), b"fake").unwrap();
+        }
+        let locked = Mutex::new(VirtualNetworkManager::new(dir.clone()));
+        let (status, pre) = {
+            let mut mgr = locked.lock();
+            let status = if cfg!(windows) {
+                mgr.enable().expect("enable with wintun")
+            } else {
+                mgr.disable().expect("disable always ok")
+            };
+            // Must not re-lock `locked` here — that would deadlock with parking_lot.
+            let pre = mgr.preflight();
+            (status, pre)
+        };
+        if cfg!(windows) {
+            assert!(status.enabled);
+            assert!(pre.requested);
+            assert!(pre.ready, "{pre:?}");
+        } else {
+            assert!(!status.enabled);
+            assert!(pre.ready);
+            assert!(!pre.requested);
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
 }
