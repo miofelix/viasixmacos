@@ -15,6 +15,7 @@
 - 跨端 `make projection-test`：macOS + Windows + Android 契约用例一键校验；Android mihomo 资产拉取脚本占位。
 - Android：从 assets 安装 mihomo、VpnService 内启停内核，并通过 `setHttpProxy` 发布 mixed 端口。
 - Android：全量隧道用户态转发（IPv4 TCP→mihomo SOCKS，DNS `protect` 出站），可切换仅 HTTP 代理模式。
+- Windows：NSIS CI 流水线、sidecar 资源打包路径修复、发布说明 `apps/windows/Docs/RELEASING.md`。
 - 首页新增实时流量统计：上下行速率、近 10 分钟流量曲线、会话累计上传/下载与 Mihomo 内存占用。
 - 连接运行中菜单栏显示两行上下行速率；菜单内同步展示速率摘要。
 - 通过 Mihomo external-controller 的 `/traffic`、`/memory` 与 `/connections`（仅 totals）WebSocket 订阅采集数据，断线自动重连。

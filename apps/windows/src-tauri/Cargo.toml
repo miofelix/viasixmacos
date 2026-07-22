@@ -1,6 +1,7 @@
 [package]
 name = "viasix-windows"
 version = "0.1.1"
+# Keep in sync with package.json and tauri.conf.json
 description = "ViaSix Windows client (MVP)"
 authors = ["ViaSix contributors"]
 edition = "2021"

@@ -24,4 +24,9 @@ make windows-skeleton
 cd apps/windows && pnpm install && pnpm prebuild && pnpm app:dev
 ```
 
+## 打包 / CI
+
+- 本地与 CI 说明：[apps/windows/Docs/RELEASING.md](../../apps/windows/Docs/RELEASING.md)
+- Actions：`.github/workflows/windows-build.yml`（NSIS + exe artifact）
+
 配置与投影行为必须符合 [`contracts/`](../../contracts)。

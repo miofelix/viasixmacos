@@ -15,6 +15,7 @@ CONTRACTS_DIR := contracts
 	macos-clean \
 	windows-skeleton \
 	windows-test \
+	windows-build-docs \
 	android-skeleton \
 	android-test \
 	android-assemble \
@@ -33,6 +34,7 @@ help:
 	@echo "  make contracts-check   - verify contracts layout and fixtures"
 	@echo "  make windows-skeleton  - verify Windows app tree"
 	@echo "  make windows-test      - Rust contract projection tests (Windows host crate)"
+	@echo "  make windows-build-docs - verify Windows release docs exist"
 	@echo "  make android-skeleton  - verify Android app tree"
 	@echo "  make android-test      - JVM contract projection tests (:core)"
 	@echo "  make android-assemble  - assemble debug APK (requires Android SDK)"
@@ -83,6 +85,11 @@ windows-skeleton:
 
 windows-test:
 	cargo test --manifest-path "$(WINDOWS_DIR)/src-tauri/Cargo.toml"
+
+windows-build-docs:
+	@test -f "$(WINDOWS_DIR)/Docs/RELEASING.md"
+	@test -f ".github/workflows/windows-build.yml"
+	@echo "windows build docs OK"
 
 android-skeleton:
 	@test -f "$(ANDROID_DIR)/README.md"

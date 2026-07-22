@@ -141,39 +141,51 @@ async fn detect_exit_ip(endpoints: Option<Vec<String>>) -> Result<exit_ip::ExitI
 
 #[tauri::command]
 fn run_speed_test(
+    app: AppHandle,
     services: State<'_, SharedServices>,
     request: SpeedTestRequest,
 ) -> Result<SpeedTestResponse, String> {
-    let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sidecar");
-    let bin = speed_test::resolve_cfst_binary(&sidecar)?;
+    let bin = resolve_bundled_binary(&app, "viasix-cfst")
+        .or_else(|_| {
+            let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sidecar");
+            speed_test::resolve_cfst_binary(&sidecar)
+        })?;
     let work = services.data_dir.join("cfst");
     speed_test::run_speed_test(&bin, &work, &request)
 }
 
 fn resolve_mihomo_binary(app: &AppHandle) -> Result<PathBuf, String> {
-    // Prefer Tauri externalBin sidecar path, then dev-relative sidecar/.
-    if let Ok(sidecar) = app
-        .path()
-        .resolve("viasix-mihomo", tauri::path::BaseDirectory::Resource)
-    {
-        let candidate = if cfg!(windows) {
-            sidecar.with_extension("exe")
-        } else {
-            sidecar
-        };
-        if candidate.is_file() {
-            return Ok(candidate);
+    resolve_bundled_binary(app, "viasix-mihomo")
+}
+
+fn resolve_bundled_binary(app: &AppHandle, stem: &str) -> Result<PathBuf, String> {
+    // Packaged app: resources/sidecar/* (see tauri.conf.json bundle.resources)
+    let resource_candidates = [
+        format!("sidecar/{stem}"),
+        format!("sidecar/{stem}.exe"),
+        stem.to_string(),
+        format!("{stem}.exe"),
+    ];
+    for rel in resource_candidates {
+        if let Ok(path) = app
+            .path()
+            .resolve(&rel, tauri::path::BaseDirectory::Resource)
+        {
+            if path.is_file() {
+                return Ok(path);
+            }
         }
     }
 
+    // Dev / CI: src-tauri/sidecar next to the crate.
     let mut dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     dev.push("sidecar");
-    let name = if cfg!(windows) {
-        "viasix-mihomo.exe"
+    let plain_name = if cfg!(windows) {
+        format!("{stem}.exe")
     } else {
-        "viasix-mihomo"
+        stem.to_string()
     };
-    let plain = dev.join(name);
+    let plain = dev.join(&plain_name);
     if plain.is_file() {
         return Ok(plain);
     }
@@ -182,14 +194,14 @@ fn resolve_mihomo_binary(app: &AppHandle) -> Result<PathBuf, String> {
         for entry in entries.flatten() {
             let path = entry.path();
             let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            if file_name.starts_with("viasix-mihomo") && path.is_file() {
+            if file_name.starts_with(stem) && path.is_file() {
                 return Ok(path);
             }
         }
     }
 
     Err(format!(
-        "Mihomo binary not found under {}. Run `pnpm prebuild`.",
+        "{stem} binary not found under {}. Run `pnpm prebuild`.",
         dev.display()
     ))
 }

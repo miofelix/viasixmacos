@@ -18,7 +18,8 @@
 - [x] 出口 IP 检测
 - [x] 测速（CFST 拉取 + 运行 + 结果表）
 - [ ] TUN / Windows Service（二期）
-- [ ] 正式 NSIS 发布流水线（Windows runner）
+- [x] NSIS CI 流水线（`windows-build.yml`，Windows runner）
+- [ ] Authenticode 签名与正式 tag 发布
 
 ## 阶段 2 — Android MVP
 
