@@ -390,7 +390,8 @@ public struct MihomoServerConfiguration: Equatable, Sendable {
 
         if var proxies = runtime.mappings("proxies") {
             for index in proxies.indices {
-                proxies[index]["udp"] = options.udpEnabled
+                let proxyAllowsUDP = proxies[index].bool("udp") ?? true
+                proxies[index]["udp"] = options.udpEnabled && proxyAllowsUDP
             }
             runtime["proxies"] = proxies
         }

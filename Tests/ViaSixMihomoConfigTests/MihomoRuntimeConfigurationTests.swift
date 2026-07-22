@@ -626,6 +626,34 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         XCTAssertEqual(udpDisabled.mappings("proxies")?.first?.bool("udp"), false)
     }
 
+    func testLocalUDPPreferenceCannotEnableUDPDisabledByTheProxy() throws {
+        let server = try MihomoServerConfiguration(
+            data: Data(
+                """
+                proxies:
+                  - name: tcp-only-edge
+                    type: vless
+                    server: origin.example
+                    port: 443
+                    uuid: 11111111-1111-4111-8111-111111111111
+                    encryption: none
+                    udp: false
+                    tls: true
+                    servername: origin.example
+                """.utf8
+            )
+        )
+
+        let runtime = try MihomoYAML.mapping(
+            from: server.runtimeConfiguration(
+                options: MihomoRuntimeOptions(udpEnabled: true),
+                replacingPrimaryServerWith: "2606:4700::53"
+            )
+        )
+
+        XCTAssertEqual(runtime.mappings("proxies")?.first?.bool("udp"), false)
+    }
+
     func testPrivilegedConfigurationPassesPinnedMihomoValidationWhenAvailable() throws {
         guard
             let binary = ProcessInfo.processInfo.environment["VIASIX_MIHOMO_TEST_BINARY"],
