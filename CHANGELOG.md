@@ -10,6 +10,8 @@
 - 跨端投影契约用例（`contracts/fixtures/mihomo-config/cases`）及 macOS `ContractFixtureTests` 对齐校验。
 - Windows MVP：`apps/windows` Tauri 2 壳、Rust 投影引擎（contracts 对齐）、用户态 Mihomo 启停与基础 UI。
 - Windows：系统代理启停（注册表快照恢复）与出口 IP 检测。
+- Windows：CloudflareSpeedTest（CFST）拉取、测速运行与结果表。
+- Android MVP：Gradle `:core` 投影（contracts 对齐）、Compose UI、`VpnService` 骨架。
 - 首页新增实时流量统计：上下行速率、近 10 分钟流量曲线、会话累计上传/下载与 Mihomo 内存占用。
 - 连接运行中菜单栏显示两行上下行速率；菜单内同步展示速率摘要。
 - 通过 Mihomo external-controller 的 `/traffic`、`/memory` 与 `/connections`（仅 totals）WebSocket 订阅采集数据，断线自动重连。

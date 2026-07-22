@@ -1,38 +1,50 @@
 # ViaSix for Android
 
-**状态：骨架占位（阶段 2 实现前不可运行）。**
+**状态：MVP 骨架（contracts 投影 + VpnService 会话）**
 
-## 目标能力
+## 模块
 
-| 阶段 | 能力 |
+| 模块 | 说明 |
 | --- | --- |
-| MVP | 配置导入、contracts 对齐投影、mihomo + VpnService、测速/出口检测 |
-| 不适用 | 系统代理（隐藏 `systemProxyEnabled`） |
+| `:core` | 纯 JVM：Mihomo 投影，对齐 monorepo contracts fixtures |
+| `:app` | Compose UI + `ViaSixVpnService`（虚拟网卡语义骨架） |
 
-## 建议技术选型
+## 要求
 
-- Kotlin + Jetpack Compose
-- 虚拟网卡：`android.net.VpnService`
-- 内核：预编译 mihomo（`jniLibs` 或可执行文件）
+- JDK 17+
+- Android SDK（组装 APK 时）
+- Gradle（本机 `gradle` 或后续 wrapper）
 
-配置与投影行为必须符合仓库根 [`contracts/`](../../contracts)。
+## 命令
 
-## 目录
-
-```text
-apps/android/
-├── README.md
-├── settings.gradle.kts      # 占位
-├── build.gradle.kts         # 占位
-├── app/
-│   └── src/main/
-│       ├── AndroidManifest.xml
-│       └── java/dev/viasix/app/
-└── gradle/
+```bash
+cd apps/android
+gradle :core:test          # contracts fixtures
+# 有 Android SDK 时：
+# gradle :app:assembleDebug
 ```
 
-## 本地开发（占位）
+仓库根：
 
-完整 Gradle 工程将在 Android MVP 阶段生成。当前仅保留包名、清单与文档占位，避免未完成工程误导 CI。
+```bash
+make android-test
+make android-skeleton
+```
 
-从 monorepo 根目录：`make android-skeleton` 仅校验本骨架文件存在。
+## 当前范围
+
+| 能力 | 状态 |
+| --- | --- |
+| contracts 投影 | ✓（`:core` 测试） |
+| 基础 UI 生成运行配置 | ✓ |
+| VpnService 权限与前台会话 | ✓ 骨架（未嵌入 mihomo） |
+| 系统代理 | 不适用 |
+| 完整 TUN 封包转发 | 未做 |
+
+## 契约
+
+修改投影前更新 `contracts/fixtures/mihomo-config/cases`，并保证：
+
+- macOS `ContractFixtureTests`
+- Windows `cargo test`
+- Android `gradle :core:test`

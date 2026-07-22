@@ -16,15 +16,18 @@
 - [x] 用户态 Mihomo 启停（需 `pnpm prebuild`）
 - [x] 系统代理（Windows 注册表 + 快照恢复；非 Windows stub）
 - [x] 出口 IP 检测
-- [ ] 测速（CFST）
+- [x] 测速（CFST 拉取 + 运行 + 结果表）
 - [ ] TUN / Windows Service（二期）
 - [ ] 正式 NSIS 发布流水线（Windows runner）
 
 ## 阶段 2 — Android MVP
 
-- Kotlin UI + VpnService
-- 同一套 contracts / fixtures
-- 无系统代理（隐藏 `systemProxyEnabled`）
+- [x] Gradle 工程（`:app` + `:core`）
+- [x] Kotlin 投影 + contracts fixtures（`gradle :core:test`）
+- [x] Compose UI 生成运行配置
+- [x] `VpnService` 权限/前台会话骨架
+- [ ] 嵌入 mihomo 与封包转发
+- [ ] 无系统代理（产品矩阵已约定）
 
 ## 阶段 3 — 共享实现（按需）
 

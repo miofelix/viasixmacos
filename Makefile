@@ -16,6 +16,7 @@ CONTRACTS_DIR := contracts
 	windows-skeleton \
 	windows-test \
 	android-skeleton \
+	android-test \
 	contracts-check \
 	check \
 	check-all
@@ -30,8 +31,9 @@ help:
 	@echo "  make contracts-check   - verify contracts layout and fixtures"
 	@echo "  make windows-skeleton  - verify Windows app tree"
 	@echo "  make windows-test      - Rust contract projection tests (Windows host crate)"
-	@echo "  make android-skeleton  - verify Android placeholder tree"
-	@echo "  make check             - contracts + macOS check + windows-test (default CI)"
+	@echo "  make android-skeleton  - verify Android app tree"
+	@echo "  make android-test      - JVM contract projection tests (:core)"
+	@echo "  make check             - contracts + macOS + windows-test + android-test"
 	@echo "  make check-all         - check + platform skeletons"
 
 macos-build:
@@ -69,7 +71,9 @@ windows-skeleton:
 	@test -f "$(WINDOWS_DIR)/package.json"
 	@test -f "$(WINDOWS_DIR)/src-tauri/Cargo.toml"
 	@test -f "$(WINDOWS_DIR)/src-tauri/src/projection/mod.rs"
+	@test -f "$(WINDOWS_DIR)/src-tauri/src/speed_test/mod.rs"
 	@test -f "$(WINDOWS_DIR)/scripts/fetch-mihomo.mjs"
+	@test -f "$(WINDOWS_DIR)/scripts/fetch-cfst.mjs"
 	@test -f "$(WINDOWS_DIR)/src/main.ts"
 	@echo "windows skeleton OK"
 
@@ -80,9 +84,14 @@ android-skeleton:
 	@test -f "$(ANDROID_DIR)/README.md"
 	@test -f "$(ANDROID_DIR)/settings.gradle.kts"
 	@test -f "$(ANDROID_DIR)/app/src/main/AndroidManifest.xml"
-	@test -f "$(ANDROID_DIR)/app/src/main/java/dev/viasix/app/Placeholder.kt"
+	@test -f "$(ANDROID_DIR)/app/src/main/java/dev/viasix/app/MainActivity.kt"
+	@test -f "$(ANDROID_DIR)/app/src/main/java/dev/viasix/app/vpn/ViaSixVpnService.kt"
+	@test -f "$(ANDROID_DIR)/core/src/main/kotlin/dev/viasix/core/projection/MihomoProjection.kt"
 	@echo "android skeleton OK"
 
-check: contracts-check macos-check windows-test
+android-test:
+	cd "$(ANDROID_DIR)" && gradle :core:test --no-daemon
+
+check: contracts-check macos-check windows-test android-test
 
 check-all: check windows-skeleton android-skeleton

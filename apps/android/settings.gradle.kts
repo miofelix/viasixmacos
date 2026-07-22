@@ -1,4 +1,19 @@
-// Placeholder settings for the future Android application module.
-// Full Gradle wiring lands with the Android MVP.
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
 rootProject.name = "viasix-android"
-// include(":app")
+include(":app")
+include(":core")

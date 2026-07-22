@@ -19,6 +19,20 @@ type ExitIpResult = {
   source: string;
   message: string;
 };
+type SpeedTestResult = {
+  ip: string;
+  sent: string;
+  received: string;
+  loss: string;
+  latency: string;
+  speed: string;
+  region: string;
+};
+type SpeedTestResponse = {
+  results: SpeedTestResult[];
+  message: string;
+  resultCsvPath: string;
+};
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
@@ -29,14 +43,14 @@ app.innerHTML = `
   <main class="shell">
     <header>
       <h1>ViaSix <span class="badge">Windows MVP</span></h1>
-      <p class="muted">IPv6-first · 契约投影 · 用户态 Mihomo · 系统代理 · 出口检测</p>
+      <p class="muted">IPv6-first · 投影 · Mihomo · 系统代理 · 出口检测 · CFST 测速</p>
     </header>
 
     <section class="card">
       <h2>连接配置</h2>
       <label class="field">
         <span>Profile YAML</span>
-        <textarea id="profile" rows="12" spellcheck="false" placeholder="粘贴含内联代理的 Mihomo YAML"></textarea>
+        <textarea id="profile" rows="10" spellcheck="false" placeholder="粘贴含内联代理的 Mihomo YAML"></textarea>
       </label>
       <div class="row">
         <label class="field grow">
@@ -70,6 +84,39 @@ app.innerHTML = `
     </section>
 
     <section class="card">
+      <h2>IPv6 测速（CFST）</h2>
+      <div class="row">
+        <label class="field grow">
+          <span>IP / CIDR（可多个，逗号分隔）</span>
+          <input id="speed-ip" type="text" placeholder="2606:4700::/32 或单个 IPv6" />
+        </label>
+        <label class="check speed-dd">
+          <input id="speed-dd" type="checkbox" checked />
+          <span>仅延迟（-dd，更快）</span>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="btn-speed" type="button" class="primary">开始测速</button>
+        <button id="btn-apply-best" type="button">应用最佳结果到选中 IPv6</button>
+      </div>
+      <p id="speed-status" class="status muted">需要先执行 pnpm prebuild 下载 CFST</p>
+      <div class="table-wrap">
+        <table id="speed-table">
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>延迟</th>
+              <th>丢包</th>
+              <th>速度</th>
+              <th>地区</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
       <h2>运行配置预览</h2>
       <pre id="runtime-yaml" class="code"># 点击「生成运行配置」</pre>
     </section>
@@ -84,10 +131,38 @@ const runtimeEl = document.querySelector<HTMLPreElement>("#runtime-yaml")!;
 const statusEl = document.querySelector<HTMLParagraphElement>("#status")!;
 const proxyStatusEl = document.querySelector<HTMLParagraphElement>("#proxy-status")!;
 const exitIpEl = document.querySelector<HTMLParagraphElement>("#exit-ip")!;
+const speedIpEl = document.querySelector<HTMLInputElement>("#speed-ip")!;
+const speedDdEl = document.querySelector<HTMLInputElement>("#speed-dd")!;
+const speedStatusEl = document.querySelector<HTMLParagraphElement>("#speed-status")!;
+const speedTableBody = document.querySelector<HTMLTableSectionElement>("#speed-table tbody")!;
+
+let lastSpeedResults: SpeedTestResult[] = [];
 
 function setStatus(text: string, isError = false) {
   statusEl.textContent = text;
   statusEl.classList.toggle("error", isError);
+}
+
+function renderSpeedResults(results: SpeedTestResult[]) {
+  lastSpeedResults = results;
+  speedTableBody.innerHTML = "";
+  for (const row of results) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><button type="button" class="linkish" data-ip="${row.ip}">${row.ip}</button></td>
+      <td>${row.latency}</td>
+      <td>${row.loss}</td>
+      <td>${row.speed}</td>
+      <td>${row.region}</td>
+    `;
+    speedTableBody.appendChild(tr);
+  }
+  speedTableBody.querySelectorAll<HTMLButtonElement>("button[data-ip]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      selectedIpEl.value = btn.dataset.ip ?? "";
+      setStatus(`已选择节点 ${selectedIpEl.value}`);
+    });
+  });
 }
 
 async function refreshCoreStatus() {
@@ -194,7 +269,43 @@ document.querySelector("#btn-exit-ip")!.addEventListener("click", async () => {
   }
 });
 
+document.querySelector("#btn-speed")!.addEventListener("click", async () => {
+  speedStatusEl.textContent = "测速进行中，请稍候…";
+  speedStatusEl.classList.remove("error");
+  try {
+    const response = await invoke<SpeedTestResponse>("run_speed_test", {
+      request: {
+        ipRange: speedIpEl.value.trim() || null,
+        disableDownload: speedDdEl.checked,
+        httping: true,
+        threads: 100,
+        pingCount: 4,
+        downloadCount: 5,
+        downloadTime: 5,
+      },
+    });
+    renderSpeedResults(response.results);
+    speedStatusEl.textContent = response.message;
+  } catch (error) {
+    speedStatusEl.textContent = `测速失败：${error}`;
+    speedStatusEl.classList.add("error");
+  }
+});
+
+document.querySelector("#btn-apply-best")!.addEventListener("click", () => {
+  if (lastSpeedResults.length === 0) {
+    speedStatusEl.textContent = "没有可应用的测速结果";
+    speedStatusEl.classList.add("error");
+    return;
+  }
+  selectedIpEl.value = lastSpeedResults[0].ip;
+  speedStatusEl.classList.remove("error");
+  speedStatusEl.textContent = `已应用最佳结果：${selectedIpEl.value}`;
+  setStatus(`已选择节点 ${selectedIpEl.value}`);
+});
+
 selectedIpEl.value = "2001:db8::1";
+speedIpEl.value = "2606:4700::/32";
 profileEl.value = `proxies:
   - name: My VLESS
     type: vless

@@ -13,6 +13,7 @@
 | 代理内核 | 预编译 mihomo（`pnpm prebuild`） |
 | 系统代理 | WinINET 注册表（`ProxyEnable` / `ProxyServer`）+ 快照恢复 |
 | 出口检测 | HTTPS ipify（`detect_exit_ip`） |
+| 测速 | CFST v2.3.5（`pnpm prebuild` + `run_speed_test`） |
 | 虚拟网卡 | Windows Service + Wintun（二期） |
 
 ## 验证

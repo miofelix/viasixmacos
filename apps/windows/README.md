@@ -44,7 +44,7 @@ make windows-skeleton         # 目录/文件校验
 | 用户态 Mihomo 启停 | ✓（需 `prebuild`） |
 | 系统代理（WinINET 注册表 + 快照恢复） | ✓（仅 Windows 构建） |
 | 出口 IP 检测（ipify HTTPS） | ✓ |
-| 测速（CFST） | 未做 |
+| 测速（CFST） | ✓（`pnpm prebuild` 拉取） |
 | Wintun / Service | 未做（二期） |
 
 ## 契约

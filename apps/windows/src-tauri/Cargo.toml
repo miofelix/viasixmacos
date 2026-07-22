@@ -1,6 +1,6 @@
 [package]
 name = "viasix-windows"
-version = "0.1.0"
+version = "0.1.1"
 description = "ViaSix Windows client (MVP)"
 authors = ["ViaSix contributors"]
 edition = "2021"

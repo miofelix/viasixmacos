@@ -173,3 +173,49 @@ button:hover {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.speed-dd {
+  align-self: end;
+  margin-bottom: 12px;
+}
+
+.table-wrap {
+  margin-top: 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+th,
+td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+  background: #121820;
+}
+
+button.linkish {
+  background: none;
+  border: none;
+  color: #93c5fd;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+button.linkish:hover {
+  text-decoration: underline;
+  filter: none;
+}

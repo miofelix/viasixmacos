@@ -1,10 +1,12 @@
 mod exit_ip;
 mod projection;
 mod runtime;
+mod speed_test;
 mod system_proxy;
 
 use projection::{ProjectOptions, RoutingMode};
 use runtime::{CoreStatus, CoreRuntime, SharedCore};
+use speed_test::{SpeedTestRequest, SpeedTestResponse};
 use std::path::PathBuf;
 use std::sync::Arc;
 use system_proxy::{ProxyEndpoint, SystemProxyManager, SystemProxyStatus};
@@ -14,6 +16,7 @@ struct AppServices {
     core: SharedCore,
     system_proxy: SystemProxyManager,
     default_mixed_port: u16,
+    data_dir: PathBuf,
 }
 
 type SharedServices = Arc<AppServices>;
@@ -136,6 +139,17 @@ async fn detect_exit_ip(endpoints: Option<Vec<String>>) -> Result<exit_ip::ExitI
     exit_ip::detect_exit_ip(endpoints).await
 }
 
+#[tauri::command]
+fn run_speed_test(
+    services: State<'_, SharedServices>,
+    request: SpeedTestRequest,
+) -> Result<SpeedTestResponse, String> {
+    let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sidecar");
+    let bin = speed_test::resolve_cfst_binary(&sidecar)?;
+    let work = services.data_dir.join("cfst");
+    speed_test::run_speed_test(&bin, &work, &request)
+}
+
 fn resolve_mihomo_binary(app: &AppHandle) -> Result<PathBuf, String> {
     // Prefer Tauri externalBin sidecar path, then dev-relative sidecar/.
     if let Ok(sidecar) = app
@@ -195,8 +209,9 @@ pub fn run() {
             let work = data.join("runtime");
             let services = Arc::new(AppServices {
                 core: Arc::new(CoreRuntime::new(work)),
-                system_proxy: SystemProxyManager::new(data),
+                system_proxy: SystemProxyManager::new(data.clone()),
                 default_mixed_port: ProjectOptions::default().mixed_port,
+                data_dir: data,
             });
             app.manage(services);
             Ok(())
@@ -208,7 +223,8 @@ pub fn run() {
             stop_core,
             system_proxy_status,
             set_system_proxy,
-            detect_exit_ip
+            detect_exit_ip,
+            run_speed_test
         ])
         .run(tauri::generate_context!())
         .expect("error while running ViaSix Windows");
