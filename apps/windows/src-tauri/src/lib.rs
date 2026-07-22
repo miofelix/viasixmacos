@@ -5,6 +5,7 @@ mod projection;
 mod runtime;
 mod speed_test;
 mod system_proxy;
+mod traffic;
 mod virtual_network;
 
 use controller::ControllerHealth;
@@ -16,6 +17,7 @@ use speed_test::{SpeedTestRequest, SpeedTestResponse};
 use std::path::PathBuf;
 use std::sync::Arc;
 use system_proxy::{ProxyEndpoint, SystemProxyManager, SystemProxyStatus};
+use traffic::{TrafficSampler, TrafficSnapshot};
 use tauri::{AppHandle, Manager, State};
 use virtual_network::{
     VirtualNetworkCapability, VirtualNetworkManager, VirtualNetworkStatus,
@@ -26,6 +28,7 @@ struct AppServices {
     system_proxy: SystemProxyManager,
     prefs: PrefsStore,
     virtual_network: Mutex<VirtualNetworkManager>,
+    traffic: Mutex<TrafficSampler>,
     default_mixed_port: u16,
     data_dir: PathBuf,
 }
@@ -76,6 +79,7 @@ fn start_core(
         Some(profile_yaml.as_str())
     };
     let mut status = services.core.start(profile, &options, &bin)?;
+    services.traffic.lock().reset();
 
     if enable_system_proxy.unwrap_or(false) {
         let endpoint = ProxyEndpoint {
@@ -99,6 +103,7 @@ fn start_core(
 #[tauri::command]
 fn stop_core(services: State<'_, SharedServices>) -> Result<CoreStatus, String> {
     let status = services.core.stop()?;
+    services.traffic.lock().reset();
     let proxy_note = match services.system_proxy.disable() {
         Ok(s) => s.message,
         Err(err) => format!("system proxy restore failed: {err}"),
@@ -182,6 +187,30 @@ async fn probe_controller(services: State<'_, SharedServices>) -> Result<Control
         });
     };
     Ok(controller::probe("127.0.0.1", port, &secret).await)
+}
+
+#[tauri::command]
+async fn sample_traffic(services: State<'_, SharedServices>) -> Result<TrafficSnapshot, String> {
+    let Some((port, secret)) = services.core.controller_credentials() else {
+        services.traffic.lock().reset();
+        return Ok(TrafficSnapshot {
+            live: false,
+            up_bps: 0,
+            down_bps: 0,
+            upload_total: 0,
+            download_total: 0,
+            message: "Mihomo is not running".into(),
+        });
+    };
+
+    // Take sampler state, await without holding the mutex, then put it back.
+    let mut sampler = {
+        let mut guard = services.traffic.lock();
+        std::mem::take(&mut *guard)
+    };
+    let snap = sampler.sample("127.0.0.1", port, &secret).await;
+    *services.traffic.lock() = sampler;
+    Ok(snap)
 }
 
 #[tauri::command]
@@ -275,6 +304,7 @@ pub fn run() {
                 system_proxy: SystemProxyManager::new(data.clone()),
                 prefs: PrefsStore::new(data.clone()),
                 virtual_network: Mutex::new(VirtualNetworkManager::default()),
+                traffic: Mutex::new(TrafficSampler::default()),
                 default_mixed_port: ProjectOptions::default().mixed_port,
                 data_dir: data,
             });
@@ -294,6 +324,7 @@ pub fn run() {
             save_session_prefs,
             app_version,
             probe_controller,
+            sample_traffic,
             virtual_network_capability,
             virtual_network_status,
             set_virtual_network

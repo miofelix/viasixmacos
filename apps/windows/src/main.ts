@@ -20,6 +20,14 @@ type VirtualNetworkStatus = {
   backend: string;
   message: string;
 };
+type TrafficSnapshot = {
+  live: boolean;
+  upBps: number;
+  downBps: number;
+  uploadTotal: number;
+  downloadTotal: number;
+  message: string;
+};
 type SystemProxyStatus = {
   enabled: boolean;
   managedByViasix: boolean;
@@ -123,6 +131,7 @@ app.innerHTML = `
         <button id="btn-exit-ip" type="button">检测出口 IP</button>
       </div>
       <p id="status" class="status muted">就绪</p>
+      <p id="traffic-status" class="status muted">流量：—</p>
       <p id="proxy-status" class="status muted"></p>
       <p id="health-status" class="status muted"></p>
       <p id="virt-status" class="status muted"></p>
@@ -176,6 +185,7 @@ const sysProxyEl = document.querySelector<HTMLInputElement>("#sys-proxy")!;
 const runtimeEl = document.querySelector<HTMLPreElement>("#runtime-yaml")!;
 const statusEl = document.querySelector<HTMLParagraphElement>("#status")!;
 const proxyStatusEl = document.querySelector<HTMLParagraphElement>("#proxy-status")!;
+const trafficStatusEl = document.querySelector<HTMLParagraphElement>("#traffic-status")!;
 const healthStatusEl = document.querySelector<HTMLParagraphElement>("#health-status")!;
 const virtStatusEl = document.querySelector<HTMLParagraphElement>("#virt-status")!;
 const virtNetLabelEl = document.querySelector<HTMLSpanElement>("#virt-net-label")!;
@@ -187,6 +197,7 @@ const speedTableBody = document.querySelector<HTMLTableSectionElement>("#speed-t
 
 let lastSpeedResults: SpeedTestResult[] = [];
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let trafficTimer: ReturnType<typeof setInterval> | null = null;
 
 function setStatus(text: string, isError = false) {
   statusEl.textContent = text;
@@ -282,6 +293,32 @@ async function refreshVirtualNetwork() {
   }
 }
 
+async function refreshTraffic() {
+  try {
+    const snap = await invoke<TrafficSnapshot>("sample_traffic");
+    trafficStatusEl.textContent = snap.live ? `流量：${snap.message}` : `流量：${snap.message}`;
+    trafficStatusEl.classList.toggle("error", !snap.live && snap.message.includes("unavailable"));
+  } catch {
+    trafficStatusEl.textContent = "流量：—";
+  }
+}
+
+function startTrafficPolling() {
+  if (trafficTimer) return;
+  void refreshTraffic();
+  trafficTimer = setInterval(() => {
+    void refreshTraffic();
+  }, 1000);
+}
+
+function stopTrafficPolling() {
+  if (trafficTimer) {
+    clearInterval(trafficTimer);
+    trafficTimer = null;
+  }
+  trafficStatusEl.textContent = "流量：—";
+}
+
 document.querySelector("#btn-project")!.addEventListener("click", async () => {
   try {
     const mode = modeEl.value as RoutingMode;
@@ -310,6 +347,7 @@ document.querySelector("#btn-start")!.addEventListener("click", async () => {
     });
     setStatus(status.message);
     await refreshProxyStatus();
+    if (status.running) startTrafficPolling();
   } catch (error) {
     setStatus(`启动失败：${error}`, true);
   }
@@ -320,6 +358,7 @@ document.querySelector("#btn-stop")!.addEventListener("click", async () => {
     const status = await invoke<CoreStatus>("stop_core");
     setStatus(status.message);
     await refreshProxyStatus();
+    stopTrafficPolling();
   } catch (error) {
     setStatus(`停止失败：${error}`, true);
   }
@@ -436,5 +475,11 @@ void (async () => {
   await refreshCoreStatus();
   await refreshProxyStatus();
   await refreshVirtualNetwork();
+  try {
+    const status = await invoke<CoreStatus>("core_status");
+    if (status.running) startTrafficPolling();
+  } catch {
+    // ignore
+  }
   scheduleSavePrefs();
 })();

@@ -19,6 +19,7 @@
 - [x] 测速（CFST 拉取 + 运行 + 结果表）
 - [x] 虚拟网卡 API 骨架（fail-closed；Wintun/Service 未实现）
 - [x] Mihomo controller 健康探测
+- [x] 实时流量采样（`/connections` 轮询）
 - [ ] TUN / Windows Service 真实集成（需提权与签名决策）
 - [x] NSIS CI 流水线（`windows-build.yml`，Windows runner）
 - [ ] Authenticode 签名与正式 tag 发布
