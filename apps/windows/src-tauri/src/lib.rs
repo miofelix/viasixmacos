@@ -1,4 +1,5 @@
 mod activity_log;
+mod connectivity;
 mod controller;
 mod exit_ip;
 mod prefs;
@@ -11,13 +12,14 @@ mod traffic;
 mod virtual_network;
 
 use activity_log::{ActivityEntry, ActivityLog};
+use connectivity::ConnectivityResult;
 use controller::ControllerHealth;
 use parking_lot::Mutex;
 use prefs::{PrefsStore, SessionPrefs};
 use profile::ProfileSummary;
 use projection::{ProjectOptions, RoutingMode, TunOptions};
 use runtime::{CoreRuntime, CoreStatus, SharedCore};
-use speed_test::{SpeedTestRequest, SpeedTestResponse};
+use speed_test::{IpPreset, SpeedTestRequest, SpeedTestResponse, SpeedTestSession};
 use std::path::PathBuf;
 use std::sync::Arc;
 use system_proxy::{ProxyEndpoint, SystemProxyManager, SystemProxyStatus};
@@ -39,6 +41,7 @@ struct AppServices {
     virtual_network: Mutex<VirtualNetworkManager>,
     traffic: Mutex<TrafficSampler>,
     activity: Mutex<ActivityLog>,
+    speed_test: SpeedTestSession,
     default_mixed_port: u16,
     data_dir: PathBuf,
 }
@@ -122,6 +125,8 @@ fn start_core(
     enable_system_proxy: Option<bool>,
     mixed_port: Option<u16>,
     controller_port: Option<u16>,
+    tun_stack: Option<String>,
+    tun_mtu: Option<u16>,
 ) -> Result<CoreStatus, String> {
     let mode = RoutingMode::parse(&routing_mode).ok_or_else(|| "invalid routingMode".to_string())?;
     let mut options = ProjectOptions::default();
@@ -131,7 +136,17 @@ fn start_core(
 
     let want_tun = services.virtual_network.lock().is_enabled();
     if want_tun {
-        options.tun = Some(TunOptions::default());
+        let mut tun = TunOptions::default();
+        if let Some(stack) = tun_stack
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            tun.stack = stack;
+        }
+        if let Some(mtu) = tun_mtu.filter(|m| (1280..=9000).contains(m)) {
+            tun.mtu = mtu;
+        }
+        options.tun = Some(tun);
     }
 
     // Project first so failures never leave a half-started process.
@@ -323,33 +338,29 @@ async fn detect_exit_ip(
     }
 }
 
+fn resolve_cfst(app: &AppHandle) -> Result<PathBuf, String> {
+    resolve_bundled_binary(app, "viasix-cfst").or_else(|_| {
+        let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sidecar");
+        speed_test::resolve_cfst_binary(&sidecar)
+    })
+}
+
 #[tauri::command]
 fn run_speed_test(
     app: AppHandle,
     services: State<'_, SharedServices>,
     request: SpeedTestRequest,
 ) -> Result<SpeedTestResponse, String> {
-    push_log(
-        &services,
-        Some(&app),
-        "info",
-        "speed",
-        "开始 CFST 测速…",
-    );
-    let bin = resolve_bundled_binary(&app, "viasix-cfst").or_else(|_| {
-        let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sidecar");
-        speed_test::resolve_cfst_binary(&sidecar)
+    push_log(&services, Some(&app), "info", "speed", "开始 CFST 测速…");
+    let bin = resolve_cfst(&app).map_err(|e| {
+        push_log(&services, Some(&app), "error", "speed", e.clone());
+        e
     })?;
     let work = services.data_dir.join("cfst");
-    match speed_test::run_speed_test(&bin, &work, &request) {
+    match services.speed_test.run(&bin, &work, &request) {
         Ok(response) => {
-            push_log(
-                &services,
-                Some(&app),
-                "success",
-                "speed",
-                response.message.clone(),
-            );
+            let level = if response.cancelled { "warn" } else { "success" };
+            push_log(&services, Some(&app), level, "speed", response.message.clone());
             Ok(response)
         }
         Err(err) => {
@@ -363,6 +374,147 @@ fn run_speed_test(
             Err(err)
         }
     }
+}
+
+#[tauri::command]
+fn stop_speed_test(app: AppHandle, services: State<'_, SharedServices>) -> Result<bool, String> {
+    let cancelled = services.speed_test.request_cancel();
+    if cancelled {
+        push_log(&services, Some(&app), "warn", "speed", "正在停止测速…");
+    }
+    Ok(cancelled)
+}
+
+#[tauri::command]
+fn speed_test_running(services: State<'_, SharedServices>) -> bool {
+    services.speed_test.is_running()
+}
+
+/// macOS-style current-node configuration test (CFST against selected IPv6 only).
+#[tauri::command]
+fn test_current_node(
+    app: AppHandle,
+    services: State<'_, SharedServices>,
+    selected_address: String,
+    disable_download: Option<bool>,
+    threads: Option<u32>,
+    ping_count: Option<u32>,
+    port: Option<u16>,
+) -> Result<SpeedTestResponse, String> {
+    let ip = selected_address.trim().to_string();
+    if ip.is_empty() || !ip.contains(':') {
+        return Err("selectedAddress must be an IPv6 address".into());
+    }
+    push_log(
+        &services,
+        Some(&app),
+        "info",
+        "speed",
+        format!("开始测试当前节点：{ip}"),
+    );
+    let request = SpeedTestRequest {
+        ip_range: Some(ip.clone()),
+        ip_file: None,
+        threads: Some(threads.unwrap_or(50)),
+        ping_count: Some(ping_count.unwrap_or(4)),
+        download_count: Some(3),
+        download_time: Some(3),
+        disable_download: Some(disable_download.unwrap_or(true)),
+        httping: Some(true),
+        port: Some(port.unwrap_or(443)),
+    };
+    let bin = resolve_cfst(&app)?;
+    let work = services.data_dir.join("cfst-node");
+    match services.speed_test.run(&bin, &work, &request) {
+        Ok(mut response) => {
+            if !response.cancelled {
+                // Prefer exact match when present.
+                if let Some(idx) = response.results.iter().position(|r| r.ip == ip) {
+                    let matched = response.results.swap_remove(idx);
+                    response.results = vec![matched];
+                } else if let Some(first) = response.results.first_mut() {
+                    first.ip = ip;
+                }
+                response.message = format!(
+                    "当前节点测速完成: {}",
+                    response
+                        .results
+                        .first()
+                        .map(|r| format!("{} ms / loss {}", r.latency, r.loss))
+                        .unwrap_or_else(|| "无结果".into())
+                );
+            }
+            let level = if response.cancelled {
+                "warn"
+            } else {
+                "success"
+            };
+            push_log(&services, Some(&app), level, "speed", response.message.clone());
+            Ok(response)
+        }
+        Err(err) => {
+            push_log(
+                &services,
+                Some(&app),
+                "error",
+                "speed",
+                format!("当前节点测速失败: {err}"),
+            );
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+fn list_ip_presets() -> Vec<IpPreset> {
+    speed_test::ipv6_presets()
+}
+
+#[tauri::command]
+async fn probe_connectivity(
+    app: AppHandle,
+    services: State<'_, SharedServices>,
+    mixed_port: Option<u16>,
+    url: Option<String>,
+) -> Result<ConnectivityResult, String> {
+    if !services.core.status().running {
+        return Err("Mihomo is not running".into());
+    }
+    let port = mixed_port.unwrap_or(services.default_mixed_port);
+    push_log(
+        &services,
+        Some(&app),
+        "info",
+        "network",
+        format!("探测代理连通性 127.0.0.1:{port}…"),
+    );
+    match connectivity::probe_via_proxy("127.0.0.1", port, url).await {
+        Ok(result) => {
+            push_log(
+                &services,
+                Some(&app),
+                if result.ok { "success" } else { "warn" },
+                "network",
+                result.message.clone(),
+            );
+            Ok(result)
+        }
+        Err(err) => {
+            push_log(
+                &services,
+                Some(&app),
+                "error",
+                "network",
+                format!("代理连通性失败: {err}"),
+            );
+            Err(err)
+        }
+    }
+}
+
+#[tauri::command]
+fn tail_core_log(services: State<'_, SharedServices>, max_lines: Option<usize>) -> Result<String, String> {
+    services.core.tail_log(max_lines.unwrap_or(200))
 }
 
 #[tauri::command]
@@ -651,6 +803,7 @@ pub fn run() {
                 virtual_network: Mutex::new(VirtualNetworkManager::new(sidecar)),
                 traffic: Mutex::new(TrafficSampler::default()),
                 activity: Mutex::new(ActivityLog::new(800)),
+                speed_test: SpeedTestSession::default(),
                 default_mixed_port: defaults.mixed_port,
                 data_dir: data,
             });
@@ -708,6 +861,12 @@ pub fn run() {
             set_system_proxy,
             detect_exit_ip,
             run_speed_test,
+            stop_speed_test,
+            speed_test_running,
+            test_current_node,
+            list_ip_presets,
+            probe_connectivity,
+            tail_core_log,
             load_session_prefs,
             save_session_prefs,
             app_version,

@@ -43,7 +43,13 @@ export type AppModel = {
   mixedPort: number;
   controllerPort: number;
   closeToTray: boolean;
+  tunStack: string;
+  tunMtu: number;
   dataDir: string;
+  ipPresets: import("./types").IpPreset[];
+  nodeTestMessage: string;
+  connectivityMessage: string;
+  coreLog: string;
   core: CoreStatus | null;
   proxy: SystemProxyStatus | null;
   virtualNetwork: VirtualNetworkStatus | null;
@@ -66,6 +72,8 @@ export type AppModel = {
     exitIp: boolean;
     health: boolean;
     sysProxy: boolean;
+    nodeTest: boolean;
+    connectivity: boolean;
   };
   notice: AppNotice | null;
   logs: LogEntry[];
@@ -101,7 +109,13 @@ export function createInitialModel(): AppModel {
     mixedPort: 11451,
     controllerPort: 9090,
     closeToTray: true,
+    tunStack: "mixed",
+    tunMtu: 1500,
     dataDir: "",
+    ipPresets: [],
+    nodeTestMessage: "对当前选中 IPv6 运行 CFST（对齐 macOS 配置测速）",
+    connectivityMessage: "启动代理后可检测混合端口出口连通性",
+    coreLog: "",
     core: null,
     proxy: null,
     virtualNetwork: null,
@@ -124,6 +138,8 @@ export function createInitialModel(): AppModel {
       exitIp: false,
       health: false,
       sysProxy: false,
+      nodeTest: false,
+      connectivity: false,
     },
     notice: null,
     logs: [],
@@ -206,6 +222,8 @@ export function sessionPrefsFromModel(model: AppModel) {
     mixedPort: model.mixedPort,
     controllerPort: model.controllerPort,
     closeToTray: model.closeToTray,
+    tunStack: model.tunStack,
+    tunMtu: model.tunMtu,
   };
 }
 

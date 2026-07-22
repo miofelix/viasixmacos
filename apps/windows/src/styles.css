@@ -1305,6 +1305,18 @@ tr.is-focused td {
   gap: 8px;
 }
 
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.core-log {
+  max-height: 280px;
+  min-height: 120px;
+}
+
 /* number inputs */
 input[type="number"] {
   width: 100%;

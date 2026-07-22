@@ -5,6 +5,7 @@ use parking_lot::Mutex;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+// Path used by log banner helper
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -27,18 +28,38 @@ struct Inner {
     work_dir: PathBuf,
     controller_port: Option<u16>,
     controller_secret: Option<String>,
+    log_path: PathBuf,
 }
 
 impl CoreRuntime {
     pub fn new(work_dir: PathBuf) -> Self {
+        let log_path = work_dir.join("mihomo.log");
         Self {
             inner: Mutex::new(Inner {
                 child: None,
                 work_dir,
                 controller_port: None,
                 controller_secret: None,
+                log_path,
             }),
         }
+    }
+
+    pub fn log_path(&self) -> PathBuf {
+        self.inner.lock().log_path.clone()
+    }
+
+    /// Return the last `max_lines` of the mihomo process log (stdout/stderr).
+    pub fn tail_log(&self, max_lines: usize) -> Result<String, String> {
+        let path = self.log_path();
+        if !path.is_file() {
+            return Ok(String::new());
+        }
+        let raw = fs::read_to_string(&path).map_err(io_err)?;
+        let lines: Vec<&str> = raw.lines().collect();
+        let take = max_lines.max(1);
+        let start = lines.len().saturating_sub(take);
+        Ok(lines[start..].join("\n"))
     }
 
     pub fn status(&self) -> CoreStatus {
@@ -103,6 +124,17 @@ impl CoreRuntime {
         let config_path = guard.work_dir.join("runtime.yaml");
         fs::write(&config_path, runtime_yaml).map_err(io_err)?;
 
+        // Capture kernel logs for diagnostics (macOS uses a unified log channel).
+        let log_file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&guard.log_path)
+            .map_err(io_err)?;
+        let log_err = log_file
+            .try_clone()
+            .map_err(io_err)?;
+        let _ = writeln_banner(&guard.log_path);
+
         let mut command = Command::new(mihomo_bin);
         command
             .arg("-f")
@@ -110,8 +142,8 @@ impl CoreRuntime {
             .arg("-d")
             .arg(&guard.work_dir)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(log_err));
 
         let child = command.spawn().map_err(|e| {
             format!(
@@ -173,6 +205,26 @@ impl CoreRuntime {
 
 fn io_err(err: io::Error) -> String {
     err.to_string()
+}
+
+fn writeln_banner(path: &Path) -> io::Result<()> {
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new().create(true).append(true).open(path)?;
+    writeln!(
+        file,
+        "\n----- viasix mihomo session {} -----",
+        chrono_like_stamp()
+    )?;
+    Ok(())
+}
+
+fn chrono_like_stamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("unix={secs}")
 }
 
 pub type SharedCore = Arc<CoreRuntime>;

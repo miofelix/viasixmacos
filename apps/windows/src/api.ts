@@ -2,9 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ActivityEntry,
   BackendProfileSummary,
+  ConnectivityResult,
   ControllerHealth,
   CoreStatus,
   ExitIpResult,
+  IpPreset,
   SessionPrefs,
   SpeedTestResponse,
   SystemProxyStatus,
@@ -53,6 +55,8 @@ export async function startCore(args: {
   enableSystemProxy: boolean;
   mixedPort?: number | null;
   controllerPort?: number | null;
+  tunStack?: string | null;
+  tunMtu?: number | null;
 }): Promise<CoreStatus> {
   return invoke<CoreStatus>("start_core", args);
 }
@@ -90,6 +94,39 @@ export async function runSpeedTest(request: {
   port?: number;
 }): Promise<SpeedTestResponse> {
   return invoke<SpeedTestResponse>("run_speed_test", { request });
+}
+
+export async function stopSpeedTest(): Promise<boolean> {
+  return invoke<boolean>("stop_speed_test");
+}
+
+export async function speedTestRunning(): Promise<boolean> {
+  return invoke<boolean>("speed_test_running");
+}
+
+export async function testCurrentNode(args: {
+  selectedAddress: string;
+  disableDownload?: boolean;
+  threads?: number;
+  pingCount?: number;
+  port?: number;
+}): Promise<SpeedTestResponse> {
+  return invoke<SpeedTestResponse>("test_current_node", args);
+}
+
+export async function listIpPresets(): Promise<IpPreset[]> {
+  return invoke<IpPreset[]>("list_ip_presets");
+}
+
+export async function probeConnectivity(args: {
+  mixedPort?: number;
+  url?: string | null;
+}): Promise<ConnectivityResult> {
+  return invoke<ConnectivityResult>("probe_connectivity", args);
+}
+
+export async function tailCoreLog(maxLines = 200): Promise<string> {
+  return invoke<string>("tail_core_log", { maxLines });
 }
 
 export async function probeController(): Promise<ControllerHealth> {

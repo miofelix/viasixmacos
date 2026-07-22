@@ -391,6 +391,9 @@ function renderOverview(model: AppModel): string {
           <div class="card-title">${icon("nodes", 16)} <span>IP 信息</span></div>
           <div class="inline-actions">
             <button type="button" class="btn btn-ghost btn-sm" data-action="goto-nodes">选择节点</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-action="test-current-node" ${model.busy.nodeTest || !selectedOk ? "disabled" : ""}>
+              ${model.busy.nodeTest ? "测节点…" : "测当前节点"}
+            </button>
             <button type="button" class="btn btn-ghost btn-sm" data-action="detect-exit" ${model.busy.exitIp ? "disabled" : ""}>
               ${model.busy.exitIp ? "检测中…" : "检测出口"}
             </button>
@@ -407,6 +410,7 @@ function renderOverview(model: AppModel): string {
               <button type="button" class="icon-btn" data-action="copy-text" data-copy="${escapeHtml(selectedOk ? model.selectedAddress : "")}" ${selectedOk ? "" : "disabled"} title="复制">${icon("copy", 14)}</button>
             </div>
             <div class="ip-secondary">${escapeHtml(selectedNodeSecondary(model))}</div>
+            <p class="help-text muted">${escapeHtml(model.nodeTestMessage)}</p>
           </div>
           <div class="row-divider flush"></div>
           <div class="ip-block">
@@ -461,6 +465,12 @@ function renderOverview(model: AppModel): string {
             <button type="button" class="btn btn-sm" data-action="goto-settings">设置</button>
             <button type="button" class="btn btn-sm" data-action="goto-logs">日志</button>
           </div>
+          <div class="inline-actions" style="margin-top:10px">
+            <button type="button" class="btn btn-sm" data-action="probe-connectivity" ${!running || model.busy.connectivity ? "disabled" : ""}>
+              ${model.busy.connectivity ? "探测中…" : "代理连通性"}
+            </button>
+          </div>
+          <p class="help-text muted">${escapeHtml(model.connectivityMessage)}</p>
         </div>
       </section>
     </div>
@@ -556,9 +566,24 @@ function renderNodes(model: AppModel): string {
             <span>仅延迟（-dd）</span>
           </label>
         </div>
+        ${
+          model.ipPresets.length
+            ? `<div class="preset-row">
+                 ${model.ipPresets
+                   .map(
+                     (p) =>
+                       `<button type="button" class="btn btn-sm" data-action="apply-preset" data-preset="${escapeHtml(p.id)}" title="${escapeHtml(p.description)}">${escapeHtml(p.title)}</button>`,
+                   )
+                   .join("")}
+               </div>`
+            : ""
+        }
         <div class="inline-actions wrap">
           <button type="button" class="btn btn-primary" data-action="run-speed" ${model.busy.speed ? "disabled" : ""}>
             ${model.busy.speed ? "测速中…" : "开始测速"}
+          </button>
+          <button type="button" class="btn btn-danger" data-action="stop-speed" ${model.busy.speed ? "" : "disabled"}>
+            停止测速
           </button>
           <button type="button" class="btn" data-action="apply-best" ${results.length === 0 ? "disabled" : ""}>
             应用最佳结果
@@ -920,6 +945,34 @@ function renderSettings(model: AppModel): string {
           <input type="checkbox" id="settings-virt-net" ${model.virtualNetworkEnabled ? "checked" : ""} ${virt && !virt.available ? "disabled" : ""} />
           <span>启用虚拟网卡（下次启动 Mihomo 时生效）</span>
         </label>
+        <div class="form-row" style="margin-top:12px">
+          <label class="field">
+            <span>TUN stack</span>
+            <select id="settings-tun-stack" ${model.core?.running ? "disabled" : ""}>
+              ${["mixed", "system", "gvisor"]
+                .map(
+                  (s) =>
+                    `<option value="${s}" ${model.tunStack === s ? "selected" : ""}>${s}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>TUN MTU</span>
+            <input id="settings-tun-mtu" type="number" min="1280" max="9000" value="${model.tunMtu}" ${model.core?.running ? "disabled" : ""} />
+          </label>
+        </div>
+        <p class="help-text muted">对齐 macOS local-proxy 的 tunStack / tunMTU；进程内 Mihomo TUN + Wintun，通常需管理员。</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">${icon("logs", 16)} <span>内核日志</span></div>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="refresh-core-log">${icon("refresh", 14)} 刷新</button>
+      </div>
+      <div class="card-body pad-0">
+        <pre class="code-block core-log">${escapeHtml(model.coreLog || "（尚无 mihomo 日志 — 启动内核后写入 runtime/mihomo.log）")}</pre>
       </div>
     </section>
 

@@ -101,6 +101,24 @@ export type SpeedTestResponse = {
   results: SpeedTestResult[];
   message: string;
   resultCsvPath: string;
+  cancelled?: boolean;
+};
+
+export type IpPreset = {
+  id: string;
+  title: string;
+  description: string;
+  ipRange: string;
+};
+
+export type ConnectivityResult = {
+  ok: boolean;
+  endpoint: string;
+  viaProxy: string;
+  exitIp: string | null;
+  family: string | null;
+  latencyMs: number;
+  message: string;
 };
 
 export type SpeedTestParams = {
@@ -130,6 +148,8 @@ export type SessionPrefs = {
   mixedPort?: number | null;
   controllerPort?: number | null;
   closeToTray?: boolean | null;
+  tunStack?: string | null;
+  tunMtu?: number | null;
 };
 
 export type NoticeStyle = "info" | "success" | "error";

@@ -246,6 +246,8 @@ function bindSectionControls(): void {
   const mixedPortEl = document.querySelector<HTMLInputElement>("#settings-mixed-port");
   const controllerPortEl = document.querySelector<HTMLInputElement>("#settings-controller-port");
   const closeTrayEl = document.querySelector<HTMLInputElement>("#settings-close-tray");
+  const tunStackEl = document.querySelector<HTMLSelectElement>("#settings-tun-stack");
+  const tunMtuEl = document.querySelector<HTMLInputElement>("#settings-tun-mtu");
   if (mixedPortEl) {
     mixedPortEl.addEventListener("change", () => {
       const n = Number(mixedPortEl.value);
@@ -269,6 +271,21 @@ function bindSectionControls(): void {
     closeTrayEl.addEventListener("change", () => {
       model.closeToTray = closeTrayEl.checked;
       scheduleSavePrefs();
+    });
+  }
+  if (tunStackEl) {
+    tunStackEl.addEventListener("change", () => {
+      model.tunStack = tunStackEl.value || "mixed";
+      scheduleSavePrefs();
+    });
+  }
+  if (tunMtuEl) {
+    tunMtuEl.addEventListener("change", () => {
+      const n = Number(tunMtuEl.value);
+      if (Number.isFinite(n) && n >= 1280 && n <= 9000) {
+        model.tunMtu = Math.floor(n);
+        scheduleSavePrefs();
+      }
     });
   }
   if (profileIp) {
@@ -354,6 +371,30 @@ async function handleAction(action: string, el: HTMLElement): Promise<void> {
     case "run-speed":
       await runSpeed();
       return;
+    case "stop-speed":
+      await stopSpeed();
+      return;
+    case "test-current-node":
+      await testCurrentNode();
+      return;
+    case "probe-connectivity":
+      await probeConnectivity();
+      return;
+    case "refresh-core-log":
+      await refreshCoreLog();
+      paint();
+      return;
+    case "apply-preset": {
+      const id = el.dataset.preset;
+      const preset = model.ipPresets.find((p) => p.id === id);
+      if (preset) {
+        model.speedIpRange = preset.ipRange;
+        scheduleSavePrefs();
+        toast(`已应用预设：${preset.title}`, "info");
+        paint();
+      }
+      return;
+    }
     case "apply-best":
       await applyBest();
       return;
@@ -618,6 +659,8 @@ async function startCore(): Promise<void> {
       enableSystemProxy: model.systemProxyEnabled,
       mixedPort: model.mixedPort,
       controllerPort: model.controllerPort,
+      tunStack: model.tunStack,
+      tunMtu: model.tunMtu,
     });
     model.core = status;
     pushLog(model, status.running ? "success" : "warn", "core", status.message);
@@ -626,10 +669,12 @@ async function startCore(): Promise<void> {
     if (status.running) {
       clearTrafficHistory(model);
       startTrafficPolling();
+      void refreshCoreLog();
     }
   } catch (error) {
     pushLog(model, "error", "core", `启动失败：${error}`);
     toast(`启动失败：${error}`, "error");
+    void refreshCoreLog();
   } finally {
     model.busy.start = false;
     paint();
@@ -733,16 +778,21 @@ async function runSpeed(): Promise<void> {
       port: model.speedParams.port,
     });
     model.speedResults = response.results;
-    model.speedResultsAt = Date.now();
+    model.speedResultsAt = response.cancelled ? model.speedResultsAt : Date.now();
     model.speedMessage = response.message;
     model.nodeSortKey = "latency";
     model.nodeSortAsc = true;
-    if (response.results[0]) {
+    if (!response.cancelled && response.results[0]) {
       model.selectedResultIp = response.results[0].ip;
     }
-    pushLog(model, "success", "speed", response.message);
+    pushLog(
+      model,
+      response.cancelled ? "warn" : "success",
+      "speed",
+      response.message,
+    );
     scheduleSavePrefs();
-    toast(response.message, "success");
+    toast(response.message, response.cancelled ? "info" : "success");
   } catch (error) {
     model.speedMessage = `测速失败：${error}`;
     pushLog(model, "error", "speed", model.speedMessage);
@@ -750,6 +800,76 @@ async function runSpeed(): Promise<void> {
   } finally {
     model.busy.speed = false;
     paint();
+  }
+}
+
+async function stopSpeed(): Promise<void> {
+  try {
+    const ok = await api.stopSpeedTest();
+    if (ok) {
+      model.speedMessage = "正在停止测速…";
+      toast("已请求停止测速", "info");
+      paint({ preserveFocus: true });
+    } else {
+      toast("当前没有进行中的测速", "info");
+    }
+  } catch (error) {
+    toast(`停止测速失败：${error}`, "error");
+  }
+}
+
+async function testCurrentNode(): Promise<void> {
+  if (!isLikelyIPv6(model.selectedAddress)) {
+    toast("请先选择有效 IPv6 入口", "error", "gotoNodes");
+    return;
+  }
+  model.busy.nodeTest = true;
+  model.nodeTestMessage = `正在测试 ${model.selectedAddress}…`;
+  paint();
+  try {
+    const response = await api.testCurrentNode({
+      selectedAddress: model.selectedAddress,
+      disableDownload: true,
+      threads: Math.min(model.speedParams.threads, 80),
+      pingCount: model.speedParams.pingCount,
+      port: model.speedParams.port,
+    });
+    const row = response.results[0];
+    model.nodeTestMessage = row
+      ? `${response.message} · ${row.latency} / 丢包 ${row.loss}`
+      : response.message;
+    toast(model.nodeTestMessage, response.cancelled ? "info" : "success");
+  } catch (error) {
+    model.nodeTestMessage = `当前节点测速失败：${error}`;
+    toast(model.nodeTestMessage, "error");
+  } finally {
+    model.busy.nodeTest = false;
+    paint();
+  }
+}
+
+async function probeConnectivity(): Promise<void> {
+  model.busy.connectivity = true;
+  model.connectivityMessage = "正在通过本地混合端口探测…";
+  paint();
+  try {
+    const result = await api.probeConnectivity({ mixedPort: model.mixedPort });
+    model.connectivityMessage = result.message;
+    toast(result.message, result.ok ? "success" : "error");
+  } catch (error) {
+    model.connectivityMessage = `代理连通性失败：${error}`;
+    toast(model.connectivityMessage, "error");
+  } finally {
+    model.busy.connectivity = false;
+    paint();
+  }
+}
+
+async function refreshCoreLog(): Promise<void> {
+  try {
+    model.coreLog = await api.tailCoreLog(240);
+  } catch (error) {
+    model.coreLog = `读取内核日志失败：${error}`;
   }
 }
 
@@ -897,6 +1017,10 @@ async function restorePrefs(): Promise<void> {
       model.controllerPort = prefs.controllerPort;
     }
     if (typeof prefs.closeToTray === "boolean") model.closeToTray = prefs.closeToTray;
+    if (prefs.tunStack?.trim()) model.tunStack = prefs.tunStack.trim();
+    if (prefs.tunMtu && prefs.tunMtu >= 1280 && prefs.tunMtu <= 9000) {
+      model.tunMtu = prefs.tunMtu;
+    }
   } catch {
     // browser preview keeps defaults
   }
@@ -956,8 +1080,14 @@ async function bootstrap(): Promise<void> {
     await restorePrefs();
     await hydrateBackendLogs();
     await bindBackendEvents();
+    try {
+      model.ipPresets = await api.listIpPresets();
+    } catch {
+      model.ipPresets = [];
+    }
     await refreshProfileSummary();
     await refreshAllStatus();
+    await refreshCoreLog();
     model.bootstrapped = true;
     model.bootstrapError = null;
     pushLog(model, "success", "app", "初始化完成");

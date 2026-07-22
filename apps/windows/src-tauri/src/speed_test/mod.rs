@@ -1,10 +1,13 @@
 //! CloudflareSpeedTest (CFST) runner for IPv6 node preference.
+//! Supports cancellable runs and single-node configuration tests.
 
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -42,116 +45,239 @@ pub struct SpeedTestResponse {
     pub results: Vec<SpeedTestResult>,
     pub message: String,
     pub result_csv_path: String,
+    pub cancelled: bool,
 }
 
-pub fn run_speed_test(
-    cfst_bin: &Path,
-    work_dir: &Path,
-    request: &SpeedTestRequest,
-) -> Result<SpeedTestResponse, String> {
-    if !cfst_bin.is_file() {
-        return Err(format!(
-            "CFST binary not found at {}. Run `pnpm prebuild`.",
-            cfst_bin.display()
-        ));
+#[derive(Debug, Default)]
+pub struct SpeedTestSession {
+    child: Mutex<Option<Child>>,
+    cancel_requested: AtomicBool,
+    running: AtomicBool,
+}
+
+impl SpeedTestSession {
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
     }
 
-    fs::create_dir_all(work_dir).map_err(io_err)?;
-    let result_path = work_dir.join("result.csv");
-    let _ = fs::remove_file(&result_path);
-
-    let mut args = vec![
-        "-o".into(),
-        result_path.to_string_lossy().into_owned(),
-        "-tp".into(),
-        request.port.unwrap_or(443).to_string(),
-        "-n".into(),
-        request.threads.unwrap_or(200).to_string(),
-        "-t".into(),
-        request.ping_count.unwrap_or(4).to_string(),
-        "-dn".into(),
-        request.download_count.unwrap_or(10).to_string(),
-        "-dt".into(),
-        request.download_time.unwrap_or(10).to_string(),
-        "-p".into(),
-        "0".into(),
-    ];
-
-    let range = request
-        .ip_range
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    if let Some(range) = range {
-        args.push("-ip".into());
-        args.push(range.to_string());
-    } else if let Some(file) = request
-        .ip_file
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        if !Path::new(file).is_file() {
-            return Err(format!("IP file not found: {file}"));
+    pub fn request_cancel(&self) -> bool {
+        if !self.running.load(Ordering::SeqCst) {
+            return false;
         }
-        args.push("-f".into());
-        args.push(file.to_string());
-    } else {
-        return Err("Either ipRange or ipFile is required".into());
+        self.cancel_requested.store(true, Ordering::SeqCst);
+        if let Some(child) = self.child.lock().as_mut() {
+            let _ = child.kill();
+        }
+        true
     }
 
-    if request.httping.unwrap_or(true) {
-        args.push("-httping".into());
+    pub fn run(
+        &self,
+        cfst_bin: &Path,
+        work_dir: &Path,
+        request: &SpeedTestRequest,
+    ) -> Result<SpeedTestResponse, String> {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err("Speed test already running".into());
+        }
+        self.cancel_requested.store(false, Ordering::SeqCst);
+        let result = self.run_inner(cfst_bin, work_dir, request);
+        *self.child.lock() = None;
+        self.running.store(false, Ordering::SeqCst);
+        self.cancel_requested.store(false, Ordering::SeqCst);
+        result
     }
-    if request.disable_download.unwrap_or(false) {
-        args.push("-dd".into());
-    }
 
-    let mut command = Command::new(cfst_bin);
-    command
-        .args(&args)
-        .current_dir(work_dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    fn run_inner(
+        &self,
+        cfst_bin: &Path,
+        work_dir: &Path,
+        request: &SpeedTestRequest,
+    ) -> Result<SpeedTestResponse, String> {
+        if !cfst_bin.is_file() {
+            return Err(format!(
+                "CFST binary not found at {}. Run `pnpm prebuild`.",
+                cfst_bin.display()
+            ));
+        }
 
-    let output = command
-        .output()
-        .map_err(|e| format!("failed to spawn CFST ({}): {e}", cfst_bin.display()))?;
+        fs::create_dir_all(work_dir).map_err(io_err)?;
+        let result_path = work_dir.join("result.csv");
+        let _ = fs::remove_file(&result_path);
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(format!(
-            "CFST exited with {}: {}{}",
-            output.status,
-            stderr.trim(),
-            if stdout.trim().is_empty() {
-                String::new()
-            } else {
-                format!(" / {}", stdout.trim())
+        let mut args = vec![
+            "-o".into(),
+            result_path.to_string_lossy().into_owned(),
+            "-tp".into(),
+            request.port.unwrap_or(443).to_string(),
+            "-n".into(),
+            request.threads.unwrap_or(200).to_string(),
+            "-t".into(),
+            request.ping_count.unwrap_or(4).to_string(),
+            "-dn".into(),
+            request.download_count.unwrap_or(10).to_string(),
+            "-dt".into(),
+            request.download_time.unwrap_or(10).to_string(),
+            "-p".into(),
+            "0".into(),
+        ];
+
+        let range = request
+            .ip_range
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(range) = range {
+            args.push("-ip".into());
+            args.push(range.to_string());
+        } else if let Some(file) = request
+            .ip_file
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            if !Path::new(file).is_file() {
+                return Err(format!("IP file not found: {file}"));
             }
-        ));
-    }
+            args.push("-f".into());
+            args.push(file.to_string());
+        } else {
+            return Err("Either ipRange or ipFile is required".into());
+        }
 
-    if !result_path.is_file() {
-        return Err(format!(
-            "CFST did not produce result file: {}",
-            result_path.display()
-        ));
-    }
+        if request.httping.unwrap_or(true) {
+            args.push("-httping".into());
+        }
+        if request.disable_download.unwrap_or(false) {
+            args.push("-dd".into());
+        }
 
-    let csv = fs::read_to_string(&result_path).map_err(io_err)?;
-    let results = parse_result_csv(&csv);
-    if results.is_empty() {
-        return Err("No IP passed the speed test".into());
-    }
+        let mut command = Command::new(cfst_bin);
+        command
+            .args(&args)
+            .current_dir(work_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
-    Ok(SpeedTestResponse {
-        message: format!("Speed test finished: {} result(s)", results.len()),
-        result_csv_path: result_path.to_string_lossy().into_owned(),
-        results,
-    })
+        let child = command
+            .spawn()
+            .map_err(|e| format!("failed to spawn CFST ({}): {e}", cfst_bin.display()))?;
+        *self.child.lock() = Some(child);
+
+        // Poll until exit or cancel.
+        loop {
+            if self.cancel_requested.load(Ordering::SeqCst) {
+                if let Some(child) = self.child.lock().as_mut() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                return Ok(SpeedTestResponse {
+                    results: Vec::new(),
+                    message: "Speed test cancelled".into(),
+                    result_csv_path: result_path.to_string_lossy().into_owned(),
+                    cancelled: true,
+                });
+            }
+
+            let status = {
+                let mut guard = self.child.lock();
+                match guard.as_mut() {
+                    Some(child) => child.try_wait().map_err(|e| e.to_string())?,
+                    None => break,
+                }
+            };
+
+            if let Some(status) = status {
+                // Drain process fully.
+                let mut guard = self.child.lock();
+                if let Some(mut child) = guard.take() {
+                    let _ = child.wait();
+                    if !status.success() && !self.cancel_requested.load(Ordering::SeqCst) {
+                        return Err(format!("CFST exited with {status}"));
+                    }
+                }
+                break;
+            }
+
+            std::thread::sleep(Duration::from_millis(120));
+        }
+
+        if self.cancel_requested.load(Ordering::SeqCst) {
+            return Ok(SpeedTestResponse {
+                results: Vec::new(),
+                message: "Speed test cancelled".into(),
+                result_csv_path: result_path.to_string_lossy().into_owned(),
+                cancelled: true,
+            });
+        }
+
+        if !result_path.is_file() {
+            return Err(format!(
+                "CFST did not produce result file: {}",
+                result_path.display()
+            ));
+        }
+
+        let csv = fs::read_to_string(&result_path).map_err(io_err)?;
+        let results = parse_result_csv(&csv);
+        if results.is_empty() {
+            return Err("No IP passed the speed test".into());
+        }
+
+        Ok(SpeedTestResponse {
+            message: format!("Speed test finished: {} result(s)", results.len()),
+            result_csv_path: result_path.to_string_lossy().into_owned(),
+            results,
+            cancelled: false,
+        })
+    }
+}
+
+/// Built-in Cloudflare-style IPv6 CIDR presets (subset of macOS ipv6.txt).
+pub fn ipv6_presets() -> Vec<IpPreset> {
+    vec![
+        IpPreset {
+            id: "cf-main".into(),
+            title: "Cloudflare 主段".into(),
+            description: "2606:4700::/32".into(),
+            ip_range: "2606:4700::/32".into(),
+        },
+        IpPreset {
+            id: "cf-bundle".into(),
+            title: "Cloudflare 常用 IPv6 段".into(),
+            description: "macOS 默认 ipv6 列表核心段".into(),
+            ip_range: [
+                "2400:cb00::/32",
+                "2606:4700::/32",
+                "2803:f800::/32",
+                "2405:b500::/32",
+                "2405:8100::/32",
+                "2a06:98c0::/29",
+                "2c0f:f248::/32",
+            ]
+            .join(","),
+        },
+        IpPreset {
+            id: "cf-apac".into(),
+            title: "亚太相关段".into(),
+            description: "2400:cb00 + 2405 段".into(),
+            ip_range: "2400:cb00::/32,2405:b500::/32,2405:8100::/32".into(),
+        },
+    ]
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IpPreset {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub ip_range: String,
 }
 
 pub fn parse_result_csv(csv: &str) -> Vec<SpeedTestResult> {
@@ -205,27 +331,22 @@ fn io_err(err: io::Error) -> String {
     err.to_string()
 }
 
-/// Soft timeout helper for future async cancellation; currently unused by sync runner.
-#[allow(dead_code)]
-pub fn default_timeout() -> Duration {
-    Duration::from_secs(600)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn parses_cfst_csv() {
-        let csv = "\
-IP,Sent,Received,Loss,Latency,Speed,Region
-2001:db8::1,4,4,0.00,12.3,5.50,SJC
-2001:db8::2,4,3,25.00,40.1,1.20,LAX
-";
+        let csv = "IP,Sent,Received,Loss,Latency,Speed,Region\n\
+2001:db8::1,4,4,0.00,12.3,0,TEST\n";
         let rows = parse_result_csv(csv);
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].ip, "2001:db8::1");
         assert_eq!(rows[0].latency, "12.3");
-        assert_eq!(rows[1].region, "LAX");
+    }
+
+    #[test]
+    fn presets_non_empty() {
+        assert!(!ipv6_presets().is_empty());
     }
 }

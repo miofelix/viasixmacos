@@ -35,6 +35,10 @@ pub struct SessionPrefs {
     pub controller_port: Option<u16>,
     #[serde(default)]
     pub close_to_tray: Option<bool>,
+    #[serde(default)]
+    pub tun_stack: Option<String>,
+    #[serde(default)]
+    pub tun_mtu: Option<u16>,
 }
 
 pub struct PrefsStore {
@@ -95,6 +99,8 @@ mod tests {
             mixed_port: Some(11451),
             controller_port: Some(9090),
             close_to_tray: Some(true),
+            tun_stack: Some("mixed".into()),
+            tun_mtu: Some(1500),
         };
         store.save(&prefs).unwrap();
         let loaded = store.load();
