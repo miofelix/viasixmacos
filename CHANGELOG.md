@@ -12,6 +12,7 @@
 - Windows：系统代理启停（注册表快照恢复）与出口 IP 检测。
 - Windows：CloudflareSpeedTest（CFST）拉取、测速运行与结果表。
 - Android MVP：Gradle `:core` 投影（contracts 对齐）、Compose UI、`VpnService` 骨架。
+- 跨端 `make projection-test`：macOS + Windows + Android 契约用例一键校验；Android mihomo 资产拉取脚本占位。
 - 首页新增实时流量统计：上下行速率、近 10 分钟流量曲线、会话累计上传/下载与 Mihomo 内存占用。
 - 连接运行中菜单栏显示两行上下行速率；菜单内同步展示速率摘要。
 - 通过 Mihomo external-controller 的 `/traffic`、`/memory` 与 `/connections`（仅 totals）WebSocket 订阅采集数据，断线自动重连。

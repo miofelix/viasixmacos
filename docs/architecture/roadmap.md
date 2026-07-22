@@ -26,6 +26,8 @@
 - [x] Kotlin 投影 + contracts fixtures（`gradle :core:test`）
 - [x] Compose UI 生成运行配置
 - [x] `VpnService` 权限/前台会话骨架
+- [x] `assembleDebug` APK 可构建
+- [x] mihomo 资产拉取脚本（未接线）
 - [ ] 嵌入 mihomo 与封包转发
 - [ ] 无系统代理（产品矩阵已约定）
 

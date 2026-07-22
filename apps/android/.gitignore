@@ -10,3 +10,5 @@ captures/
 *.aab
 *.ap_
 *.dex
+app/src/main/assets/mihomo/mihomo-*
+!app/src/main/assets/mihomo/.gitkeep

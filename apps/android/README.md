@@ -19,9 +19,9 @@
 
 ```bash
 cd apps/android
-gradle :core:test          # contracts fixtures
-# 有 Android SDK 时：
-# gradle :app:assembleDebug
+gradle :core:test            # contracts fixtures
+gradle :app:assembleDebug    # 生成 debug APK（需 Android SDK）
+node scripts/fetch-mihomo.mjs  # 可选：下载 arm64 mihomo 到 assets（尚未接线）
 ```
 
 仓库根：
@@ -40,6 +40,7 @@ make android-skeleton
 | VpnService 权限与前台会话 | ✓ 骨架（未嵌入 mihomo） |
 | 系统代理 | 不适用 |
 | 完整 TUN 封包转发 | 未做 |
+| mihomo 资产拉取脚本 | ✓（`scripts/fetch-mihomo.mjs`，未接线） |
 
 ## 契约
 

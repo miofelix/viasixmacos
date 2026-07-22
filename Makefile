@@ -17,6 +17,8 @@ CONTRACTS_DIR := contracts
 	windows-test \
 	android-skeleton \
 	android-test \
+	android-assemble \
+	projection-test \
 	contracts-check \
 	check \
 	check-all
@@ -33,6 +35,8 @@ help:
 	@echo "  make windows-test      - Rust contract projection tests (Windows host crate)"
 	@echo "  make android-skeleton  - verify Android app tree"
 	@echo "  make android-test      - JVM contract projection tests (:core)"
+	@echo "  make android-assemble  - assemble debug APK (requires Android SDK)"
+	@echo "  make projection-test   - all platforms contracts fixtures only"
 	@echo "  make check             - contracts + macOS + windows-test + android-test"
 	@echo "  make check-all         - check + platform skeletons"
 
@@ -91,6 +95,18 @@ android-skeleton:
 
 android-test:
 	cd "$(ANDROID_DIR)" && gradle :core:test --no-daemon
+
+android-assemble:
+	cd "$(ANDROID_DIR)" && gradle :app:assembleDebug --no-daemon
+
+projection-test: contracts-check
+	@echo "==> macOS ContractFixtureTests"
+	cd apps/macos && swift test --filter ContractFixtureTests
+	@echo "==> Windows Rust contracts"
+	$(MAKE) windows-test
+	@echo "==> Android JVM contracts"
+	$(MAKE) android-test
+	@echo "projection-test OK (macOS + Windows + Android)"
 
 check: contracts-check macos-check windows-test android-test
 
