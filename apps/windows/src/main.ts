@@ -33,6 +33,32 @@ type SpeedTestResponse = {
   message: string;
   resultCsvPath: string;
 };
+type SessionPrefs = {
+  profileYaml: string;
+  selectedAddress: string;
+  routingMode: string;
+  systemProxyEnabled: boolean;
+  lastSpeedIpRange: string;
+  disableDownload: boolean;
+};
+
+const DEFAULT_PROFILE = `proxies:
+  - name: My VLESS
+    type: vless
+    server: origin.example.com
+    port: 443
+    uuid: 11111111-1111-4111-1111-111111111111
+    network: ws
+    tls: true
+    servername: origin.example.com
+    ws-opts:
+      path: /proxy
+      headers:
+        Host: origin.example.com
+x-viasix:
+  version: 1
+  primary-server: selected-ip
+`;
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
@@ -42,7 +68,7 @@ if (!app) {
 app.innerHTML = `
   <main class="shell">
     <header>
-      <h1>ViaSix <span class="badge">Windows MVP</span></h1>
+      <h1>ViaSix <span class="badge" id="app-version">Windows MVP</span></h1>
       <p class="muted">IPv6-first · 投影 · Mihomo · 系统代理 · 出口检测 · CFST 测速</p>
     </header>
 
@@ -137,10 +163,45 @@ const speedStatusEl = document.querySelector<HTMLParagraphElement>("#speed-statu
 const speedTableBody = document.querySelector<HTMLTableSectionElement>("#speed-table tbody")!;
 
 let lastSpeedResults: SpeedTestResult[] = [];
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function setStatus(text: string, isError = false) {
   statusEl.textContent = text;
   statusEl.classList.toggle("error", isError);
+}
+
+function currentPrefs(): SessionPrefs {
+  return {
+    profileYaml: profileEl.value,
+    selectedAddress: selectedIpEl.value,
+    routingMode: modeEl.value,
+    systemProxyEnabled: sysProxyEl.checked,
+    lastSpeedIpRange: speedIpEl.value,
+    disableDownload: speedDdEl.checked,
+  };
+}
+
+function scheduleSavePrefs() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    void invoke("save_session_prefs", { prefs: currentPrefs() }).catch(() => {
+      // ignore when not in tauri webview
+    });
+  }, 400);
+}
+
+async function restorePrefs() {
+  try {
+    const prefs = await invoke<SessionPrefs>("load_session_prefs");
+    if (prefs.profileYaml?.trim()) profileEl.value = prefs.profileYaml;
+    if (prefs.selectedAddress?.trim()) selectedIpEl.value = prefs.selectedAddress;
+    if (prefs.routingMode) modeEl.value = prefs.routingMode;
+    sysProxyEl.checked = !!prefs.systemProxyEnabled;
+    if (prefs.lastSpeedIpRange?.trim()) speedIpEl.value = prefs.lastSpeedIpRange;
+    speedDdEl.checked = prefs.disableDownload !== false;
+  } catch {
+    // browser preview: keep defaults
+  }
 }
 
 function renderSpeedResults(results: SpeedTestResult[]) {
@@ -196,6 +257,7 @@ document.querySelector("#btn-project")!.addEventListener("click", async () => {
     });
     runtimeEl.textContent = yaml;
     setStatus("投影成功");
+    scheduleSavePrefs();
   } catch (error) {
     runtimeEl.textContent = String(error);
     setStatus(`投影失败：${error}`, true);
@@ -302,27 +364,28 @@ document.querySelector("#btn-apply-best")!.addEventListener("click", () => {
   speedStatusEl.classList.remove("error");
   speedStatusEl.textContent = `已应用最佳结果：${selectedIpEl.value}`;
   setStatus(`已选择节点 ${selectedIpEl.value}`);
+  scheduleSavePrefs();
 });
 
 selectedIpEl.value = "2001:db8::1";
 speedIpEl.value = "2606:4700::/32";
-profileEl.value = `proxies:
-  - name: My VLESS
-    type: vless
-    server: origin.example.com
-    port: 443
-    uuid: 11111111-1111-4111-1111-111111111111
-    network: ws
-    tls: true
-    servername: origin.example.com
-    ws-opts:
-      path: /proxy
-      headers:
-        Host: origin.example.com
-x-viasix:
-  version: 1
-  primary-server: selected-ip
-`;
+profileEl.value = DEFAULT_PROFILE;
 
-void refreshCoreStatus();
-void refreshProxyStatus();
+for (const el of [profileEl, selectedIpEl, modeEl, sysProxyEl, speedIpEl, speedDdEl]) {
+  el.addEventListener("change", scheduleSavePrefs);
+  el.addEventListener("input", scheduleSavePrefs);
+}
+
+void (async () => {
+  try {
+    const version = await invoke<string>("app_version");
+    const badge = document.querySelector("#app-version");
+    if (badge) badge.textContent = `v${version}`;
+  } catch {
+    // ignore
+  }
+  await restorePrefs();
+  await refreshCoreStatus();
+  await refreshProxyStatus();
+  scheduleSavePrefs();
+})();

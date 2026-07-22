@@ -1,9 +1,11 @@
 mod exit_ip;
+mod prefs;
 mod projection;
 mod runtime;
 mod speed_test;
 mod system_proxy;
 
+use prefs::{PrefsStore, SessionPrefs};
 use projection::{ProjectOptions, RoutingMode};
 use runtime::{CoreStatus, CoreRuntime, SharedCore};
 use speed_test::{SpeedTestRequest, SpeedTestResponse};
@@ -15,6 +17,7 @@ use tauri::{AppHandle, Manager, State};
 struct AppServices {
     core: SharedCore,
     system_proxy: SystemProxyManager,
+    prefs: PrefsStore,
     default_mixed_port: u16,
     data_dir: PathBuf,
 }
@@ -145,13 +148,30 @@ fn run_speed_test(
     services: State<'_, SharedServices>,
     request: SpeedTestRequest,
 ) -> Result<SpeedTestResponse, String> {
-    let bin = resolve_bundled_binary(&app, "viasix-cfst")
-        .or_else(|_| {
-            let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sidecar");
-            speed_test::resolve_cfst_binary(&sidecar)
-        })?;
+    let bin = resolve_bundled_binary(&app, "viasix-cfst").or_else(|_| {
+        let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sidecar");
+        speed_test::resolve_cfst_binary(&sidecar)
+    })?;
     let work = services.data_dir.join("cfst");
     speed_test::run_speed_test(&bin, &work, &request)
+}
+
+#[tauri::command]
+fn load_session_prefs(services: State<'_, SharedServices>) -> SessionPrefs {
+    services.prefs.load()
+}
+
+#[tauri::command]
+fn save_session_prefs(
+    services: State<'_, SharedServices>,
+    prefs: SessionPrefs,
+) -> Result<(), String> {
+    services.prefs.save(&prefs)
+}
+
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 fn resolve_mihomo_binary(app: &AppHandle) -> Result<PathBuf, String> {
@@ -222,6 +242,7 @@ pub fn run() {
             let services = Arc::new(AppServices {
                 core: Arc::new(CoreRuntime::new(work)),
                 system_proxy: SystemProxyManager::new(data.clone()),
+                prefs: PrefsStore::new(data.clone()),
                 default_mixed_port: ProjectOptions::default().mixed_port,
                 data_dir: data,
             });
@@ -236,7 +257,10 @@ pub fn run() {
             system_proxy_status,
             set_system_proxy,
             detect_exit_ip,
-            run_speed_test
+            run_speed_test,
+            load_session_prefs,
+            save_session_prefs,
+            app_version
         ])
         .run(tauri::generate_context!())
         .expect("error while running ViaSix Windows");

@@ -47,6 +47,7 @@ make windows-skeleton         # 目录/文件校验
 | 测速（CFST） | ✓（`pnpm prebuild` 拉取） |
 | Wintun / Service | 未做（二期） |
 | NSIS CI 构建 | ✓（`.github/workflows/windows-build.yml`） |
+| 会话偏好持久化 | ✓（app data `session-prefs.json`） |
 
 ## 契约
 
