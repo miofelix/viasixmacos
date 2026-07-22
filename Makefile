@@ -91,6 +91,9 @@ android-skeleton:
 	@test -f "$(ANDROID_DIR)/app/src/main/java/dev/viasix/app/MainActivity.kt"
 	@test -f "$(ANDROID_DIR)/app/src/main/java/dev/viasix/app/vpn/ViaSixVpnService.kt"
 	@test -f "$(ANDROID_DIR)/core/src/main/kotlin/dev/viasix/core/projection/MihomoProjection.kt"
+	@test -f "$(ANDROID_DIR)/app/src/main/java/dev/viasix/app/mihomo/MihomoInstaller.kt"
+	@test -f "$(ANDROID_DIR)/app/src/main/java/dev/viasix/app/mihomo/MihomoProcess.kt"
+	@test -f "$(ANDROID_DIR)/scripts/fetch-mihomo.mjs"
 	@echo "android skeleton OK"
 
 android-test:

@@ -52,6 +52,8 @@ data class ProjectOptions(
     val selectedAddress: String? = null,
     val listenAddress: String = "127.0.0.1",
     val mixedPort: Int = 11451,
+    val controllerPort: Int = 9090,
+    val controllerSecret: String? = null,
     val logLevel: String = "info",
     val ipv6Enabled: Boolean = true,
     val udpEnabled: Boolean = true,
@@ -79,6 +81,13 @@ object MihomoProjection {
                 "store-fake-ip" to false,
             ),
         )
+        val secret = options.controllerSecret?.trim().orEmpty()
+        if (secret.isNotEmpty() && options.controllerPort in 1..65535 &&
+            options.controllerPort != options.mixedPort
+        ) {
+            runtime["external-controller"] = "127.0.0.1:${options.controllerPort}"
+            runtime["secret"] = secret
+        }
 
         if (options.routingMode == RoutingMode.DIRECT) {
             runtime["rules"] = listOf("MATCH,DIRECT")

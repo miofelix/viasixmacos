@@ -52,7 +52,8 @@ async function main() {
     return;
   }
   const version = await latestVersion();
-  const name = "mihomo-android-arm64";
+  // Official asset name uses arm64-v8 (see MetaCubeX/mihomo releases).
+  const name = "mihomo-android-arm64-v8";
   const url = `https://github.com/MetaCubeX/mihomo/releases/download/${version}/${name}-${version}.gz`;
   console.log(`fetching ${url}`);
   const tmp = path.join(outDir, ".tmp.gz");
@@ -61,7 +62,7 @@ async function main() {
   await chmod(plainPath, 0o755);
   await rm(tmp, { force: true });
   console.log(`wrote ${plainPath}`);
-  console.log("Note: ViaSixVpnService does not exec this binary yet.");
+  console.log("Asset ready for ViaSixVpnService / MihomoInstaller.");
 }
 
 main().catch((err) => {

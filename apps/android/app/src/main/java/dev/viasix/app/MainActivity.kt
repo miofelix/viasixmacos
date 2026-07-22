@@ -15,6 +15,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -32,13 +36,17 @@ import dev.viasix.core.projection.ProjectOptions
 import dev.viasix.core.projection.RoutingMode
 
 class MainActivity : ComponentActivity() {
+    private var pendingStart: Intent? = null
+
     private val vpnPermission =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
-                startService(Intent(this, ViaSixVpnService::class.java))
+                pendingStart?.let { startForegroundServiceCompat(it) }
             }
+            pendingStart = null
         }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -60,8 +68,18 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     var selectedIp by remember { mutableStateOf("2001:db8::1") }
+                    var mode by remember { mutableStateOf(RoutingMode.RULE) }
+                    var modeExpanded by remember { mutableStateOf(false) }
                     var preview by remember { mutableStateOf("# 点击生成运行配置") }
-                    var status by remember { mutableStateOf("Android MVP · VpnService 骨架") }
+                    var status by remember {
+                        mutableStateOf("Android · 投影 + mihomo 用户态 + VPN HTTP 代理")
+                    }
+
+                    fun buildStartIntent(): Intent =
+                        Intent(this@MainActivity, ViaSixVpnService::class.java)
+                            .putExtra(ViaSixVpnService.EXTRA_PROFILE, profile)
+                            .putExtra(ViaSixVpnService.EXTRA_SELECTED_IP, selectedIp)
+                            .putExtra(ViaSixVpnService.EXTRA_MODE, mode.wire)
 
                     Column(
                         modifier =
@@ -73,7 +91,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         Text("ViaSix", style = MaterialTheme.typography.headlineMedium)
                         Text(
-                            "IPv6-first · contracts 投影 · VpnService（TUN 语义）",
+                            "IPv6-first · contracts 投影 · mihomo · VpnService HTTP 代理",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         OutlinedTextField(
@@ -90,15 +108,52 @@ class MainActivity : ComponentActivity() {
                             label = { Text("选中 IPv6") },
                             singleLine = true,
                         )
+                        ExposedDropdownMenuBox(
+                            expanded = modeExpanded,
+                            onExpandedChange = { modeExpanded = it },
+                        ) {
+                            OutlinedTextField(
+                                value = mode.wire,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("路由模式") },
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = modeExpanded)
+                                },
+                                modifier =
+                                    Modifier
+                                        .menuAnchor()
+                                        .fillMaxWidth(),
+                            )
+                            ExposedDropdownMenu(
+                                expanded = modeExpanded,
+                                onDismissRequest = { modeExpanded = false },
+                            ) {
+                                RoutingMode.entries.forEach { item ->
+                                    DropdownMenuItem(
+                                        text = { Text(item.wire) },
+                                        onClick = {
+                                            mode = item
+                                            modeExpanded = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
                         Button(
                             onClick = {
                                 try {
                                     preview =
                                         MihomoProjection.projectYaml(
-                                            profile,
+                                            if (mode == RoutingMode.DIRECT) null else profile,
                                             ProjectOptions(
-                                                routingMode = RoutingMode.RULE,
-                                                selectedAddress = selectedIp,
+                                                routingMode = mode,
+                                                selectedAddress =
+                                                    if (mode == RoutingMode.DIRECT) {
+                                                        null
+                                                    } else {
+                                                        selectedIp
+                                                    },
                                             ),
                                         )
                                     status = "投影成功"
@@ -115,17 +170,19 @@ class MainActivity : ComponentActivity() {
                         }
                         Button(
                             onClick = {
+                                val intent = buildStartIntent()
                                 val prepare = VpnService.prepare(this@MainActivity)
                                 if (prepare != null) {
+                                    pendingStart = intent
                                     vpnPermission.launch(prepare)
                                     status = "请求 VPN 权限…"
                                 } else {
-                                    startService(Intent(this@MainActivity, ViaSixVpnService::class.java))
-                                    status = "VpnService 已请求启动（骨架，尚未嵌入 mihomo）"
+                                    startForegroundServiceCompat(intent)
+                                    status = "正在启动 VPN + mihomo…"
                                 }
                             },
                         ) {
-                            Text("请求 VPN / 启动服务骨架")
+                            Text("启动（VPN + mihomo）")
                         }
                         Button(
                             onClick = {
@@ -136,13 +193,22 @@ class MainActivity : ComponentActivity() {
                                 status = "已发送停止意图"
                             },
                         ) {
-                            Text("停止 VPN 服务")
+                            Text("停止")
                         }
                         Text(status, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            "说明：当前通过 VpnService.setHttpProxy 发布 mixed 代理；" +
+                                "未做 0.0.0.0/0 全量路由，避免未接 TUN 时断网。需先 node scripts/fetch-mihomo.mjs。",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                         Text(preview, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
         }
+    }
+
+    private fun startForegroundServiceCompat(intent: Intent) {
+        startForegroundService(intent)
     }
 }

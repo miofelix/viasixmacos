@@ -27,8 +27,9 @@
 - [x] Compose UI 生成运行配置
 - [x] `VpnService` 权限/前台会话骨架
 - [x] `assembleDebug` APK 可构建
-- [x] mihomo 资产拉取脚本（未接线）
-- [ ] 嵌入 mihomo 与封包转发
+- [x] mihomo 资产拉取脚本
+- [x] 嵌入 mihomo 用户态 + VPN HTTP 代理（`setHttpProxy`）
+- [ ] 全量路由 / TUN fd 封包转发
 - [ ] 无系统代理（产品矩阵已约定）
 
 ## 阶段 3 — 共享实现（按需）

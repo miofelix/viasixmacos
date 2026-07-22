@@ -11,7 +11,8 @@
 | UI | Kotlin + Jetpack Compose |
 | 投影 | `:core` JVM 库，contracts 对齐 |
 | 虚拟网卡 | `ViaSixVpnService`（`VpnService`） |
-| 代理内核 | 预编译 mihomo（后续嵌入） |
+| 代理内核 | 预编译 mihomo（assets `mihomo-arm64`，`fetch-mihomo.mjs`） |
+| 网络接入 | VpnService + HTTP 代理（非全量 TUN） |
 | 系统代理 | 不支持 |
 
 ## 验证

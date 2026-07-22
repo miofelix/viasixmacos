@@ -5,60 +5,138 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import dev.viasix.app.MainActivity
+import dev.viasix.app.mihomo.MihomoInstaller
+import dev.viasix.app.mihomo.MihomoProcess
+import dev.viasix.core.projection.MihomoProjection
+import dev.viasix.core.projection.ProjectError
+import dev.viasix.core.projection.ProjectOptions
+import dev.viasix.core.projection.RoutingMode
+import java.io.File
+import java.util.UUID
+import kotlin.concurrent.thread
 
 /**
- * Android virtual-network path (product counterpart of desktop TUN).
- *
- * MVP scaffold: creates a VpnService session and foreground notification.
- * Embedding mihomo + packet plumbing lands in a follow-up change.
+ * Android network path: projects profile → starts mihomo → establishes a VPN
+ * session that publishes an HTTP/HTTPS proxy (API 29+) for apps using the VPN
+ * network. Full packet TUN into mihomo is a later step.
  */
 class ViaSixVpnService : VpnService() {
     private var tunnel: ParcelFileDescriptor? = null
+    private var mihomo: MihomoProcess? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            stopTunnel()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            shutdownAll("stopped by user")
             return START_NOT_STICKY
         }
 
-        startForeground(NOTIFICATION_ID, buildNotification("ViaSix VPN scaffold running"))
-        if (tunnel == null) {
+        val profile = intent?.getStringExtra(EXTRA_PROFILE).orEmpty()
+        val selectedIp = intent?.getStringExtra(EXTRA_SELECTED_IP)
+        val modeWire = intent?.getStringExtra(EXTRA_MODE) ?: "rule"
+        val mode = RoutingMode.parse(modeWire) ?: RoutingMode.RULE
+
+        startForeground(NOTIFICATION_ID, buildNotification("Starting ViaSix…"))
+
+        thread(name = "viasix-vpn-start", isDaemon = true) {
             try {
-                tunnel =
-                    Builder()
-                        .setSession("ViaSix")
-                        .addAddress("10.0.0.2", 32)
-                        .addRoute("0.0.0.0", 0)
-                        // Keep DNS out of this scaffold; real path will inject mihomo DNS.
-                        .setMtu(1500)
-                        .establish()
-                Log.i(TAG, "VPN interface established (scaffold)")
+                startStack(profile, selectedIp, mode)
             } catch (error: Exception) {
-                Log.e(TAG, "Failed to establish VPN", error)
-                stopSelf()
+                Log.e(TAG, "start failed", error)
+                updateNotification("Start failed: ${error.message}")
+                shutdownAll("start failed")
             }
         }
         return START_STICKY
     }
 
+    private fun startStack(profile: String, selectedIp: String?, mode: RoutingMode) {
+        val secret = UUID.randomUUID().toString().replace("-", "")
+        val options =
+            ProjectOptions(
+                routingMode = mode,
+                selectedAddress = if (mode == RoutingMode.DIRECT) null else selectedIp,
+                listenAddress = "127.0.0.1",
+                mixedPort = MIXED_PORT,
+                controllerPort = CONTROLLER_PORT,
+                controllerSecret = secret,
+            )
+
+        val yaml =
+            try {
+                MihomoProjection.projectYaml(
+                    if (mode == RoutingMode.DIRECT) null else profile,
+                    options,
+                )
+            } catch (error: ProjectError) {
+                throw IllegalArgumentException("projection: ${error.contractCode}", error)
+            }
+
+        val binary = MihomoInstaller.installIfNeeded(this)
+        val workDir = File(filesDir, "mihomo-runtime")
+        val process = MihomoProcess(binary, workDir)
+        process.start(yaml)
+        mihomo = process
+
+        // VPN session for system integration + HTTP proxy (Q+).
+        // Intentionally avoid 0.0.0.0/0 routes until packet path is implemented,
+        // so we don't black-hole traffic when mihomo is only a local mixed proxy.
+        val builder =
+            Builder()
+                .setSession("ViaSix")
+                .setMtu(1500)
+                .addAddress("10.10.0.2", 32)
+                .addDnsServer("1.1.1.1")
+                .addDisallowedApplication(packageName)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            builder.setHttpProxy(
+                ProxyInfo.buildDirectProxy(
+                    "127.0.0.1",
+                    MIXED_PORT,
+                    listOf("localhost", "127.0.0.1", "::1"),
+                ),
+            )
+        }
+
+        tunnel?.close()
+        tunnel = builder.establish()
+            ?: throw IllegalStateException("VpnService.Builder.establish() returned null")
+
+        updateNotification("Mihomo running · mixed 127.0.0.1:$MIXED_PORT")
+        Log.i(TAG, "stack ready; controller 127.0.0.1:$CONTROLLER_PORT")
+    }
+
     override fun onDestroy() {
-        stopTunnel()
+        shutdownAll("destroyed")
         super.onDestroy()
     }
 
-    private fun stopTunnel() {
+    private fun shutdownAll(reason: String) {
+        Log.i(TAG, "shutdown: $reason")
+        try {
+            mihomo?.stop()
+        } catch (error: Exception) {
+            Log.w(TAG, "mihomo stop: ${error.message}")
+        }
+        mihomo = null
         try {
             tunnel?.close()
         } catch (_: Exception) {
         }
         tunnel = null
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun updateNotification(content: String) {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, buildNotification(content))
     }
 
     private fun buildNotification(content: String): Notification {
@@ -97,6 +175,12 @@ class ViaSixVpnService : VpnService() {
 
     companion object {
         const val ACTION_STOP = "dev.viasix.app.vpn.STOP"
+        const val EXTRA_PROFILE = "profile"
+        const val EXTRA_SELECTED_IP = "selected_ip"
+        const val EXTRA_MODE = "mode"
+        const val MIXED_PORT = 11451
+        const val CONTROLLER_PORT = 9090
+
         private const val CHANNEL_ID = "viasix_vpn"
         private const val NOTIFICATION_ID = 42
         private const val TAG = "ViaSixVpnService"

@@ -37,10 +37,12 @@ make android-skeleton
 | --- | --- |
 | contracts 投影 | ✓（`:core` 测试） |
 | 基础 UI 生成运行配置 | ✓ |
-| VpnService 权限与前台会话 | ✓ 骨架（未嵌入 mihomo） |
+| VpnService 权限与前台会话 | ✓ |
+| mihomo 用户态启动（assets → filesDir） | ✓ |
+| VpnService HTTP 代理（API 29+ `setHttpProxy`） | ✓ |
 | 系统代理 | 不适用 |
-| 完整 TUN 封包转发 | 未做 |
-| mihomo 资产拉取脚本 | ✓（`scripts/fetch-mihomo.mjs`，未接线） |
+| 0.0.0.0/0 全量路由 / TUN fd 接入 | 未做（避免未接隧道时断网） |
+| mihomo 资产拉取脚本 | ✓ `scripts/fetch-mihomo.mjs` |
 
 ## 契约
 
