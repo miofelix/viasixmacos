@@ -19,6 +19,7 @@ type VirtualNetworkStatus = {
   enabled: boolean;
   backend: string;
   message: string;
+  wintunPath: string | null;
 };
 type TrafficSnapshot = {
   live: boolean;
@@ -118,8 +119,8 @@ app.innerHTML = `
         <span>启用系统代理（127.0.0.1:11451，仅 Windows 生效）</span>
       </label>
       <label class="check">
-        <input id="virt-net" type="checkbox" disabled />
-        <span id="virt-net-label">虚拟网卡 / Wintun（规划中，当前不可用）</span>
+        <input id="virt-net" type="checkbox" />
+        <span id="virt-net-label">虚拟网卡 / Wintun（需 wintun.dll + 通常需管理员）</span>
       </label>
       <div class="actions">
         <button id="btn-project" type="button">生成运行配置</button>
@@ -189,6 +190,7 @@ const trafficStatusEl = document.querySelector<HTMLParagraphElement>("#traffic-s
 const healthStatusEl = document.querySelector<HTMLParagraphElement>("#health-status")!;
 const virtStatusEl = document.querySelector<HTMLParagraphElement>("#virt-status")!;
 const virtNetLabelEl = document.querySelector<HTMLSpanElement>("#virt-net-label")!;
+const virtNetEl = document.querySelector<HTMLInputElement>("#virt-net")!;
 const exitIpEl = document.querySelector<HTMLParagraphElement>("#exit-ip")!;
 const speedIpEl = document.querySelector<HTMLInputElement>("#speed-ip")!;
 const speedDdEl = document.querySelector<HTMLInputElement>("#speed-dd")!;
@@ -285,13 +287,33 @@ async function refreshVirtualNetwork() {
   try {
     const status = await invoke<VirtualNetworkStatus>("virtual_network_status");
     virtStatusEl.textContent = status.message;
+    virtNetEl.disabled = !status.available;
+    virtNetEl.checked = status.enabled;
     virtNetLabelEl.textContent = status.available
-      ? "虚拟网卡 / Wintun"
-      : "虚拟网卡 / Wintun（规划中，当前不可用）";
+      ? "虚拟网卡 / Mihomo TUN + Wintun（启用后需重新启动 Mihomo；通常需管理员）"
+      : "虚拟网卡 / Wintun（不可用：请在 Windows 上 pnpm prebuild 拉取 wintun.dll）";
   } catch (error) {
     virtStatusEl.textContent = `虚拟网卡状态不可用：${error}`;
+    virtNetEl.disabled = true;
   }
 }
+
+virtNetEl.addEventListener("change", async () => {
+  try {
+    const status = await invoke<VirtualNetworkStatus>("set_virtual_network", {
+      enabled: virtNetEl.checked,
+    });
+    virtStatusEl.textContent = status.message;
+    virtStatusEl.classList.remove("error");
+    if (status.enabled) {
+      setStatus("已请求 TUN：请点击「启动 Mihomo」应用（管理员权限通常必需）");
+    }
+  } catch (error) {
+    virtNetEl.checked = false;
+    virtStatusEl.textContent = `虚拟网卡切换失败：${error}`;
+    virtStatusEl.classList.add("error");
+  }
+});
 
 async function refreshTraffic() {
   try {

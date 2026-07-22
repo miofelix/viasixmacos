@@ -50,7 +50,7 @@ make windows-skeleton         # 目录/文件校验
 | 会话偏好持久化 | ✓（app data `session-prefs.json`） |
 | Controller 健康探测 | ✓ |
 | 实时流量（controller `/connections` 轮询） | ✓ |
-| 虚拟网卡 API 骨架 | ✓（fail-closed，见 Docs/VIRTUAL_NETWORK.md） |
+| 虚拟网卡 Mihomo TUN + Wintun | ✓（需 wintun.dll + 通常需管理员；见 Docs/VIRTUAL_NETWORK.md） |
 
 ## 契约
 

@@ -17,12 +17,12 @@
 - [x] 系统代理（Windows 注册表 + 快照恢复；非 Windows stub）
 - [x] 出口 IP 检测
 - [x] 测速（CFST 拉取 + 运行 + 结果表）
-- [x] 虚拟网卡 API 骨架（fail-closed；Wintun/Service 未实现）
+- [x] 虚拟网卡：Mihomo TUN + Wintun.dll（进程内；通常需管理员）
 - [x] Mihomo controller 健康探测
 - [x] 实时流量采样（`/connections` 轮询）
-- [ ] TUN / Windows Service 真实集成（需提权与签名决策）
 - [x] NSIS CI 流水线（`windows-build.yml`，Windows runner）
-- [ ] Authenticode 签名与正式 tag 发布
+- [ ] 独立 Windows Service 隔离（可选增强）
+- [ ] Authenticode 签名（需证书密钥，仓库外配置）
 
 ## 阶段 2 — Android MVP
 
@@ -41,6 +41,7 @@
 ## 阶段 3 — 共享与发布
 
 - [x] `packages/mihomo-config` 约定 + `validate-cases.mjs`
+- [x] `packages/viasix-mihomo-config` Rust 投影库（Windows 使用）
 - [x] Tag 触发 draft Release 工作流（`release.yml`）
-- [ ] 共享运行时（Rust/Go FFI）——仅当三端投影持续漂移时
-- [ ] 各端签名产物挂到同一正式 Release
+- [ ] Swift/Kotlin FFI 统一到同一 Rust 库（可选，fixtures 已对齐）
+- [ ] 各端签名产物挂到同一正式 Release（需签名密钥）

@@ -20,6 +20,7 @@ CONTRACTS_DIR := contracts
 	android-test \
 	android-assemble \
 	projection-test \
+	shared-test \
 	contracts-check \
 	check \
 	check-all
@@ -39,6 +40,7 @@ help:
 	@echo "  make android-test      - JVM contract projection tests (:core)"
 	@echo "  make android-assemble  - assemble debug APK (requires Android SDK)"
 	@echo "  make projection-test   - all platforms contracts fixtures only"
+	@echo "  make shared-test       - packages/viasix-mihomo-config tests"
 	@echo "  make check             - contracts + macOS + windows-test + android-test"
 	@echo "  make check-all         - check + platform skeletons"
 
@@ -81,7 +83,9 @@ windows-skeleton:
 	@test -f "$(WINDOWS_DIR)/src-tauri/src/speed_test/mod.rs"
 	@test -f "$(WINDOWS_DIR)/scripts/fetch-mihomo.mjs"
 	@test -f "$(WINDOWS_DIR)/scripts/fetch-cfst.mjs"
+	@test -f "$(WINDOWS_DIR)/scripts/fetch-wintun.mjs"
 	@test -f "$(WINDOWS_DIR)/src/main.ts"
+	@test -f "packages/viasix-mihomo-config/Cargo.toml"
 	@echo "windows skeleton OK"
 
 windows-test:
@@ -111,15 +115,18 @@ android-test:
 android-assemble:
 	cd "$(ANDROID_DIR)" && gradle :app:assembleDebug --no-daemon
 
-projection-test: contracts-check
+shared-test:
+	cargo test --manifest-path packages/viasix-mihomo-config/Cargo.toml
+
+projection-test: contracts-check shared-test
 	@echo "==> macOS ContractFixtureTests"
 	cd apps/macos && swift test --filter ContractFixtureTests
 	@echo "==> Windows Rust contracts"
 	$(MAKE) windows-test
 	@echo "==> Android JVM contracts"
 	$(MAKE) android-test
-	@echo "projection-test OK (macOS + Windows + Android)"
+	@echo "projection-test OK (shared + macOS + Windows + Android)"
 
-check: contracts-check macos-check windows-test android-test
+check: contracts-check shared-test macos-check windows-test android-test
 
 check-all: check windows-skeleton android-skeleton

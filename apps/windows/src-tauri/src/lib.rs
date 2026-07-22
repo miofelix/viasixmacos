@@ -19,8 +19,10 @@ use std::sync::Arc;
 use system_proxy::{ProxyEndpoint, SystemProxyManager, SystemProxyStatus};
 use traffic::{TrafficSampler, TrafficSnapshot};
 use tauri::{AppHandle, Manager, State};
+use projection::TunOptions;
 use virtual_network::{
-    VirtualNetworkCapability, VirtualNetworkManager, VirtualNetworkStatus,
+    stage_wintun_beside_mihomo, VirtualNetworkCapability, VirtualNetworkManager,
+    VirtualNetworkStatus,
 };
 
 struct AppServices {
@@ -72,7 +74,16 @@ fn start_core(
     options.routing_mode = mode;
     options.selected_address = selected_address;
 
+    let want_tun = services.virtual_network.lock().is_enabled();
+    if want_tun {
+        options.tun = Some(TunOptions::default());
+    }
+
     let bin = resolve_mihomo_binary(&app)?;
+    if want_tun {
+        let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sidecar");
+        stage_wintun_beside_mihomo(&bin, &sidecar)?;
+    }
     let profile = if mode == RoutingMode::Direct {
         None
     } else {
@@ -80,6 +91,12 @@ fn start_core(
     };
     let mut status = services.core.start(profile, &options, &bin)?;
     services.traffic.lock().reset();
+    if want_tun {
+        status.message = format!(
+            "{}; TUN/Wintun requested (admin may be required)",
+            status.message
+        );
+    }
 
     if enable_system_proxy.unwrap_or(false) {
         let endpoint = ProxyEndpoint {
@@ -214,8 +231,8 @@ async fn sample_traffic(services: State<'_, SharedServices>) -> Result<TrafficSn
 }
 
 #[tauri::command]
-fn virtual_network_capability() -> VirtualNetworkCapability {
-    VirtualNetworkManager::capability()
+fn virtual_network_capability(services: State<'_, SharedServices>) -> VirtualNetworkCapability {
+    services.virtual_network.lock().capability()
 }
 
 #[tauri::command]
@@ -299,11 +316,12 @@ pub fn run() {
         .setup(|app| {
             let data = default_data_dir(app.handle());
             let work = data.join("runtime");
+            let sidecar = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("sidecar");
             let services = Arc::new(AppServices {
                 core: Arc::new(CoreRuntime::new(work)),
                 system_proxy: SystemProxyManager::new(data.clone()),
                 prefs: PrefsStore::new(data.clone()),
-                virtual_network: Mutex::new(VirtualNetworkManager::default()),
+                virtual_network: Mutex::new(VirtualNetworkManager::new(sidecar)),
                 traffic: Mutex::new(TrafficSampler::default()),
                 default_mixed_port: ProjectOptions::default().mixed_port,
                 data_dir: data,

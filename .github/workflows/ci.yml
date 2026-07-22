@@ -36,7 +36,7 @@ jobs:
           make windows-build-docs
 
   windows-projection:
-    name: Windows projection contracts (Rust)
+    name: Windows + shared projection contracts (Rust)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -51,15 +51,19 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/windows/src-tauri
+          workspaces: |
+            apps/windows/src-tauri
+            packages/viasix-mihomo-config
 
       - name: Install Linux WebKit deps for tauri-build
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
-      - name: Run projection contract tests
-        run: make windows-test
+      - name: Run shared + Windows projection contract tests
+        run: |
+          make shared-test
+          make windows-test
 
   android-projection:
     name: Android projection contracts (JVM)

@@ -10,9 +10,9 @@ contracts/fixtures/mihomo-config/cases/*
 
 | 平台 | 实现 | 测试 |
 | --- | --- | --- |
-| macOS | `apps/macos/.../ViaSixMihomoConfig` | `ContractFixtureTests` |
-| Windows | `apps/windows/src-tauri/src/projection` | `cargo test` |
-| Android | `apps/android/core/.../MihomoProjection` | `gradle :core:test` |
+| macOS | `apps/macos/.../ViaSixMihomoConfig`（Swift） | `ContractFixtureTests` |
+| Windows | **共享 crate** `packages/viasix-mihomo-config` | `cargo test -p viasix-mihomo-config` |
+| Android | `apps/android/core/.../MihomoProjection`（Kotlin） | `gradle :core:test` |
 
 一键：`make projection-test`
 

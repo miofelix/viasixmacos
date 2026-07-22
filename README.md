@@ -25,8 +25,10 @@ docs/               架构与平台说明
 | 平台 | 状态 | 入口 |
 | --- | --- | --- |
 | macOS | **可用** | [apps/macos](apps/macos/README.md) |
-| Windows | MVP（Tauri：代理/测速/流量/NSIS CI） | [apps/windows](apps/windows/README.md) |
-| Android | MVP（投影/mihomo/VPN 隧道/流量） | [apps/android](apps/android/README.md) |
+| Windows | 可用（Tauri：代理/TUN+Wintun/测速/流量/NSIS） | [apps/windows](apps/windows/README.md) |
+| Android | 可用（投影/mihomo/VPN 隧道/流量） | [apps/android](apps/android/README.md) |
+
+完成范围说明见 [docs/architecture/COMPLETION.md](docs/architecture/COMPLETION.md)。
 
 布局与路线图：
 

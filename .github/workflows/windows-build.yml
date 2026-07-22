@@ -67,11 +67,12 @@ jobs:
         working-directory: apps/windows
         run: pnpm check:version
 
-      - name: Download mihomo and CFST sidecars
+      - name: Download mihomo, CFST, and Wintun sidecars
         working-directory: apps/windows
         run: |
           node scripts/fetch-mihomo.mjs ${{ matrix.target }}
           node scripts/fetch-cfst.mjs ${{ matrix.target }}
+          node scripts/fetch-wintun.mjs ${{ matrix.target }}
           Get-ChildItem src-tauri/sidecar | Format-Table Name, Length
 
       - name: Run projection contract tests
