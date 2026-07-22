@@ -17,10 +17,10 @@ struct SettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
-                    serverConfigurationCard
-                    localProxyCard
-                    tunServiceCard
                     runtimeCard
+                    localProxyCard
+                    serverConfigurationCard
+                    tunServiceCard
                     dataCard
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
