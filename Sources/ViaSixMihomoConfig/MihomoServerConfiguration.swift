@@ -378,7 +378,9 @@ public struct MihomoServerConfiguration: Equatable, Sendable {
 
         if let controller = options.externalController {
             runtime["external-controller"] = "127.0.0.1:\(controller.port)"
-            runtime["secret"] = controller.secret
+            runtime["secret"] = try MihomoExternalControllerConfiguration.validatedSecret(
+                controller.secret
+            )
         }
 
         if options.routingMode != .direct {
@@ -510,10 +512,7 @@ public struct MihomoServerConfiguration: Equatable, Sendable {
             guard (1...65_535).contains(controller.port), controller.port != options.mixedPort else {
                 throw MihomoConfigurationError.invalidControllerPort
             }
-            let secret = controller.secret.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !secret.isEmpty, secret.utf8.count <= 512 else {
-                throw MihomoConfigurationError.invalidControllerSecret
-            }
+            _ = try MihomoExternalControllerConfiguration.validatedSecret(controller.secret)
         }
         if projection == .privilegedTun {
             guard let tun = options.tun else {

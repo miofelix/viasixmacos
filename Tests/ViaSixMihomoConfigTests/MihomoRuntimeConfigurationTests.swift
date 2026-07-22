@@ -152,6 +152,45 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         XCTAssertEqual(privileged.string("secret"), "local-secret")
     }
 
+    func testControllerSecretRejectsControlCharactersAndWhitespace() throws {
+        XCTAssertEqual(
+            try MihomoExternalControllerConfiguration.validatedSecret("  token-safe_value./+=  "),
+            "token-safe_value./+="
+        )
+        for raw in [
+            "has space",
+            "tab\there",
+            "crlf\r\ninject",
+            "quote\"break",
+            "newline\ninject",
+            "",
+            "   ",
+            String(repeating: "a", count: 513),
+        ] {
+            XCTAssertThrowsError(
+                try MihomoExternalControllerConfiguration.validatedSecret(raw),
+                "Expected rejection for \(raw.debugDescription)"
+            ) { error in
+                XCTAssertEqual(error as? MihomoConfigurationError, .invalidControllerSecret)
+            }
+        }
+
+        let server = try sampleServer()
+        XCTAssertThrowsError(
+            try server.runtimeConfiguration(
+                options: MihomoRuntimeOptions(
+                    externalController: MihomoExternalControllerConfiguration(
+                        port: 9_090,
+                        secret: "evil\r\nX-Injected: 1"
+                    )
+                ),
+                replacingPrimaryServerWith: "2606:4700::20"
+            )
+        ) { error in
+            XCTAssertEqual(error as? MihomoConfigurationError, .invalidControllerSecret)
+        }
+    }
+
     func testRuleModeBuildsManagedGroupAndPrivateBypassRules() throws {
         let output = try sampleServer().runtimeConfiguration(
             options: MihomoRuntimeOptions(

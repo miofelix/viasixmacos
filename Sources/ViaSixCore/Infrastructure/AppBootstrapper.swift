@@ -88,13 +88,17 @@ public actor AppBootstrapper {
         if let data = try Self.regularFileDataIfPresent(
             at: paths.mihomoControllerSecret,
             using: fileManager,
-            maximumBytes: 513
-        ) {
-            _ = try Self.validatedControllerSecret(from: data)
+            maximumBytes: MihomoExternalControllerConfiguration.maximumSecretUTF8Bytes + 1
+        ),
+            (try? Self.validatedControllerSecret(from: data)) != nil
+        {
             try FilePermissions.restrictFile(paths.mihomoControllerSecret, using: fileManager)
             return
         }
 
+        // Missing or non-token-safe secrets are regenerated. Accepting CR/LF or
+        // other control characters would allow Authorization header injection
+        // when the secret is placed on the loopback controller API.
         let secret =
             UUID().uuidString.replacingOccurrences(of: "-", with: "")
             + UUID().uuidString.replacingOccurrences(of: "-", with: "")
@@ -117,22 +121,23 @@ public actor AppBootstrapper {
         let data = try Self.regularFileDataIfPresent(
             at: paths.mihomoControllerSecret,
             using: .default,
-            maximumBytes: 513
+            maximumBytes: MihomoExternalControllerConfiguration.maximumSecretUTF8Bytes + 1
         )
         guard let data else { throw AppBootstrapperError.invalidControllerSecret }
         return try Self.validatedControllerSecret(from: data)
     }
 
     private static func validatedControllerSecret(from data: Data) throws -> String {
-        guard data.count <= 512,
-            let value = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            !value.isEmpty,
-            value.utf8.count <= 512
+        guard data.count <= MihomoExternalControllerConfiguration.maximumSecretUTF8Bytes + 1,
+            let raw = String(data: data, encoding: .utf8)
         else {
             throw AppBootstrapperError.invalidControllerSecret
         }
-        return value
+        do {
+            return try MihomoExternalControllerConfiguration.validatedSecret(raw)
+        } catch {
+            throw AppBootstrapperError.invalidControllerSecret
+        }
     }
 
     /// Removes only temporary result files created by an interrupted speed

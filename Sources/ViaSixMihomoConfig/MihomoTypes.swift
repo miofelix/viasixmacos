@@ -162,12 +162,39 @@ public struct MihomoRuntimeOptions: Codable, Equatable, Sendable {
 }
 
 public struct MihomoExternalControllerConfiguration: Codable, Equatable, Sendable {
+    public static let maximumSecretUTF8Bytes = 512
+
+    /// Characters accepted in a loopback controller bearer secret.
+    ///
+    /// Restricted to a token-safe alphabet so the value can be placed in an
+    /// HTTP `Authorization` header and Mihomo YAML without control-character
+    /// injection (for example CR/LF header splitting).
+    private static let allowedSecretScalars = CharacterSet(
+        charactersIn:
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~+/="
+    )
+
     public var port: Int
     public var secret: String
 
     public init(port: Int, secret: String) {
         self.port = port
         self.secret = secret
+    }
+
+    /// Normalizes and validates a controller secret.
+    ///
+    /// Rejects empty values, oversized secrets, and any character outside the
+    /// token-safe alphabet (including whitespace and control characters).
+    public static func validatedSecret(_ raw: String) throws -> String {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.utf8.count <= maximumSecretUTF8Bytes else {
+            throw MihomoConfigurationError.invalidControllerSecret
+        }
+        guard value.unicodeScalars.allSatisfy({ allowedSecretScalars.contains($0) }) else {
+            throw MihomoConfigurationError.invalidControllerSecret
+        }
+        return value
     }
 }
 

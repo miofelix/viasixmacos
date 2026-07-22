@@ -603,6 +603,66 @@ final class AppBootstrapperTests: XCTestCase {
         XCTAssertEqual(explicitSelection?.region, "SJC")
     }
 
+    func testPrepareDefaultsCreatesTokenSafeControllerSecret() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+
+        try await bootstrapper.prepareDefaults()
+
+        let raw = try String(contentsOf: paths.mihomoControllerSecret, encoding: .utf8)
+        let secret = try MihomoExternalControllerConfiguration.validatedSecret(raw)
+        XCTAssertEqual(secret.utf8.count, 64)
+        XCTAssertEqual(try permissions(of: paths.mihomoControllerSecret), 0o600)
+
+        let api = try await bootstrapper.mihomoAPIConfiguration()
+        XCTAssertEqual(api.secret, secret)
+        XCTAssertEqual(api.host, "127.0.0.1")
+    }
+
+    func testPrepareDefaultsRegeneratesControllerSecretWithControlCharacters() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        try paths.prepare()
+        // CR/LF would otherwise be injectable into Authorization: Bearer headers.
+        let planted = Data("safe-prefix\r\nX-Injected: evil\n".utf8)
+        try planted.write(to: paths.mihomoControllerSecret)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: paths.mihomoControllerSecret.path
+        )
+
+        try await AppBootstrapper(paths: paths).prepareDefaults()
+
+        let raw = try String(contentsOf: paths.mihomoControllerSecret, encoding: .utf8)
+        let secret = try MihomoExternalControllerConfiguration.validatedSecret(raw)
+        XCTAssertNotEqual(Data(raw.utf8), planted)
+        XCTAssertFalse(secret.contains("\r"))
+        XCTAssertFalse(secret.contains("\n"))
+        XCTAssertEqual(try permissions(of: paths.mihomoControllerSecret), 0o600)
+
+        let api = try await AppBootstrapper(paths: paths).mihomoAPIConfiguration()
+        XCTAssertEqual(api.secret, secret)
+    }
+
+    func testMihomoAPIConfigurationRejectsUnsafeControllerSecretWithoutRegenerating() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+        try Data("has space and\tcontrol\n".utf8).write(to: paths.mihomoControllerSecret)
+
+        do {
+            _ = try await bootstrapper.mihomoAPIConfiguration()
+            XCTFail("Expected invalid controller secret")
+        } catch let error as AppBootstrapperError {
+            XCTAssertEqual(error, .invalidControllerSecret)
+        }
+
+        let onDisk = try Data(contentsOf: paths.mihomoControllerSecret)
+        XCTAssertEqual(String(decoding: onDisk, as: UTF8.self), "has space and\tcontrol\n")
+    }
+
     private func makePaths() -> AppPaths {
         AppPaths(
             root: FileManager.default.temporaryDirectory.appendingPathComponent(
