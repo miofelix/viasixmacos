@@ -7,6 +7,7 @@
 ### 新增
 
 - Monorepo 布局：`contracts/`、`apps/macos|windows|android`、`server/`、`docs/architecture`；跨端契约与平台骨架就位。
+- 跨端投影契约用例（`contracts/fixtures/mihomo-config/cases`）及 macOS `ContractFixtureTests` 对齐校验。
 - 首页新增实时流量统计：上下行速率、近 10 分钟流量曲线、会话累计上传/下载与 Mihomo 内存占用。
 - 连接运行中菜单栏显示两行上下行速率；菜单内同步展示速率摘要。
 - 通过 Mihomo external-controller 的 `/traffic`、`/memory` 与 `/connections`（仅 totals）WebSocket 订阅采集数据，断线自动重连。

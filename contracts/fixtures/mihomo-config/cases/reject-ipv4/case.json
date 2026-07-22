@@ -1,0 +1,11 @@
+{
+  "id": "reject-ipv4",
+  "description": "Rule/global projections must reject IPv4 selected addresses.",
+  "selectedAddress": "203.0.113.8",
+  "routingMode": "rule",
+  "projection": "user",
+  "expect": {
+    "success": false,
+    "errorCode": "selectedNodeMustBeIPv6"
+  }
+}

@@ -8,8 +8,8 @@
 
 | 路径 | 说明 |
 | --- | --- |
-| `schemas/` | JSON Schema（`local-proxy`、preferences、`x-viasix` 等） |
-| `fixtures/mihomo-config/` | 配置投影输入/输出黄金用例 |
+| `schemas/` | JSON Schema（`local-proxy`、`x-viasix` 等） |
+| `fixtures/mihomo-config/cases/` | 配置投影语义用例（`input.yaml` + `case.json`） |
 
 ## 版本
 
@@ -20,5 +20,5 @@
 ## 使用约定
 
 1. **不要**在 contract 中引用任何平台 API（Swift/Kotlin/Win32 等）。
-2. Fixture 命名：`<scenario>.in.yaml` + `<scenario>.out.yaml`（或 `.json`）。
-3. 各端 CI 应能独立校验本目录（见根目录工作流 `contracts` job，后续接入）。
+2. 投影用例使用**语义期望**，不强制 YAML 字节级一致。
+3. 各端 CI 应加载 `fixtures/mihomo-config/cases/*` 并断言 `case.json`。

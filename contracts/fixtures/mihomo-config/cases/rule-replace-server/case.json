@@ -1,0 +1,21 @@
+{
+  "id": "rule-replace-server",
+  "description": "Rule mode keeps one replaceable inline proxy, injects selected IPv6, strips providers/groups, adds private DIRECT + MATCH primary.",
+  "selectedAddress": "2001:db8::1",
+  "routingMode": "rule",
+  "projection": "user",
+  "expect": {
+    "success": true,
+    "mode": "rule",
+    "proxyCount": 1,
+    "primaryProxyName": "My VLESS",
+    "primaryProxyServer": "2001:db8::1",
+    "absentKeys": ["proxy-providers", "proxy-groups", "rule-providers", "sub-rules"],
+    "lastRule": "MATCH,My VLESS",
+    "rulesMustContain": [
+      "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
+      "IP-CIDR6,fc00::/7,DIRECT,no-resolve"
+    ],
+    "tunEnable": false
+  }
+}

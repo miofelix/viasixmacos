@@ -1,0 +1,11 @@
+{
+  "id": "reject-provider-only",
+  "description": "Provider-only profiles cannot project because no replaceable inline proxy exists.",
+  "selectedAddress": "2606:4700::8",
+  "routingMode": "rule",
+  "projection": "user",
+  "expect": {
+    "success": false,
+    "errorCode": "ipv6ManagedProfileRequired"
+  }
+}

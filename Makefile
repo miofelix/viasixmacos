@@ -51,9 +51,16 @@ contracts-check:
 	@test -f "$(CONTRACTS_DIR)/VERSION"
 	@test -f "$(CONTRACTS_DIR)/schemas/local-proxy.schema.json"
 	@test -f "$(CONTRACTS_DIR)/schemas/x-viasix.schema.json"
-	@test -f "$(CONTRACTS_DIR)/fixtures/mihomo-config/rule-replace-server.in.yaml"
-	@test -f "$(CONTRACTS_DIR)/fixtures/mihomo-config/rule-replace-server.out.yaml"
-	@echo "contracts layout OK (version $$(cat "$(CONTRACTS_DIR)/VERSION"))"
+	@test -d "$(CONTRACTS_DIR)/fixtures/mihomo-config/cases"
+	@cases=0; \
+	for dir in "$(CONTRACTS_DIR)/fixtures/mihomo-config/cases"/*; do \
+	  [ -d "$$dir" ] || continue; \
+	  test -f "$$dir/case.json" || { echo "missing case.json in $$dir"; exit 1; }; \
+	  test -f "$$dir/input.yaml" || { echo "missing input.yaml in $$dir"; exit 1; }; \
+	  cases=$$((cases + 1)); \
+	done; \
+	test "$$cases" -ge 1 || { echo "no contract fixture cases found"; exit 1; }; \
+	echo "contracts layout OK (version $$(cat "$(CONTRACTS_DIR)/VERSION"), $$cases cases)"
 
 windows-skeleton:
 	@test -f "$(WINDOWS_DIR)/README.md"

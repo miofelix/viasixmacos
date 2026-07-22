@@ -1,0 +1,11 @@
+proxy-providers:
+  remote:
+    type: http
+    url: https://subscription.example/profile.yaml
+    path: remote.yaml
+proxy-groups:
+  - name: PROXY
+    type: select
+    use: [remote]
+rules:
+  - MATCH,PROXY

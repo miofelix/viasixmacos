@@ -1,0 +1,16 @@
+{
+  "id": "global-mode",
+  "description": "Global mode uses Mihomo mode=global with single IPv6 primary proxy and no imported rules.",
+  "selectedAddress": "2606:4700::8",
+  "routingMode": "global",
+  "projection": "user",
+  "expect": {
+    "success": true,
+    "mode": "global",
+    "proxyCount": 1,
+    "primaryProxyName": "edge",
+    "primaryProxyServer": "2606:4700::8",
+    "absentKeys": ["proxy-providers", "proxy-groups", "rules"],
+    "tunEnable": false
+  }
+}

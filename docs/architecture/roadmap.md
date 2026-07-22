@@ -1,11 +1,12 @@
 # 跨平台推进路线
 
-## 阶段 0 — 结构（当前）
+## 阶段 0 — 结构
 
 - [x] Monorepo 目录与 contracts 骨架
 - [x] `apps/macos` 承接现有实现
 - [x] `apps/windows` / `apps/android` 占位骨架
-- [ ] CI path filter 与 contracts 校验 job（紧随结构落地）
+- [x] CI：contracts job + macOS job
+- [x] macOS 加载 `contracts/fixtures` 语义用例（`ContractFixtureTests`）
 
 ## 阶段 1 — Windows MVP
 

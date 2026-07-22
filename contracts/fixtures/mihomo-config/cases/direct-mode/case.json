@@ -1,0 +1,16 @@
+{
+  "id": "direct-mode",
+  "description": "Direct mode does not require selected IPv6 and emits MATCH,DIRECT only.",
+  "selectedAddress": null,
+  "routingMode": "direct",
+  "projection": "user",
+  "requireProfile": false,
+  "expect": {
+    "success": true,
+    "mode": "direct",
+    "proxyCount": 0,
+    "absentKeys": ["proxies", "proxy-providers", "proxy-groups"],
+    "rulesExact": ["MATCH,DIRECT"],
+    "tunEnable": false
+  }
+}
