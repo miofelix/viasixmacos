@@ -154,10 +154,12 @@ struct ProfilesView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("由 ViaSix 管理本机运行字段")
                         .font(.callout.weight(.semibold))
-                    Text("导入配置可通过 x-viasix 统一设置路由模式、UDP、日志、嗅探与私网绕过；监听地址、端口、系统代理、TUN、DNS 与 Controller 仍由 ViaSix 保护，不会被 YAML 静默覆盖。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        "导入配置可通过 x-viasix 统一设置路由模式、UDP、日志、嗅探与私网绕过；监听地址、端口、系统代理、TUN、DNS 与 Controller 仍由 ViaSix 保护，不会被 YAML 静默覆盖。"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(VisualStyle.spacing16)
