@@ -40,7 +40,7 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
-    "resources": ["sidecar/*"],
+    "resources": ["sidecar/*", "resources/*"],
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper",

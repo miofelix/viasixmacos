@@ -556,10 +556,14 @@ function renderNodes(model: AppModel): string {
                <p class="help-text">正在运行 CFST，请勿关闭窗口…</p>`
             : `<p class="help-text">${escapeHtml(model.speedMessage)}</p>`
         }
+        <div class="segmented source-seg" role="group" aria-label="IP 来源">
+          <button type="button" class="seg-btn ${model.ipSourceMode === "custom" ? "is-selected" : ""}" data-ip-source="custom">自定义 CIDR</button>
+          <button type="button" class="seg-btn ${model.ipSourceMode === "bundled" ? "is-selected" : ""}" data-ip-source="bundled">内置 IPv6 列表</button>
+        </div>
         <div class="form-row">
           <label class="field grow">
-            <span>IP / CIDR（可多个，逗号分隔）</span>
-            <input id="speed-ip" type="text" value="${escapeHtml(model.speedIpRange)}" placeholder="2606:4700::/32 或单个 IPv6" />
+            <span>${model.ipSourceMode === "bundled" ? "内置列表路径（CFST -f）" : "IP / CIDR（可多个，逗号分隔）"}</span>
+            <input id="speed-ip" type="text" value="${escapeHtml(model.ipSourceMode === "bundled" ? model.ipv6ListPath || "（将使用 data/ipv6.txt）" : model.speedIpRange)}" placeholder="2606:4700::/32 或单个 IPv6" ${model.ipSourceMode === "bundled" ? "readonly" : ""} />
           </label>
           <label class="check field-align">
             <input id="speed-dd" type="checkbox" ${model.speedDisableDownload ? "checked" : ""} />
@@ -567,16 +571,22 @@ function renderNodes(model: AppModel): string {
           </label>
         </div>
         ${
-          model.ipPresets.length
-            ? `<div class="preset-row">
-                 ${model.ipPresets
-                   .map(
-                     (p) =>
-                       `<button type="button" class="btn btn-sm" data-action="apply-preset" data-preset="${escapeHtml(p.id)}" title="${escapeHtml(p.description)}">${escapeHtml(p.title)}</button>`,
-                   )
-                   .join("")}
+          model.ipSourceMode === "bundled"
+            ? `<div class="inline-actions wrap">
+                 <button type="button" class="btn btn-sm" data-action="reset-ipv6-list">重置内置列表</button>
+                 <button type="button" class="btn btn-sm" data-action="open-data-dir">打开数据目录</button>
+                 <span class="muted small">对齐 macOS Resources/ipv6.txt</span>
                </div>`
-            : ""
+            : model.ipPresets.length
+              ? `<div class="preset-row">
+                   ${model.ipPresets
+                     .map(
+                       (p) =>
+                         `<button type="button" class="btn btn-sm" data-action="apply-preset" data-preset="${escapeHtml(p.id)}" title="${escapeHtml(p.description)}">${escapeHtml(p.title)}</button>`,
+                     )
+                     .join("")}
+                 </div>`
+              : ""
         }
         <div class="inline-actions wrap">
           <button type="button" class="btn btn-primary" data-action="run-speed" ${model.busy.speed ? "disabled" : ""}>
@@ -732,6 +742,8 @@ function renderProfiles(model: AppModel): string {
         </div>
         <div class="inline-actions wrap">
           <button type="button" class="btn" data-action="import-profile">${icon("export", 14)} 导入文件</button>
+          <button type="button" class="btn" data-action="save-profile-file">${icon("profile", 14)} 保存到数据目录</button>
+          <button type="button" class="btn" data-action="reload-profile-file">从数据目录加载</button>
           <button type="button" class="btn btn-primary" data-action="project-config" ${model.busy.project ? "disabled" : ""}>
             ${model.busy.project ? "生成中…" : "生成运行配置"}
           </button>
@@ -745,6 +757,7 @@ function renderProfiles(model: AppModel): string {
             ${icon("copy", 14)} 复制 YAML
           </button>
         </div>
+        <p class="help-text muted">持久化路径：数据目录 <span class="mono">profile.yaml</span>（对齐 macOS Application Support 布局）。</p>
       </div>
     </section>
 
@@ -877,9 +890,19 @@ function renderSettings(model: AppModel): string {
           </label>
         </div>
         <p class="help-text muted">对齐 macOS local-proxy 端口语义；运行中不可修改。默认 11451 / 9090。</p>
+        <div class="form-row" style="margin-top:10px">
+          <label class="check">
+            <input type="checkbox" id="settings-udp" ${model.udpEnabled ? "checked" : ""} ${model.core?.running ? "disabled" : ""} />
+            <span>启用 UDP</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="settings-sniff" ${model.sniffingEnabled ? "checked" : ""} ${model.core?.running ? "disabled" : ""} />
+            <span>启用嗅探（sniffer）</span>
+          </label>
+        </div>
         <label class="check" style="margin-top:10px">
           <input type="checkbox" id="settings-close-tray" ${model.closeToTray ? "checked" : ""} />
-          <span>关闭窗口时隐藏到系统托盘（托盘可显示 / 停止 / 退出）</span>
+          <span>关闭窗口时隐藏到系统托盘（托盘显示实时上下行速率）</span>
         </label>
       </div>
     </section>

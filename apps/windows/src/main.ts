@@ -26,6 +26,7 @@ import type {
   AppSection,
   CoreStatus,
   ExitIpMode,
+  IpSourceMode,
   NodeSortKey,
   RoutingMode,
 } from "./types";
@@ -118,9 +119,19 @@ function bindShell(): void {
 
   root.addEventListener("click", (event) => {
     const target = (event.target as HTMLElement).closest<HTMLElement>(
-      "[data-action], [data-select-ip], [data-sort], [data-exit-mode], [data-focus-ip], [data-routing]",
+      "[data-action], [data-select-ip], [data-sort], [data-exit-mode], [data-focus-ip], [data-routing], [data-ip-source]",
     );
     if (!target) return;
+
+    if (target.dataset.ipSource) {
+      model.ipSourceMode = target.dataset.ipSource as IpSourceMode;
+      scheduleSavePrefs();
+      if (model.ipSourceMode === "bundled") {
+        void ensureIpv6ListPath();
+      }
+      paint();
+      return;
+    }
 
     if (target.dataset.routing) {
       if (model.core?.running) {
@@ -248,6 +259,8 @@ function bindSectionControls(): void {
   const closeTrayEl = document.querySelector<HTMLInputElement>("#settings-close-tray");
   const tunStackEl = document.querySelector<HTMLSelectElement>("#settings-tun-stack");
   const tunMtuEl = document.querySelector<HTMLInputElement>("#settings-tun-mtu");
+  const udpEl = document.querySelector<HTMLInputElement>("#settings-udp");
+  const sniffEl = document.querySelector<HTMLInputElement>("#settings-sniff");
   if (mixedPortEl) {
     mixedPortEl.addEventListener("change", () => {
       const n = Number(mixedPortEl.value);
@@ -286,6 +299,18 @@ function bindSectionControls(): void {
         model.tunMtu = Math.floor(n);
         scheduleSavePrefs();
       }
+    });
+  }
+  if (udpEl) {
+    udpEl.addEventListener("change", () => {
+      model.udpEnabled = udpEl.checked;
+      scheduleSavePrefs();
+    });
+  }
+  if (sniffEl) {
+    sniffEl.addEventListener("change", () => {
+      model.sniffingEnabled = sniffEl.checked;
+      scheduleSavePrefs();
     });
   }
   if (profileIp) {
@@ -446,6 +471,15 @@ async function handleAction(action: string, el: HTMLElement): Promise<void> {
     case "import-profile":
       await importProfile();
       return;
+    case "save-profile-file":
+      await saveProfileToDisk();
+      return;
+    case "reload-profile-file":
+      await reloadProfileFromDisk();
+      return;
+    case "reset-ipv6-list":
+      await resetIpv6List();
+      return;
     case "open-data-dir":
       await openDataDir();
       return;
@@ -564,6 +598,8 @@ async function projectConfig(): Promise<void> {
       routingMode: mode,
       mixedPort: model.mixedPort,
       controllerPort: model.controllerPort,
+      udpEnabled: model.udpEnabled,
+      sniffingEnabled: model.sniffingEnabled,
     });
     model.runtimeYaml = yaml;
     pushLog(model, "success", "config", "运行配置投影成功");
@@ -629,6 +665,51 @@ async function importProfile(): Promise<void> {
   }
 }
 
+async function saveProfileToDisk(): Promise<void> {
+  try {
+    const path = await api.saveProfileFile(model.profileYaml);
+    scheduleSavePrefs();
+    toast(`已保存 ${path}`, "success");
+  } catch (error) {
+    toast(`保存失败：${error}`, "error");
+  }
+}
+
+async function reloadProfileFromDisk(): Promise<void> {
+  try {
+    const yaml = await api.loadProfileFile();
+    if (!yaml?.trim()) {
+      toast("数据目录中没有 profile.yaml", "info");
+      return;
+    }
+    model.profileYaml = yaml;
+    scheduleSavePrefs();
+    await refreshProfileSummary();
+    toast("已从数据目录加载 profile.yaml", "success");
+    paint();
+  } catch (error) {
+    toast(`加载失败：${error}`, "error");
+  }
+}
+
+async function ensureIpv6ListPath(): Promise<void> {
+  try {
+    model.ipv6ListPath = await api.ensureIpv6List();
+  } catch {
+    model.ipv6ListPath = "";
+  }
+}
+
+async function resetIpv6List(): Promise<void> {
+  try {
+    model.ipv6ListPath = await api.resetIpv6List();
+    toast("已重置内置 IPv6 列表", "success");
+    paint();
+  } catch (error) {
+    toast(`重置失败：${error}`, "error");
+  }
+}
+
 async function openDataDir(): Promise<void> {
   try {
     const path = model.dataDir || (await api.openDataDir());
@@ -661,6 +742,8 @@ async function startCore(): Promise<void> {
       controllerPort: model.controllerPort,
       tunStack: model.tunStack,
       tunMtu: model.tunMtu,
+      udpEnabled: model.udpEnabled,
+      sniffingEnabled: model.sniffingEnabled,
     });
     model.core = status;
     pushLog(model, status.running ? "success" : "warn", "core", status.message);
@@ -759,24 +842,31 @@ async function probeController(): Promise<void> {
 }
 
 async function runSpeed(): Promise<void> {
-  if (!model.speedIpRange.trim()) {
+  const useBundled = model.ipSourceMode === "bundled";
+  if (!useBundled && !model.speedIpRange.trim()) {
     toast("请填写 IP / CIDR", "error");
     return;
   }
   model.busy.speed = true;
-  model.speedMessage = "测速进行中，请稍候…";
+  model.speedMessage = useBundled
+    ? "测速进行中（内置 IPv6 列表）…"
+    : "测速进行中，请稍候…";
   paint();
   try {
-    const response = await api.runSpeedTest({
-      ipRange: model.speedIpRange.trim() || null,
-      disableDownload: model.speedDisableDownload,
-      httping: model.speedParams.httping,
-      threads: model.speedParams.threads,
-      pingCount: model.speedParams.pingCount,
-      downloadCount: model.speedParams.downloadCount,
-      downloadTime: model.speedParams.downloadTime,
-      port: model.speedParams.port,
-    });
+    if (useBundled) await ensureIpv6ListPath();
+    const response = await api.runSpeedTest(
+      {
+        ipRange: useBundled ? null : model.speedIpRange.trim() || null,
+        disableDownload: model.speedDisableDownload,
+        httping: model.speedParams.httping,
+        threads: model.speedParams.threads,
+        pingCount: model.speedParams.pingCount,
+        downloadCount: model.speedParams.downloadCount,
+        downloadTime: model.speedParams.downloadTime,
+        port: model.speedParams.port,
+      },
+      useBundled,
+    );
     model.speedResults = response.results;
     model.speedResultsAt = response.cancelled ? model.speedResultsAt : Date.now();
     model.speedMessage = response.message;
@@ -1021,6 +1111,13 @@ async function restorePrefs(): Promise<void> {
     if (prefs.tunMtu && prefs.tunMtu >= 1280 && prefs.tunMtu <= 9000) {
       model.tunMtu = prefs.tunMtu;
     }
+    if (typeof prefs.udpEnabled === "boolean") model.udpEnabled = prefs.udpEnabled;
+    if (typeof prefs.sniffingEnabled === "boolean") {
+      model.sniffingEnabled = prefs.sniffingEnabled;
+    }
+    if (prefs.ipSourceMode === "custom" || prefs.ipSourceMode === "bundled") {
+      model.ipSourceMode = prefs.ipSourceMode;
+    }
   } catch {
     // browser preview keeps defaults
   }
@@ -1078,6 +1175,15 @@ async function bootstrap(): Promise<void> {
       model.dataDir = "";
     }
     await restorePrefs();
+    // Prefer on-disk profile.yaml when session prefs still hold the example stub.
+    try {
+      const disk = await api.loadProfileFile();
+      if (disk?.trim() && model.profileYaml.includes("origin.example.com")) {
+        model.profileYaml = disk;
+      }
+    } catch {
+      // ignore
+    }
     await hydrateBackendLogs();
     await bindBackendEvents();
     try {
@@ -1085,6 +1191,7 @@ async function bootstrap(): Promise<void> {
     } catch {
       model.ipPresets = [];
     }
+    await ensureIpv6ListPath();
     await refreshProfileSummary();
     await refreshAllStatus();
     await refreshCoreLog();

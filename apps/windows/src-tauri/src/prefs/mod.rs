@@ -39,6 +39,13 @@ pub struct SessionPrefs {
     pub tun_stack: Option<String>,
     #[serde(default)]
     pub tun_mtu: Option<u16>,
+    #[serde(default)]
+    pub udp_enabled: Option<bool>,
+    #[serde(default)]
+    pub sniffing_enabled: Option<bool>,
+    /// `custom` | `bundled` — speed-test IP source mode.
+    #[serde(default)]
+    pub ip_source_mode: Option<String>,
 }
 
 pub struct PrefsStore {
@@ -101,6 +108,9 @@ mod tests {
             close_to_tray: Some(true),
             tun_stack: Some("mixed".into()),
             tun_mtu: Some(1500),
+            udp_enabled: Some(true),
+            sniffing_enabled: Some(true),
+            ip_source_mode: Some("custom".into()),
         };
         store.save(&prefs).unwrap();
         let loaded = store.load();

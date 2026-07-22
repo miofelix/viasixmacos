@@ -2,8 +2,10 @@ mod activity_log;
 mod connectivity;
 mod controller;
 mod exit_ip;
+mod ip_lists;
 mod prefs;
 mod profile;
+mod profile_store;
 mod projection;
 mod runtime;
 mod speed_test;
@@ -29,6 +31,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, RunEvent, State, WindowEvent,
 };
+use traffic::format_rate as format_traffic_rate;
 use virtual_network::{
     stage_wintun_beside_mihomo, VirtualNetworkCapability, VirtualNetworkManager,
     VirtualNetworkStatus,
@@ -70,6 +73,39 @@ fn apply_ports(options: &mut ProjectOptions, mixed_port: Option<u16>, controller
     }
 }
 
+fn apply_proxy_flags(
+    options: &mut ProjectOptions,
+    udp_enabled: Option<bool>,
+    sniffing_enabled: Option<bool>,
+) {
+    if let Some(v) = udp_enabled {
+        options.udp_enabled = v;
+    }
+    if let Some(v) = sniffing_enabled {
+        options.sniffing_enabled = v;
+    }
+}
+
+fn update_tray_tooltip(app: &AppHandle, text: impl AsRef<str>) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some(text.as_ref()));
+    }
+}
+
+fn tray_status_tooltip(running: bool, snap: Option<&TrafficSnapshot>) -> String {
+    if !running {
+        return "ViaSix · 本地代理未启动".into();
+    }
+    if let Some(s) = snap.filter(|s| s.live) {
+        return format!(
+            "ViaSix · ↑ {}/s  ↓ {}/s",
+            format_traffic_rate(s.up_bps),
+            format_traffic_rate(s.down_bps)
+        );
+    }
+    "ViaSix · 本地代理运行中".into()
+}
+
 #[tauri::command]
 fn project_runtime_config(
     profile_yaml: String,
@@ -77,12 +113,15 @@ fn project_runtime_config(
     routing_mode: String,
     mixed_port: Option<u16>,
     controller_port: Option<u16>,
+    udp_enabled: Option<bool>,
+    sniffing_enabled: Option<bool>,
 ) -> Result<String, String> {
     let mode = RoutingMode::parse(&routing_mode).ok_or_else(|| "invalid routingMode".to_string())?;
     let mut options = ProjectOptions::default();
     options.routing_mode = mode;
     options.selected_address = selected_address;
     apply_ports(&mut options, mixed_port, controller_port);
+    apply_proxy_flags(&mut options, udp_enabled, sniffing_enabled);
     let profile = if mode == RoutingMode::Direct {
         None
     } else {
@@ -127,12 +166,15 @@ fn start_core(
     controller_port: Option<u16>,
     tun_stack: Option<String>,
     tun_mtu: Option<u16>,
+    udp_enabled: Option<bool>,
+    sniffing_enabled: Option<bool>,
 ) -> Result<CoreStatus, String> {
     let mode = RoutingMode::parse(&routing_mode).ok_or_else(|| "invalid routingMode".to_string())?;
     let mut options = ProjectOptions::default();
     options.routing_mode = mode;
     options.selected_address = selected_address;
     apply_ports(&mut options, mixed_port, controller_port);
+    apply_proxy_flags(&mut options, udp_enabled, sniffing_enabled);
 
     let want_tun = services.virtual_network.lock().is_enabled();
     if want_tun {
@@ -242,6 +284,10 @@ fn start_core(
         "core",
         status.message.clone(),
     );
+    update_tray_tooltip(
+        &app,
+        tray_status_tooltip(status.running, None),
+    );
     Ok(status)
 }
 
@@ -265,6 +311,7 @@ fn stop_core(app: AppHandle, services: State<'_, SharedServices>) -> Result<Core
     };
     let message = format!("{}; {proxy_note}", status.message);
     push_log(&services, Some(&app), "info", "core", message.clone());
+    update_tray_tooltip(&app, tray_status_tooltip(false, None));
     Ok(CoreStatus {
         running: status.running,
         pid: status.pid,
@@ -349,9 +396,26 @@ fn resolve_cfst(app: &AppHandle) -> Result<PathBuf, String> {
 fn run_speed_test(
     app: AppHandle,
     services: State<'_, SharedServices>,
-    request: SpeedTestRequest,
+    mut request: SpeedTestRequest,
+    use_bundled_list: Option<bool>,
 ) -> Result<SpeedTestResponse, String> {
-    push_log(&services, Some(&app), "info", "speed", "开始 CFST 测速…");
+    if use_bundled_list.unwrap_or(false) {
+        let path = ip_lists::ensure_ipv6_list(&services.data_dir).map_err(|e| {
+            push_log(&services, Some(&app), "error", "speed", e.clone());
+            e
+        })?;
+        request.ip_file = Some(path.display().to_string());
+        request.ip_range = None;
+        push_log(
+            &services,
+            Some(&app),
+            "info",
+            "speed",
+            format!("开始 CFST 测速（内置 IPv6 列表 {}）…", path.display()),
+        );
+    } else {
+        push_log(&services, Some(&app), "info", "speed", "开始 CFST 测速…");
+    }
     let bin = resolve_cfst(&app).map_err(|e| {
         push_log(&services, Some(&app), "error", "speed", e.clone());
         e
@@ -584,9 +648,14 @@ async fn probe_controller(
 }
 
 #[tauri::command]
-async fn sample_traffic(services: State<'_, SharedServices>) -> Result<TrafficSnapshot, String> {
+async fn sample_traffic(
+    app: AppHandle,
+    services: State<'_, SharedServices>,
+) -> Result<TrafficSnapshot, String> {
+    let running = services.core.status().running;
     let Some((port, secret)) = services.core.controller_credentials() else {
         services.traffic.lock().reset();
+        update_tray_tooltip(&app, tray_status_tooltip(running, None));
         return Ok(TrafficSnapshot {
             live: false,
             up_bps: 0,
@@ -604,7 +673,53 @@ async fn sample_traffic(services: State<'_, SharedServices>) -> Result<TrafficSn
     };
     let snap = sampler.sample("127.0.0.1", port, &secret).await;
     *services.traffic.lock() = sampler;
+    update_tray_tooltip(&app, tray_status_tooltip(true, Some(&snap)));
     Ok(snap)
+}
+
+#[tauri::command]
+fn ensure_ipv6_list(services: State<'_, SharedServices>) -> Result<String, String> {
+    ip_lists::ensure_ipv6_list(&services.data_dir).map(|p| p.display().to_string())
+}
+
+#[tauri::command]
+fn reset_ipv6_list(app: AppHandle, services: State<'_, SharedServices>) -> Result<String, String> {
+    let path = ip_lists::reset_ipv6_list(&services.data_dir)?;
+    push_log(
+        &services,
+        Some(&app),
+        "info",
+        "speed",
+        format!("已重置内置 IPv6 列表：{}", path.display()),
+    );
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+fn read_ipv6_list(services: State<'_, SharedServices>) -> Result<String, String> {
+    ip_lists::read_ipv6_list(&services.data_dir)
+}
+
+#[tauri::command]
+fn load_profile_file(services: State<'_, SharedServices>) -> Result<Option<String>, String> {
+    profile_store::load_profile(&services.data_dir)
+}
+
+#[tauri::command]
+fn save_profile_file(
+    app: AppHandle,
+    services: State<'_, SharedServices>,
+    profile_yaml: String,
+) -> Result<String, String> {
+    let path = profile_store::save_profile(&services.data_dir, &profile_yaml)?;
+    push_log(
+        &services,
+        Some(&app),
+        "success",
+        "config",
+        format!("已保存 profile.yaml → {path}"),
+    );
+    Ok(path)
 }
 
 #[tauri::command]
@@ -752,6 +867,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                                 "core",
                                 format!("托盘停止: {}", status.message),
                             );
+                            update_tray_tooltip(app, tray_status_tooltip(false, None));
                             let _ = app.emit("core-stopped", status);
                         }
                         Err(err) => push_log(
@@ -820,11 +936,17 @@ pub fn run() {
                     );
                 }
             }
+            // Install managed ipv6 list into app data (macOS ships Resources/ipv6.txt).
+            if let Err(err) = ip_lists::ensure_ipv6_list(&services.data_dir) {
+                eprintln!("ipv6 list install failed: {err}");
+            }
             push_log(&services, None, "info", "app", "ViaSix Windows 后端已就绪");
             app.manage(services);
 
             if let Err(err) = setup_tray(app.handle()) {
                 eprintln!("tray setup failed: {err}");
+            } else {
+                update_tray_tooltip(app.handle(), tray_status_tooltip(false, None));
             }
             Ok(())
         })
@@ -865,6 +987,11 @@ pub fn run() {
             speed_test_running,
             test_current_node,
             list_ip_presets,
+            ensure_ipv6_list,
+            reset_ipv6_list,
+            read_ipv6_list,
+            load_profile_file,
+            save_profile_file,
             probe_connectivity,
             tail_core_log,
             load_session_prefs,

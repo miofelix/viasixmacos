@@ -45,7 +45,11 @@ export type AppModel = {
   closeToTray: boolean;
   tunStack: string;
   tunMtu: number;
+  udpEnabled: boolean;
+  sniffingEnabled: boolean;
+  ipSourceMode: import("./types").IpSourceMode;
   dataDir: string;
+  ipv6ListPath: string;
   ipPresets: import("./types").IpPreset[];
   nodeTestMessage: string;
   connectivityMessage: string;
@@ -111,7 +115,11 @@ export function createInitialModel(): AppModel {
     closeToTray: true,
     tunStack: "mixed",
     tunMtu: 1500,
+    udpEnabled: true,
+    sniffingEnabled: true,
+    ipSourceMode: "custom",
     dataDir: "",
+    ipv6ListPath: "",
     ipPresets: [],
     nodeTestMessage: "对当前选中 IPv6 运行 CFST（对齐 macOS 配置测速）",
     connectivityMessage: "启动代理后可检测混合端口出口连通性",
@@ -224,6 +232,9 @@ export function sessionPrefsFromModel(model: AppModel) {
     closeToTray: model.closeToTray,
     tunStack: model.tunStack,
     tunMtu: model.tunMtu,
+    udpEnabled: model.udpEnabled,
+    sniffingEnabled: model.sniffingEnabled,
+    ipSourceMode: model.ipSourceMode,
   };
 }
 

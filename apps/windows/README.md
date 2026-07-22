@@ -57,10 +57,12 @@ make windows-skeleton         # 目录/文件校验
 | UI：侧栏导航 + 五分区 + 侧栏代理坞（对齐 macOS） | ✓ |
 | UI：流量曲线/内存、就绪校验、测速参数/排序/重连确认 | ✓ |
 | UI：Profile 文件导入 + 后端 YAML 摘要 | ✓ |
-| IPv6 预设段、可取消测速、当前节点测速 | ✓ |
+| IPv6 预设段 / 内置 ipv6.txt 列表源、可取消测速、当前节点测速 | ✓ |
+| Profile 数据目录落盘（profile.yaml 保存/加载） | ✓ |
+| 托盘实时上下行 tooltip | ✓ |
 | 代理连通性探测（经 mixed 端口） | ✓ |
 | 内核 mihomo 日志尾部 | ✓ |
-| TUN stack/MTU 可配（进程内 Wintun） | ✓ |
+| TUN stack/MTU、UDP/嗅探可配 | ✓ |
 | 用户态 Mihomo 启停（投影预检 + 端口可配） | ✓（需 `prebuild`） |
 | 系统代理（WinINET 注册表 + 启动/退出恢复） | ✓（仅 Windows 构建） |
 | 后端活动日志流（`activity-log` 事件） | ✓ |

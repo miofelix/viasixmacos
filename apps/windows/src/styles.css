@@ -1312,6 +1312,10 @@ tr.is-focused td {
   margin-bottom: 12px;
 }
 
+.source-seg {
+  margin-bottom: 12px;
+}
+
 .core-log {
   max-height: 280px;
   min-height: 120px;

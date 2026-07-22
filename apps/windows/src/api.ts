@@ -32,6 +32,8 @@ export async function projectRuntimeConfig(args: {
   routingMode: string;
   mixedPort?: number | null;
   controllerPort?: number | null;
+  udpEnabled?: boolean | null;
+  sniffingEnabled?: boolean | null;
 }): Promise<string> {
   return invoke<string>("project_runtime_config", args);
 }
@@ -57,6 +59,8 @@ export async function startCore(args: {
   controllerPort?: number | null;
   tunStack?: string | null;
   tunMtu?: number | null;
+  udpEnabled?: boolean | null;
+  sniffingEnabled?: boolean | null;
 }): Promise<CoreStatus> {
   return invoke<CoreStatus>("start_core", args);
 }
@@ -83,17 +87,23 @@ export async function detectExitIp(endpoints?: string[] | null): Promise<ExitIpR
   });
 }
 
-export async function runSpeedTest(request: {
-  ipRange: string | null;
-  disableDownload: boolean;
-  httping: boolean;
-  threads: number;
-  pingCount: number;
-  downloadCount: number;
-  downloadTime: number;
-  port?: number;
-}): Promise<SpeedTestResponse> {
-  return invoke<SpeedTestResponse>("run_speed_test", { request });
+export async function runSpeedTest(
+  request: {
+    ipRange: string | null;
+    disableDownload: boolean;
+    httping: boolean;
+    threads: number;
+    pingCount: number;
+    downloadCount: number;
+    downloadTime: number;
+    port?: number;
+  },
+  useBundledList = false,
+): Promise<SpeedTestResponse> {
+  return invoke<SpeedTestResponse>("run_speed_test", {
+    request,
+    useBundledList,
+  });
 }
 
 export async function stopSpeedTest(): Promise<boolean> {
@@ -127,6 +137,26 @@ export async function probeConnectivity(args: {
 
 export async function tailCoreLog(maxLines = 200): Promise<string> {
   return invoke<string>("tail_core_log", { maxLines });
+}
+
+export async function ensureIpv6List(): Promise<string> {
+  return invoke<string>("ensure_ipv6_list");
+}
+
+export async function resetIpv6List(): Promise<string> {
+  return invoke<string>("reset_ipv6_list");
+}
+
+export async function readIpv6List(): Promise<string> {
+  return invoke<string>("read_ipv6_list");
+}
+
+export async function loadProfileFile(): Promise<string | null> {
+  return invoke<string | null>("load_profile_file");
+}
+
+export async function saveProfileFile(profileYaml: string): Promise<string> {
+  return invoke<string>("save_profile_file", { profileYaml });
 }
 
 export async function probeController(): Promise<ControllerHealth> {

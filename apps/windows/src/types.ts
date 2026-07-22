@@ -150,7 +150,13 @@ export type SessionPrefs = {
   closeToTray?: boolean | null;
   tunStack?: string | null;
   tunMtu?: number | null;
+  udpEnabled?: boolean | null;
+  sniffingEnabled?: boolean | null;
+  /** `custom` | `bundled` */
+  ipSourceMode?: string | null;
 };
+
+export type IpSourceMode = "custom" | "bundled";
 
 export type NoticeStyle = "info" | "success" | "error";
 
