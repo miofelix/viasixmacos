@@ -106,17 +106,21 @@ public actor AppBootstrapper {
 
     public func mihomoAPIConfiguration() throws -> MihomoAPIConfiguration {
         let local = try loadLocalProxyConfiguration()
+        return MihomoAPIConfiguration(
+            host: "127.0.0.1",
+            port: local.controllerPort,
+            secret: try mihomoControllerSecret()
+        )
+    }
+
+    private func mihomoControllerSecret() throws -> String {
         let data = try Self.regularFileDataIfPresent(
             at: paths.mihomoControllerSecret,
             using: .default,
             maximumBytes: 513
         )
         guard let data else { throw AppBootstrapperError.invalidControllerSecret }
-        return MihomoAPIConfiguration(
-            host: "127.0.0.1",
-            port: local.controllerPort,
-            secret: try Self.validatedControllerSecret(from: data)
-        )
+        return try Self.validatedControllerSecret(from: data)
     }
 
     private static func validatedControllerSecret(from data: Data) throws -> String {
@@ -303,7 +307,7 @@ public actor AppBootstrapper {
         let profile = try MihomoServerConfiguration(data: data)
         let local = try localConfiguration(
             importing: profile.viaSixOptions,
-            over: loadLocalProxyConfiguration()
+            over: localConfigurationForProfileReplacement()
         )
         let generated = try runtimeConfiguration(
             profile: profile,
@@ -317,6 +321,16 @@ public actor AppBootstrapper {
             expectedProfileData: expectedProfileData
         )
         return local.endpoint
+    }
+
+    private func localConfigurationForProfileReplacement() throws -> LocalProxyConfiguration {
+        do {
+            return try loadLocalProxyConfiguration()
+        } catch is DecodingError {
+            return .default
+        } catch is LocalProxyConfigurationError {
+            return .default
+        }
     }
 
     private func localConfiguration(
@@ -509,11 +523,9 @@ public actor AppBootstrapper {
         for local: LocalProxyConfiguration,
         projection: MihomoRuntimeProjection
     ) throws -> MihomoRuntimeOptions {
-        let externalController: MihomoExternalControllerConfiguration?
-        let configuration = try mihomoAPIConfiguration()
-        externalController = MihomoExternalControllerConfiguration(
-            port: configuration.port,
-            secret: configuration.secret
+        let externalController = MihomoExternalControllerConfiguration(
+            port: local.controllerPort,
+            secret: try mihomoControllerSecret()
         )
         return MihomoRuntimeOptions(
             listenAddress: local.listenAddress,

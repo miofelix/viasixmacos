@@ -175,6 +175,42 @@ final class AppBootstrapperTests: XCTestCase {
         XCTAssertFalse(generated.contains("x-viasix:"))
     }
 
+    func testImportRebuildsIncompatibleLocalConfigurationWithoutMigratingOldFields() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+
+        let incompatibleLocal = Data(
+            """
+            {
+              "listenAddress": "127.0.0.2",
+              "port": 18080,
+              "routingMode": "global",
+              "networkAccessMode": "virtualInterface",
+              "ipv6TransportPolicy": "compatibility"
+            }
+            """.utf8
+        )
+        try incompatibleLocal.write(to: paths.localProxyConfig, options: .atomic)
+
+        try await bootstrapper.replaceProfile(
+            with: selectedIPProfile(),
+            selectedIP: "2606:4700::60"
+        )
+
+        let local = try await bootstrapper.loadLocalProxyConfiguration()
+        XCTAssertEqual(local, .default)
+        let persisted =
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: paths.localProxyConfig)
+            ) as? [String: Any]
+        XCTAssertEqual(persisted?["version"] as? Int, LocalProxyConfiguration.schemaVersion)
+        XCTAssertNil(persisted?["ipv6TransportPolicy"])
+        let currentIP = try await bootstrapper.currentConfigIP()
+        XCTAssertEqual(currentIP, "2606:4700::60")
+    }
+
     func testViaSixSelectedIPTemplateRequiresCurrentSelectionWithoutChangingFiles() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
@@ -615,6 +651,30 @@ final class AppBootstrapperTests: XCTestCase {
                 use: [remote]
             rules:
               - MATCH,PROXY
+            """.utf8
+        )
+    }
+
+    private func selectedIPProfile() -> Data {
+        Data(
+            """
+            x-viasix:
+              version: 1
+              primary-server: selected-ip
+            proxies:
+              - name: edge
+                type: vless
+                port: 443
+                uuid: 77777777-7777-4777-8777-777777777777
+                encryption: none
+                udp: false
+                tls: true
+                servername: origin.example
+                network: ws
+                ws-opts:
+                  path: /viasix
+                  headers:
+                    Host: origin.example
             """.utf8
         )
     }

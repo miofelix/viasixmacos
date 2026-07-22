@@ -1818,6 +1818,75 @@ final class AppModelTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testImportRepairsIncompatibleLocalAndProfileConfiguration() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let store = PreferencesStore(fileURL: paths.preferences)
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+
+        try Data(
+            """
+            {
+              "listenAddress": "127.0.0.1",
+              "port": 11451,
+              "networkAccessMode": "virtualInterface"
+            }
+            """.utf8
+        ).write(to: paths.localProxyConfig, options: .atomic)
+        try Data(
+            """
+            x-viasix:
+              version: 1
+              primary-server: selected-ip
+              routing-mode: rule
+              udp-enabled: false
+              log-level: info
+              sniffing-enabled: true
+              bypass-private-networks: true
+            proxies:
+              - name: old-edge
+                type: vless
+                port: 443
+                uuid: 11111111-1111-4111-8111-111111111111
+                tls: true
+                servername: old.example
+            """.utf8
+        ).write(to: paths.profileConfig, options: .atomic)
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                selectedIP: "2606:4700::61"
+            )
+        )
+
+        let model = makeModel(
+            paths: paths,
+            store: store,
+            bootstrapper: bootstrapper,
+            tunCoordinator: ControlledTunModeCoordinator()
+        )
+        model.start()
+        try await waitUntilReady(model)
+        XCTAssertFalse(model.isProxyConfigurationReady)
+
+        let importURL = paths.root.appendingPathComponent("viasix-mihomo.yaml")
+        try selectedIPProfile().write(to: importURL, options: .atomic)
+        model.importProxyProfile(from: importURL)
+        try await waitUntil { model.state.templateOperationPhase == .idle }
+
+        XCTAssertNil(model.state.templateOperationError)
+        XCTAssertTrue(model.isProxyConfigurationReady)
+        XCTAssertEqual(model.state.localProxyConfiguration, .default)
+        let stored = String(decoding: try Data(contentsOf: paths.profileConfig), as: UTF8.self)
+        XCTAssertFalse(stored.contains("bypass-private-networks"))
+
+        model.setSystemProxyEnabled(true)
+        try await waitUntil { model.state.localProxyConfiguration.systemProxyEnabled }
+        XCTAssertNil(model.state.templateOperationError)
+        await model.shutdown()
+    }
+
     func testProfileImportRejectsNonYAMLFiles() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
@@ -2794,6 +2863,30 @@ final class AppModelTests: XCTestCase {
                 use: [remote]
             rules:
               - MATCH,PROXY
+            """.utf8
+        )
+    }
+
+    private func selectedIPProfile() -> Data {
+        Data(
+            """
+            x-viasix:
+              version: 1
+              primary-server: selected-ip
+            proxies:
+              - name: edge
+                type: vless
+                port: 443
+                uuid: 11111111-1111-4111-8111-111111111111
+                encryption: none
+                udp: false
+                tls: true
+                servername: origin.example
+                network: ws
+                ws-opts:
+                  path: /viasix
+                  headers:
+                    Host: origin.example
             """.utf8
         )
     }
