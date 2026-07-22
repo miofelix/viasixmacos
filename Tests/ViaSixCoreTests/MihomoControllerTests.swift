@@ -247,6 +247,26 @@ final class MihomoControllerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.invocationsURL.path))
     }
 
+    func testSymbolicLinkExecutableIsRejectedBeforeLaunch() async throws {
+        let fixture = try MihomoControllerFixture(behavior: "normal")
+        defer { fixture.remove() }
+        let realExecutable = fixture.directoryURL.appendingPathComponent("real-mihomo")
+        try FileManager.default.moveItem(at: fixture.executableURL, to: realExecutable)
+        try FileManager.default.createSymbolicLink(
+            at: fixture.executableURL,
+            withDestinationURL: realExecutable
+        )
+        let controller = makeController(fixture: fixture) { _, _ in false }
+
+        do {
+            try await controller.start()
+            XCTFail("Expected symbolic-link executable error")
+        } catch let error as MihomoControllerError {
+            XCTAssertEqual(error, .executableIsSymbolicLink(fixture.executableURL.path))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.invocationsURL.path))
+    }
+
     func testRegularFileHomeIsRejectedBeforeLaunch() async throws {
         let fixture = try MihomoControllerFixture(behavior: "normal")
         defer { fixture.remove() }

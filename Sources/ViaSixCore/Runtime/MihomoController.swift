@@ -22,6 +22,7 @@ public enum MihomoControllerError: Error, Equatable, LocalizedError, Sendable {
     case alreadyRunning
     case executableNotFound(String)
     case executableNotExecutable(String)
+    case executableIsSymbolicLink(String)
     case configNotFound(String)
     case configNotReadable(String)
     case configIsSymbolicLink(String)
@@ -48,6 +49,8 @@ public enum MihomoControllerError: Error, Equatable, LocalizedError, Sendable {
             "未找到 Mihomo 可执行文件：\(path)"
         case .executableNotExecutable(let path):
             "Mihomo 文件不可执行：\(path)"
+        case .executableIsSymbolicLink(let path):
+            "Mihomo 可执行文件不能是符号链接：\(path)"
         case .configNotFound(let path):
             "未找到 Mihomo 配置文件：\(path)"
         case .configNotReadable(let path):
@@ -424,8 +427,20 @@ public actor MihomoController {
 
     private func validateExecutable() throws {
         let executablePath = executableURL.path
-        guard FileManager.default.fileExists(atPath: executablePath) else {
+        var fileStatus = stat()
+        guard lstat(executablePath, &fileStatus) == 0 else {
             throw MihomoControllerError.executableNotFound(executablePath)
+        }
+
+        let fileType = fileStatus.st_mode & S_IFMT
+        // Match CfstRunner: do not follow a replaced Runtime/mihomo symlink
+        // into an attacker-chosen binary. Point custom installs at a regular
+        // file rather than a package-manager link.
+        guard fileType != S_IFLNK else {
+            throw MihomoControllerError.executableIsSymbolicLink(executablePath)
+        }
+        guard fileType == S_IFREG else {
+            throw MihomoControllerError.executableNotExecutable(executablePath)
         }
         guard FileManager.default.isExecutableFile(atPath: executablePath) else {
             throw MihomoControllerError.executableNotExecutable(executablePath)
