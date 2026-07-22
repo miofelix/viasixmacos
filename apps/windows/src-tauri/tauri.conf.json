@@ -13,8 +13,10 @@
     "windows": [
       {
         "title": "ViaSix",
-        "width": 980,
-        "height": 780,
+        "width": 1040,
+        "height": 760,
+        "minWidth": 860,
+        "minHeight": 620,
         "resizable": true,
         "dragDropEnabled": true
       }
