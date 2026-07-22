@@ -4,6 +4,17 @@ export type AppSection = "overview" | "nodes" | "profiles" | "logs" | "settings"
 
 export type RoutingMode = "rule" | "global" | "direct";
 
+export type ExitIpMode = "auto" | "ipv4" | "ipv6";
+
+export type NodeSortKey =
+  | "ip"
+  | "sent"
+  | "received"
+  | "loss"
+  | "latency"
+  | "speed"
+  | "region";
+
 export type CoreStatus = {
   running: boolean;
   pid: number | null;
@@ -33,6 +44,12 @@ export type TrafficSnapshot = {
   uploadTotal: number;
   downloadTotal: number;
   message: string;
+};
+
+export type TrafficPoint = {
+  at: number;
+  up: number;
+  down: number;
 };
 
 export type SystemProxyStatus = {
@@ -65,6 +82,15 @@ export type SpeedTestResponse = {
   resultCsvPath: string;
 };
 
+export type SpeedTestParams = {
+  threads: number;
+  pingCount: number;
+  downloadCount: number;
+  downloadTime: number;
+  httping: boolean;
+  port: number;
+};
+
 export type SessionPrefs = {
   profileYaml: string;
   selectedAddress: string;
@@ -72,6 +98,14 @@ export type SessionPrefs = {
   systemProxyEnabled: boolean;
   lastSpeedIpRange: string;
   disableDownload: boolean;
+  speedThreads?: number | null;
+  speedPingCount?: number | null;
+  speedDownloadCount?: number | null;
+  speedDownloadTime?: number | null;
+  speedHttping?: boolean | null;
+  speedPort?: number | null;
+  exitIpMode?: string | null;
+  lastSection?: string | null;
 };
 
 export type NoticeStyle = "info" | "success" | "error";
@@ -80,7 +114,7 @@ export type AppNotice = {
   id: number;
   message: string;
   style: NoticeStyle;
-  action?: "openSettings";
+  action?: "openSettings" | "gotoNodes" | "gotoProfiles";
 };
 
 export type LogLevel = "info" | "success" | "warn" | "error";
@@ -92,6 +126,31 @@ export type LogEntry = {
   level: LogLevel;
   source: LogSource;
   message: string;
+};
+
+export type ProfileSummary = {
+  primaryName: string | null;
+  primaryType: string | null;
+  proxyCount: number;
+  hasXviasix: boolean;
+  looksLikeExample: boolean;
+  hasInlineProxy: boolean;
+  notes: string[];
+};
+
+export type ReadinessIssue = {
+  code: "profile" | "node" | "network" | "runtime";
+  message: string;
+  action?: AppNotice["action"];
+};
+
+export type ConfirmDialog = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  /** When confirmed, select this IP (and optionally reconnect). */
+  selectIp?: string;
+  reconnect?: boolean;
 };
 
 export type SectionMeta = {
@@ -152,6 +211,15 @@ x-viasix:
   primary-server: selected-ip
 `;
 
+export const DEFAULT_SPEED_PARAMS: SpeedTestParams = {
+  threads: 100,
+  pingCount: 4,
+  downloadCount: 5,
+  downloadTime: 5,
+  httping: true,
+  port: 443,
+};
+
 export const ROUTING_MODES: {
   id: RoutingMode;
   title: string;
@@ -173,3 +241,5 @@ export const ROUTING_MODES: {
     description: "所有经过本地代理的流量都直接连接。",
   },
 ];
+
+export const TRAFFIC_HISTORY_LIMIT = 90;

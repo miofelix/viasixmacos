@@ -52,7 +52,8 @@ make windows-skeleton         # 目录/文件校验
 | 能力 | 状态 |
 | --- | --- |
 | contracts 投影（rule/global/direct + 拒绝用例） | ✓ |
-| UI：侧栏导航 + 五分区（对齐 macOS） | ✓ |
+| UI：侧栏导航 + 五分区 + 侧栏代理坞（对齐 macOS） | ✓ |
+| UI：流量曲线、就绪校验、测速参数/排序/重连确认 | ✓ |
 | UI：导入 YAML、选 IPv6、生成运行配置 | ✓ |
 | 用户态 Mihomo 启停 | ✓（需 `prebuild`） |
 | 系统代理（WinINET 注册表 + 快照恢复） | ✓（仅 Windows 构建） |

@@ -1,5 +1,7 @@
 /** Presentation helpers aligned with macOS ByteRateFormatter spirit. */
 
+import type { SpeedTestResult, TrafficPoint } from "./types";
+
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "—";
   if (bytes < 1024) return `${Math.round(bytes)} B`;
@@ -32,7 +34,6 @@ export function formatTime(ts: number): string {
 export function isLikelyIPv6(value: string): boolean {
   const v = value.trim();
   if (!v || v.includes(".")) return false;
-  // Minimal structural check — backend projection enforces real validation.
   return v.includes(":") && /^[0-9a-fA-F:]+$/.test(v);
 }
 
@@ -49,4 +50,63 @@ export function truncateMiddle(text: string, max = 42): string {
   const head = Math.ceil((max - 1) / 2);
   const tail = Math.floor((max - 1) / 2);
   return `${text.slice(0, head)}…${text.slice(-tail)}`;
+}
+
+/** Parse CFST-style numeric fields (e.g. "12.3 ms", "1.2 MB/s", "0.00%"). */
+export function parseMetricNumber(raw: string): number {
+  const m = raw.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : Number.NaN;
+}
+
+export function resultPerformanceSummary(result: SpeedTestResult | undefined): string {
+  if (!result) return "";
+  const parts = [
+    result.latency ? `延迟 ${result.latency}` : "",
+    result.loss ? `丢包 ${result.loss}` : "",
+    result.speed && result.speed !== "0" ? `速度 ${result.speed}` : "",
+    result.region || "",
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+export function sparklinePaths(
+  points: TrafficPoint[],
+  width: number,
+  height: number,
+): { up: string; down: string; areaDown: string } {
+  if (points.length === 0) {
+    return { up: "", down: "", areaDown: "" };
+  }
+  const max = Math.max(1, ...points.map((p) => Math.max(p.up, p.down)));
+  const step = points.length <= 1 ? width : width / (points.length - 1);
+  const yOf = (v: number) => height - (v / max) * (height - 4) - 2;
+  const coords = (key: "up" | "down") =>
+    points.map((p, i) => `${i === 0 ? "M" : "L"}${i * step},${yOf(p[key])}`).join(" ");
+  const downPath = coords("down");
+  const areaDown =
+    points.length > 0
+      ? `${downPath} L${(points.length - 1) * step},${height} L0,${height} Z`
+      : "";
+  return { up: coords("up"), down: downPath, areaDown };
+}
+
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
 }

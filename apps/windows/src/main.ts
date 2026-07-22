@@ -1,16 +1,24 @@
 import "./styles.css";
 import * as api from "./api";
-import { formatBytes, formatRate } from "./format";
+import { copyText, isLikelyIPv6 } from "./format";
 import {
+  canStartProxy,
   clearNotice,
+  clearTrafficHistory,
   createInitialModel,
+  exitIpEndpoints,
+  filteredLogs,
   pushLog,
+  pushTrafficSample,
+  readinessIssues,
   sessionPrefsFromModel,
   showNotice,
+  sortedSpeedResults,
   type AppModel,
 } from "./state";
-import type { AppSection, RoutingMode } from "./types";
-import { renderSection, renderShell, syncChrome } from "./views";
+import type { AppSection, ExitIpMode, NodeSortKey, RoutingMode } from "./types";
+import { DEFAULT_SPEED_PARAMS, SECTIONS } from "./types";
+import { patchTrafficWidgets, renderSection, renderShell, syncChrome } from "./views";
 
 const rootEl = document.querySelector<HTMLDivElement>("#app");
 if (!rootEl) {
@@ -38,14 +46,14 @@ function scheduleSavePrefs(): void {
 function toast(
   message: string,
   style: "info" | "success" | "error" = "info",
-  action?: "openSettings",
+  action?: "openSettings" | "gotoNodes" | "gotoProfiles",
 ): void {
   showNotice(model, message, style, action);
   if (noticeTimer) clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => {
     clearNotice(model);
     syncChrome(model);
-  }, 5200);
+  }, 5600);
   syncChrome(model);
 }
 
@@ -53,7 +61,7 @@ function paint(options?: { preserveFocus?: boolean }): void {
   const active = document.activeElement as HTMLElement | null;
   const focusId = options?.preserveFocus && active?.id ? active.id : null;
   const selection =
-    focusId && active instanceof HTMLInputElement
+    focusId && (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)
       ? { start: active.selectionStart, end: active.selectionEnd }
       : null;
 
@@ -69,7 +77,7 @@ function paint(options?: { preserveFocus?: boolean }): void {
         try {
           el.setSelectionRange(selection.start, selection.end);
         } catch {
-          // ignore for non-text inputs
+          // ignore
         }
       }
     }
@@ -79,24 +87,96 @@ function paint(options?: { preserveFocus?: boolean }): void {
 function navigate(section: AppSection): void {
   if (model.section === section) return;
   model.section = section;
+  scheduleSavePrefs();
   paint();
+}
+
+function isTypingTarget(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
 }
 
 function bindShell(): void {
   document.querySelectorAll<HTMLButtonElement>(".nav-item").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const section = btn.dataset.section as AppSection;
-      navigate(section);
+      navigate(btn.dataset.section as AppSection);
     });
   });
 
-  // Global delegated actions (notice host + section buttons).
   root.addEventListener("click", (event) => {
-    const target = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
+    const target = (event.target as HTMLElement).closest<HTMLElement>(
+      "[data-action], [data-select-ip], [data-sort], [data-exit-mode], [data-focus-ip], [data-routing]",
+    );
     if (!target) return;
+
+    if (target.dataset.routing) {
+      if (model.core?.running) {
+        toast("请先断开连接再切换代理模式", "error");
+        return;
+      }
+      model.routingMode = target.dataset.routing as RoutingMode;
+      scheduleSavePrefs();
+      pushLog(model, "info", "config", `代理模式切换为 ${model.routingMode}`);
+      paint();
+      return;
+    }
+
+    if (target.dataset.exitMode) {
+      model.exitIpMode = target.dataset.exitMode as ExitIpMode;
+      scheduleSavePrefs();
+      paint({ preserveFocus: true });
+      return;
+    }
+
+    if (target.dataset.sort) {
+      const key = target.dataset.sort as NodeSortKey;
+      if (model.nodeSortKey === key) {
+        model.nodeSortAsc = !model.nodeSortAsc;
+      } else {
+        model.nodeSortKey = key;
+        model.nodeSortAsc = key === "speed" ? false : true;
+      }
+      paint();
+      return;
+    }
+
+    if (target.dataset.focusIp) {
+      model.selectedResultIp = target.dataset.focusIp;
+      paint();
+      return;
+    }
+
+    if (target.dataset.selectIp) {
+      void selectNode(target.dataset.selectIp);
+      return;
+    }
+
     const action = target.dataset.action;
-    if (!action) return;
-    void handleAction(action, target);
+    if (action) {
+      void handleAction(action, target);
+    }
+  });
+
+  window.addEventListener("keydown", (event) => {
+    if (isTypingTarget(event.target)) return;
+    if (event.key >= "1" && event.key <= "5" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const index = Number(event.key) - 1;
+      const section = SECTIONS[index]?.id;
+      if (section) {
+        event.preventDefault();
+        navigate(section);
+      }
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      if (model.core?.running) {
+        void stopCore();
+      } else {
+        void startCore();
+      }
+    }
   });
 }
 
@@ -112,6 +192,30 @@ function bindSectionControls(): void {
   if (speedDd) {
     speedDd.addEventListener("change", () => {
       model.speedDisableDownload = speedDd.checked;
+      scheduleSavePrefs();
+    });
+  }
+
+  const bindNum = (id: string, key: keyof typeof model.speedParams) => {
+    const el = document.querySelector<HTMLInputElement>(id);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      const n = Number(el.value);
+      if (!Number.isFinite(n)) return;
+      if (key === "httping") return;
+      (model.speedParams[key] as number) = Math.max(1, Math.floor(n));
+      scheduleSavePrefs();
+    });
+  };
+  bindNum("#sp-threads", "threads");
+  bindNum("#sp-ping", "pingCount");
+  bindNum("#sp-dn", "downloadCount");
+  bindNum("#sp-dt", "downloadTime");
+  bindNum("#sp-port", "port");
+  const httping = document.querySelector<HTMLInputElement>("#sp-httping");
+  if (httping) {
+    httping.addEventListener("change", () => {
+      model.speedParams.httping = httping.checked;
       scheduleSavePrefs();
     });
   }
@@ -140,31 +244,10 @@ function bindSectionControls(): void {
     });
   }
 
-  document.querySelectorAll<HTMLButtonElement>("[data-routing]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (model.core?.running) {
-        toast("请先断开连接再切换代理模式", "error");
-        return;
-      }
-      const mode = btn.dataset.routing as RoutingMode;
-      model.routingMode = mode;
-      scheduleSavePrefs();
-      pushLog(model, "info", "config", `代理模式切换为 ${mode}`);
-      paint();
-    });
-  });
-
   const sysProxy = document.querySelector<HTMLInputElement>("#toggle-sys-proxy");
   if (sysProxy) {
     sysProxy.addEventListener("change", () => {
-      model.systemProxyEnabled = sysProxy.checked;
-      scheduleSavePrefs();
-      pushLog(
-        model,
-        "info",
-        "proxy",
-        model.systemProxyEnabled ? "已勾选启动时启用系统代理" : "已取消启动时启用系统代理",
-      );
+      void onSystemProxyToggle(sysProxy.checked);
     });
   }
 
@@ -175,17 +258,6 @@ function bindSectionControls(): void {
       void setVirtualNetwork(el.checked);
     });
   }
-
-  document.querySelectorAll<HTMLButtonElement>("[data-select-ip]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const ip = btn.dataset.selectIp ?? "";
-      model.selectedAddress = ip;
-      scheduleSavePrefs();
-      pushLog(model, "success", "speed", `已选择节点 ${ip}`);
-      toast(`已选择节点 ${ip}`, "success");
-      paint();
-    });
-  });
 
   const logQuery = document.querySelector<HTMLInputElement>("#log-query");
   const logSource = document.querySelector<HTMLSelectElement>("#log-source");
@@ -210,7 +282,7 @@ function bindSectionControls(): void {
   }
 }
 
-async function handleAction(action: string, _el: HTMLElement): Promise<void> {
+async function handleAction(action: string, el: HTMLElement): Promise<void> {
   switch (action) {
     case "goto-nodes":
       navigate("nodes");
@@ -220,6 +292,9 @@ async function handleAction(action: string, _el: HTMLElement): Promise<void> {
       return;
     case "goto-settings":
       navigate("settings");
+      return;
+    case "goto-logs":
+      navigate("logs");
       return;
     case "dismiss-notice":
       clearNotice(model);
@@ -238,7 +313,28 @@ async function handleAction(action: string, _el: HTMLElement): Promise<void> {
       await runSpeed();
       return;
     case "apply-best":
-      applyBest();
+      await applyBest();
+      return;
+    case "apply-selected": {
+      const ip = model.selectedResultIp || model.selectedAddress;
+      if (ip) await selectNode(ip);
+      return;
+    }
+    case "copy-selected-node": {
+      const ip = model.selectedResultIp || model.selectedAddress;
+      if (ip) await copyAndToast(ip);
+      return;
+    }
+    case "copy-text": {
+      const text = el.dataset.copy ?? "";
+      if (text) await copyAndToast(text);
+      return;
+    }
+    case "copy-profile-yaml":
+      await copyAndToast(model.profileYaml);
+      return;
+    case "copy-runtime-yaml":
+      await copyAndToast(model.runtimeYaml);
       return;
     case "detect-exit":
       await detectExit();
@@ -261,8 +357,87 @@ async function handleAction(action: string, _el: HTMLElement): Promise<void> {
       model.logs = [];
       paint();
       return;
+    case "toggle-log-order":
+      model.logNewestFirst = !model.logNewestFirst;
+      paint();
+      return;
+    case "export-logs":
+      await exportLogs();
+      return;
+    case "toggle-speed-params":
+      model.showSpeedParams = !model.showSpeedParams;
+      paint();
+      return;
+    case "cancel-confirm":
+      model.confirm = null;
+      syncChrome(model);
+      return;
+    case "confirm-dialog":
+      await acceptConfirm();
+      return;
+    case "retry-bootstrap":
+      model.bootstrapError = null;
+      await bootstrap();
+      return;
     default:
       return;
+  }
+}
+
+async function copyAndToast(text: string): Promise<void> {
+  const ok = await copyText(text);
+  toast(ok ? "已复制到剪贴板" : "复制失败", ok ? "success" : "error");
+}
+
+async function selectNode(ip: string): Promise<void> {
+  if (!ip) return;
+  if (model.core?.running && ip !== model.selectedAddress) {
+    model.confirm = {
+      title: "应用节点并重新连接？",
+      message: `本地代理会短暂中断，并使用 ${ip} 重新连接。`,
+      confirmLabel: "应用并重新连接",
+      selectIp: ip,
+      reconnect: true,
+    };
+    syncChrome(model);
+    return;
+  }
+  applyNode(ip);
+}
+
+function applyNode(ip: string): void {
+  model.selectedAddress = ip;
+  model.selectedResultIp = ip;
+  scheduleSavePrefs();
+  pushLog(model, "success", "speed", `已选择节点 ${ip}`);
+  toast(`已选择节点 ${ip}`, "success");
+  paint();
+}
+
+async function acceptConfirm(): Promise<void> {
+  const dialog = model.confirm;
+  model.confirm = null;
+  if (!dialog?.selectIp) {
+    syncChrome(model);
+    return;
+  }
+  applyNode(dialog.selectIp);
+  if (dialog.reconnect && model.core?.running) {
+    await stopCore();
+    await startCore();
+  }
+}
+
+async function onSystemProxyToggle(enabled: boolean): Promise<void> {
+  model.systemProxyEnabled = enabled;
+  scheduleSavePrefs();
+  // Independent of routingMode / TUN — apply immediately when user toggles.
+  if (model.core?.running || enabled) {
+    await applySystemProxy(enabled);
+  } else {
+    pushLog(model, "info", "proxy", "已更新系统代理偏好（启动连接时生效）");
+    toast(enabled ? "启动连接时将启用系统代理" : "已关闭系统代理偏好", "info");
+    paint();
   }
 }
 
@@ -273,7 +448,7 @@ async function setVirtualNetwork(enabled: boolean): Promise<void> {
     model.virtualNetworkEnabled = status.enabled;
     pushLog(model, "info", "network", status.message);
     if (status.enabled) {
-      toast("已请求 TUN：请重新启动 Mihomo 以应用（通常需管理员）", "info");
+      toast("已请求 TUN：请重新启动 Mihomo 以应用（通常需管理员）", "info", "openSettings");
     } else {
       toast("已关闭虚拟网卡请求", "info");
     }
@@ -311,6 +486,14 @@ async function projectConfig(): Promise<void> {
 }
 
 async function startCore(): Promise<void> {
+  const issues = readinessIssues(model);
+  if (issues.length > 0) {
+    toast(issues[0].message, "error", issues[0].action);
+    paint();
+    return;
+  }
+  if (!canStartProxy(model)) return;
+
   model.busy.start = true;
   paint();
   try {
@@ -325,7 +508,10 @@ async function startCore(): Promise<void> {
     pushLog(model, status.running ? "success" : "warn", "core", status.message);
     toast(status.message, status.running ? "success" : "error");
     await refreshProxyStatus();
-    if (status.running) startTrafficPolling();
+    if (status.running) {
+      clearTrafficHistory(model);
+      startTrafficPolling();
+    }
   } catch (error) {
     pushLog(model, "error", "core", `启动失败：${error}`);
     toast(`启动失败：${error}`, "error");
@@ -355,6 +541,8 @@ async function stopCore(): Promise<void> {
 }
 
 async function applySystemProxy(enabled: boolean): Promise<void> {
+  model.busy.sysProxy = true;
+  syncChrome(model);
   try {
     const status = await api.setSystemProxy({
       enabled,
@@ -362,14 +550,16 @@ async function applySystemProxy(enabled: boolean): Promise<void> {
       port: 11451,
     });
     model.proxy = status;
-    model.systemProxyEnabled = enabled && status.enabled;
+    model.systemProxyEnabled = enabled ? status.enabled : false;
     scheduleSavePrefs();
     pushLog(model, "info", "proxy", status.message);
     toast(status.message, "success");
-    paint();
   } catch (error) {
     pushLog(model, "error", "proxy", `系统代理操作失败：${error}`);
     toast(`系统代理操作失败：${error}`, "error");
+  } finally {
+    model.busy.sysProxy = false;
+    paint();
   }
 }
 
@@ -377,7 +567,8 @@ async function detectExit(): Promise<void> {
   model.busy.exitIp = true;
   paint();
   try {
-    const result = await api.detectExitIp();
+    const endpoints = exitIpEndpoints(model.exitIpMode);
+    const result = await api.detectExitIp(endpoints);
     model.exitIp = result;
     pushLog(model, "success", "network", `${result.message}（来源 ${result.source}）`);
     toast(`出口 ${result.ip}`, "success");
@@ -408,6 +599,10 @@ async function probeController(): Promise<void> {
 }
 
 async function runSpeed(): Promise<void> {
+  if (!model.speedIpRange.trim()) {
+    toast("请填写 IP / CIDR", "error");
+    return;
+  }
   model.busy.speed = true;
   model.speedMessage = "测速进行中，请稍候…";
   paint();
@@ -415,14 +610,21 @@ async function runSpeed(): Promise<void> {
     const response = await api.runSpeedTest({
       ipRange: model.speedIpRange.trim() || null,
       disableDownload: model.speedDisableDownload,
-      httping: true,
-      threads: 100,
-      pingCount: 4,
-      downloadCount: 5,
-      downloadTime: 5,
+      httping: model.speedParams.httping,
+      threads: model.speedParams.threads,
+      pingCount: model.speedParams.pingCount,
+      downloadCount: model.speedParams.downloadCount,
+      downloadTime: model.speedParams.downloadTime,
+      port: model.speedParams.port,
     });
     model.speedResults = response.results;
+    model.speedResultsAt = Date.now();
     model.speedMessage = response.message;
+    model.nodeSortKey = "latency";
+    model.nodeSortAsc = true;
+    if (response.results[0]) {
+      model.selectedResultIp = response.results[0].ip;
+    }
     pushLog(model, "success", "speed", response.message);
     scheduleSavePrefs();
     toast(response.message, "success");
@@ -436,17 +638,40 @@ async function runSpeed(): Promise<void> {
   }
 }
 
-function applyBest(): void {
-  if (model.speedResults.length === 0) {
+async function applyBest(): Promise<void> {
+  const sorted = sortedSpeedResults(model);
+  if (sorted.length === 0) {
     toast("没有可应用的测速结果", "error");
     return;
   }
-  model.selectedAddress = model.speedResults[0].ip;
-  model.speedMessage = `已应用最佳结果：${model.selectedAddress}`;
-  scheduleSavePrefs();
-  pushLog(model, "success", "speed", model.speedMessage);
-  toast(model.speedMessage, "success");
-  paint();
+  // Prefer lowest latency when sorted that way; otherwise first visible row.
+  const best =
+    model.nodeSortKey === "latency" && model.nodeSortAsc
+      ? sorted[0]
+      : [...model.speedResults].sort((a, b) => {
+          const an = Number(a.latency.replace(/[^\d.]/g, "")) || 1e9;
+          const bn = Number(b.latency.replace(/[^\d.]/g, "")) || 1e9;
+          return an - bn;
+        })[0];
+  await selectNode(best.ip);
+}
+
+async function exportLogs(): Promise<void> {
+  const lines = filteredLogs(model).map(
+    (e) => `${new Date(e.at).toISOString()}\t${e.level}\t${e.source}\t${e.message}`,
+  );
+  if (lines.length === 0) {
+    toast("没有可导出的日志", "error");
+    return;
+  }
+  const text = lines.join("\n");
+  const ok = await copyText(text);
+  if (ok) {
+    pushLog(model, "info", "app", `已复制 ${lines.length} 条日志到剪贴板`);
+    toast(`已复制 ${lines.length} 条日志`, "success");
+  } else {
+    toast("导出失败", "error");
+  }
 }
 
 async function refreshCoreStatus(): Promise<void> {
@@ -480,37 +705,15 @@ async function refreshVirtualNetwork(): Promise<void> {
 async function refreshTraffic(): Promise<void> {
   try {
     model.traffic = await api.sampleTraffic();
-    // Soft-update metric tiles on overview to avoid full repaint thrash.
+    if (model.traffic.live) {
+      pushTrafficSample(model, model.traffic);
+    }
     if (model.section === "overview") {
-      patchOverviewTraffic();
+      patchTrafficWidgets(model, detail);
+      syncChrome(model);
     }
   } catch {
     model.traffic = null;
-  }
-}
-
-function patchOverviewTraffic(): void {
-  const traffic = model.traffic;
-  if (!traffic) return;
-  const running = !!model.core?.running;
-  const grid = detail.querySelector(".metric-grid");
-  if (!grid) return;
-  const values = grid.querySelectorAll(".metric-value");
-  if (values.length < 6) return;
-  values[0].textContent = traffic.live ? formatRate(traffic.upBps) : "—";
-  values[1].textContent = traffic.live ? formatRate(traffic.downBps) : "—";
-  values[2].textContent = running
-    ? traffic.live
-      ? "实时采集"
-      : "连接中"
-    : "未连接";
-  values[3].textContent = formatBytes(traffic.uploadTotal);
-  values[4].textContent = formatBytes(traffic.downloadTotal);
-  const help = detail.querySelector(".metric-grid + .help-text");
-  if (help) {
-    help.textContent =
-      traffic.message ||
-      (running ? "正在采样 /connections" : "启动代理后显示实时上下行速率");
   }
 }
 
@@ -519,7 +722,7 @@ function startTrafficPolling(): void {
   void refreshTraffic();
   trafficTimer = setInterval(() => {
     void refreshTraffic();
-  }, 1500);
+  }, 1200);
 }
 
 function stopTrafficPolling(): void {
@@ -528,6 +731,7 @@ function stopTrafficPolling(): void {
     trafficTimer = null;
   }
   model.traffic = null;
+  clearTrafficHistory(model);
 }
 
 async function refreshAllStatus(): Promise<void> {
@@ -542,12 +746,37 @@ async function restorePrefs(): Promise<void> {
     const prefs = await api.loadSessionPrefs();
     if (prefs.profileYaml?.trim()) model.profileYaml = prefs.profileYaml;
     if (prefs.selectedAddress?.trim()) model.selectedAddress = prefs.selectedAddress;
-    if (prefs.routingMode === "rule" || prefs.routingMode === "global" || prefs.routingMode === "direct") {
+    if (
+      prefs.routingMode === "rule" ||
+      prefs.routingMode === "global" ||
+      prefs.routingMode === "direct"
+    ) {
       model.routingMode = prefs.routingMode;
     }
     model.systemProxyEnabled = !!prefs.systemProxyEnabled;
     if (prefs.lastSpeedIpRange?.trim()) model.speedIpRange = prefs.lastSpeedIpRange;
     model.speedDisableDownload = prefs.disableDownload !== false;
+
+    model.speedParams = {
+      threads: prefs.speedThreads ?? DEFAULT_SPEED_PARAMS.threads,
+      pingCount: prefs.speedPingCount ?? DEFAULT_SPEED_PARAMS.pingCount,
+      downloadCount: prefs.speedDownloadCount ?? DEFAULT_SPEED_PARAMS.downloadCount,
+      downloadTime: prefs.speedDownloadTime ?? DEFAULT_SPEED_PARAMS.downloadTime,
+      httping: prefs.speedHttping ?? DEFAULT_SPEED_PARAMS.httping,
+      port: prefs.speedPort ?? DEFAULT_SPEED_PARAMS.port,
+    };
+    if (prefs.exitIpMode === "auto" || prefs.exitIpMode === "ipv4" || prefs.exitIpMode === "ipv6") {
+      model.exitIpMode = prefs.exitIpMode;
+    }
+    if (
+      prefs.lastSection === "overview" ||
+      prefs.lastSection === "nodes" ||
+      prefs.lastSection === "profiles" ||
+      prefs.lastSection === "logs" ||
+      prefs.lastSection === "settings"
+    ) {
+      model.section = prefs.lastSection;
+    }
   } catch {
     // browser preview keeps defaults
   }
@@ -567,7 +796,11 @@ async function bootstrap(): Promise<void> {
     await restorePrefs();
     await refreshAllStatus();
     model.bootstrapped = true;
+    model.bootstrapError = null;
     pushLog(model, "success", "app", "初始化完成");
+    if (!isLikelyIPv6(model.selectedAddress) && model.routingMode !== "direct") {
+      pushLog(model, "warn", "app", "当前未选择有效 IPv6 入口");
+    }
     paint();
     scheduleSavePrefs();
   } catch (error) {

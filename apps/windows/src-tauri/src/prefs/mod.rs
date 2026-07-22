@@ -13,6 +13,22 @@ pub struct SessionPrefs {
     pub system_proxy_enabled: bool,
     pub last_speed_ip_range: String,
     pub disable_download: bool,
+    #[serde(default)]
+    pub speed_threads: Option<u32>,
+    #[serde(default)]
+    pub speed_ping_count: Option<u32>,
+    #[serde(default)]
+    pub speed_download_count: Option<u32>,
+    #[serde(default)]
+    pub speed_download_time: Option<u32>,
+    #[serde(default)]
+    pub speed_httping: Option<bool>,
+    #[serde(default)]
+    pub speed_port: Option<u16>,
+    #[serde(default)]
+    pub exit_ip_mode: Option<String>,
+    #[serde(default)]
+    pub last_section: Option<String>,
 }
 
 pub struct PrefsStore {
@@ -62,11 +78,42 @@ mod tests {
             system_proxy_enabled: true,
             last_speed_ip_range: "2606:4700::/32".into(),
             disable_download: true,
+            speed_threads: Some(120),
+            speed_ping_count: Some(6),
+            speed_download_count: Some(8),
+            speed_download_time: Some(5),
+            speed_httping: Some(true),
+            speed_port: Some(443),
+            exit_ip_mode: Some("ipv6".into()),
+            last_section: Some("nodes".into()),
         };
         store.save(&prefs).unwrap();
         let loaded = store.load();
         assert_eq!(loaded.selected_address, "2001:db8::1");
         assert!(loaded.system_proxy_enabled);
+        assert_eq!(loaded.speed_threads, Some(120));
+        assert_eq!(loaded.exit_ip_mode.as_deref(), Some("ipv6"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn loads_legacy_prefs_without_new_fields() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("viasix-prefs-legacy-{stamp}"));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("session-prefs.json");
+        fs::write(
+            &path,
+            r#"{"profileYaml":"x","selectedAddress":"::1","routingMode":"rule","systemProxyEnabled":false,"lastSpeedIpRange":"","disableDownload":true}"#,
+        )
+        .unwrap();
+        let store = PrefsStore::new(dir.clone());
+        let loaded = store.load();
+        assert_eq!(loaded.selected_address, "::1");
+        assert!(loaded.speed_threads.is_none());
         let _ = fs::remove_dir_all(dir);
     }
 }

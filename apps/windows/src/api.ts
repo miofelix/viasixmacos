@@ -61,8 +61,10 @@ export async function setSystemProxy(args: {
   return invoke<SystemProxyStatus>("set_system_proxy", args);
 }
 
-export async function detectExitIp(): Promise<ExitIpResult> {
-  return invoke<ExitIpResult>("detect_exit_ip");
+export async function detectExitIp(endpoints?: string[] | null): Promise<ExitIpResult> {
+  return invoke<ExitIpResult>("detect_exit_ip", {
+    endpoints: endpoints && endpoints.length > 0 ? endpoints : null,
+  });
 }
 
 export async function runSpeedTest(request: {
@@ -73,6 +75,7 @@ export async function runSpeedTest(request: {
   pingCount: number;
   downloadCount: number;
   downloadTime: number;
+  port?: number;
 }): Promise<SpeedTestResponse> {
   return invoke<SpeedTestResponse>("run_speed_test", { request });
 }

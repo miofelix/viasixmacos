@@ -1,13 +1,33 @@
-import { icon } from "./icons";
-import { escapeHtml, formatBytes, formatRate, formatTime, isLikelyIPv6, truncateMiddle } from "./format";
 import {
+  escapeHtml,
+  formatBytes,
+  formatRate,
+  formatTime,
+  isLikelyIPv6,
+  sparklinePaths,
+  truncateMiddle,
+} from "./format";
+import { icon } from "./icons";
+import {
+  canStartProxy,
   configurationReady,
   filteredLogs,
   hasUsableProfile,
+  parseProfileSummary,
+  readinessIssues,
   routingModeLabel,
+  selectedNodeSecondary,
+  sortedSpeedResults,
+  speedResultsFresh,
   type AppModel,
 } from "./state";
-import { ROUTING_MODES, SECTIONS, type AppSection, type RoutingMode } from "./types";
+import {
+  ROUTING_MODES,
+  SECTIONS,
+  type AppSection,
+  type NodeSortKey,
+  type RoutingMode,
+} from "./types";
 
 export function renderShell(): string {
   const nav = SECTIONS.map(
@@ -32,17 +52,25 @@ export function renderShell(): string {
       <div class="sidebar-footer">
         <div class="sidebar-kicker">IPv6 代理入口</div>
         <div class="sidebar-ip" id="sidebar-ip">未选择</div>
+        <div class="sidebar-proxy" id="sidebar-proxy"></div>
       </div>
     </aside>
     <div class="divider-v" aria-hidden="true"></div>
     <main class="detail">
       <div id="detail-content" class="detail-content"></div>
       <div id="notice-host" class="notice-host" hidden></div>
+      <div id="modal-host" class="modal-host" hidden></div>
     </main>
   </div>`;
 }
 
 export function renderSection(model: AppModel): string {
+  if (!model.bootstrapped && !model.bootstrapError) {
+    return renderBootstrap();
+  }
+  if (model.bootstrapError) {
+    return renderBootstrapFailed(model.bootstrapError);
+  }
   switch (model.section) {
     case "overview":
       return renderOverview(model);
@@ -57,6 +85,25 @@ export function renderSection(model: AppModel): string {
   }
 }
 
+function renderBootstrap(): string {
+  return `
+  <div class="center-state">
+    <div class="spinner" aria-hidden="true"></div>
+    <h1>正在准备 ViaSix…</h1>
+    <p class="muted">正在检查会话偏好、运行组件与网络接入能力</p>
+  </div>`;
+}
+
+function renderBootstrapFailed(message: string): string {
+  return `
+  <div class="center-state">
+    ${icon("warn", 36)}
+    <h1>初始化失败</h1>
+    <p class="muted">${escapeHtml(message)}</p>
+    <button type="button" class="btn btn-primary" data-action="retry-bootstrap">重试</button>
+  </div>`;
+}
+
 function pageHeader(title: string, subtitle: string, trailing = ""): string {
   return `
   <header class="page-header">
@@ -68,7 +115,10 @@ function pageHeader(title: string, subtitle: string, trailing = ""): string {
   </header>`;
 }
 
-function statusBadge(text: string, tone: "neutral" | "accent" | "positive" | "warning" | "negative"): string {
+function statusBadge(
+  text: string,
+  tone: "neutral" | "accent" | "positive" | "warning" | "negative",
+): string {
   return `<span class="badge tone-${tone}">${escapeHtml(text)}</span>`;
 }
 
@@ -79,27 +129,34 @@ function stepRow(args: {
   active: boolean;
   actionLabel?: string;
   actionAttr?: string;
+  badgeOnly?: boolean;
 }): string {
   const tone = args.active ? "positive" : args.ready ? "accent" : "warning";
   const mark = args.ready || args.active ? icon("check", 14) : icon("warn", 14);
-  const action = args.actionLabel
-    ? `<button type="button" class="btn btn-ghost btn-sm" data-action="${args.actionAttr ?? ""}">${escapeHtml(args.actionLabel)}</button>`
-    : "";
+  let trailing = "";
+  if (args.actionLabel) {
+    trailing = `<button type="button" class="btn btn-ghost btn-sm" data-action="${args.actionAttr ?? ""}">${escapeHtml(args.actionLabel)}</button>`;
+  } else {
+    trailing = statusBadge(
+      args.active ? "已启用" : args.ready ? "已就绪" : "未就绪",
+      args.active ? "positive" : args.ready ? "accent" : "warning",
+    );
+  }
   return `
   <div class="step-row">
     <div class="step-mark tone-${tone}">${mark}</div>
     <div class="step-body">
       <div class="step-title">${escapeHtml(args.title)}</div>
-      <div class="step-detail">${escapeHtml(args.detail)}</div>
+      <div class="step-detail" title="${escapeHtml(args.detail)}">${escapeHtml(args.detail)}</div>
     </div>
-    ${action}
+    <div class="step-trailing">${trailing}</div>
   </div>`;
 }
 
 function renderOverview(model: AppModel): string {
   const running = !!model.core?.running;
   const selectedOk = isLikelyIPv6(model.selectedAddress);
-  const profileOk = model.routingMode === "direct" || model.profileYaml.trim().length > 0;
+  const issues = readinessIssues(model);
   const virt = model.virtualNetwork;
   const networkReady = virt ? virt.available || !virt.enabled : true;
   const networkActive = running;
@@ -107,12 +164,28 @@ function renderOverview(model: AppModel): string {
     ? virt.available
       ? "虚拟网卡（Mihomo TUN + Wintun）"
       : "已请求 TUN，但 Wintun 不可用"
-    : model.systemProxyEnabled
-      ? "系统代理 · 本地 mixed 11451"
+    : model.systemProxyEnabled || model.proxy?.enabled
+      ? "系统代理 · 本地 mixed 127.0.0.1:11451"
       : "用户态本地代理（未启用系统代理 / TUN）";
 
-  const headerTone = running ? "positive" : configurationReady(model) ? "accent" : "warning";
-  const headerText = running ? "已连接" : configurationReady(model) ? "就绪" : "待配置";
+  const headerTone =
+    model.core && !running && model.core.message.toLowerCase().includes("fail")
+      ? "negative"
+      : running
+        ? "positive"
+        : configurationReady(model)
+          ? "accent"
+          : "warning";
+  const headerText =
+    model.routingMode === "direct"
+      ? running
+        ? "直连已启用"
+        : "直连未启用"
+      : running
+        ? "IPv6 已启用"
+        : configurationReady(model)
+          ? "就绪"
+          : "待配置";
 
   const routingCards = ROUTING_MODES.map((m) => {
     const selected = model.routingMode === m.id;
@@ -136,23 +209,69 @@ function renderOverview(model: AppModel): string {
       ? "实时"
       : "连接中";
 
-  const entryPrimary = selectedOk ? model.selectedAddress : "未选择有效 IPv6";
-  const exitPrimary = model.exitIp?.ip || "尚未检测";
-  const exitSecondary = model.exitIp
-    ? `${model.exitIp.family} · ${model.exitIp.source}`
-    : "点击检测公网出口 IP";
+  const spark = sparklinePaths(model.trafficHistory, 560, 96);
+  const sparkSvg =
+    model.trafficHistory.length > 1
+      ? `<svg class="sparkline" viewBox="0 0 560 96" preserveAspectRatio="none" aria-label="流量曲线">
+           <path class="spark-area" d="${spark.areaDown}"></path>
+           <path class="spark-down" d="${spark.down}"></path>
+           <path class="spark-up" d="${spark.up}"></path>
+         </svg>`
+      : `<div class="sparkline-empty">${running ? "等待流量数据…" : "暂无流量数据"}</div>`;
 
+  const entryPrimary = selectedOk
+    ? model.selectedAddress
+    : model.selectedAddress.trim()
+      ? model.selectedAddress
+      : "尚未选择";
+  const exitPrimary = model.exitIp?.ip || (model.busy.exitIp ? "检测中…" : "尚未检测");
+  const exitSecondary = model.exitIp
+    ? `${model.exitIp.family.toUpperCase()} · ${model.exitIp.source}`
+    : model.busy.exitIp
+      ? "正在查询公网出口"
+      : "出口可能是 IPv4，不代表入口地址族";
+
+  const startDisabled = !canStartProxy(model) || model.busy.start;
   const actionBtn = running
     ? `<button type="button" class="btn btn-danger" data-action="stop-core" ${model.busy.stop ? "disabled" : ""}>
-         ${icon("stop", 16)} <span>${model.busy.stop ? "停止中…" : "断开"}</span>
+         ${icon("stop", 16)} <span>${model.busy.stop ? "停止中…" : "停止连接"}</span>
        </button>`
-    : `<button type="button" class="btn btn-primary" data-action="start-core" ${model.busy.start ? "disabled" : ""}>
-         ${icon("play", 16)} <span>${model.busy.start ? "启动中…" : "连接"}</span>
+    : `<button type="button" class="btn btn-primary" data-action="start-core" ${startDisabled ? "disabled" : ""} title="${escapeHtml(issues[0]?.message ?? "启动连接")}">
+         ${icon("play", 16)} <span>${model.busy.start ? "启动中…" : "启动连接"}</span>
        </button>`;
+
+  const readinessBlock =
+    issues.length > 0 && !running
+      ? `<div class="callout tone-warning">
+           <div class="callout-title">${icon("warn", 14)} 启动前需处理</div>
+           <ul class="issue-list">
+             ${issues
+               .map(
+                 (i) =>
+                   `<li>
+                      <span>${escapeHtml(i.message)}</span>
+                      ${
+                        i.action
+                          ? `<button type="button" class="btn btn-ghost btn-sm" data-action="${
+                              i.action === "openSettings"
+                                ? "goto-settings"
+                                : i.action === "gotoNodes"
+                                  ? "goto-nodes"
+                                  : "goto-profiles"
+                            }">处理</button>`
+                          : ""
+                      }
+                    </li>`,
+               )
+               .join("")}
+           </ul>
+         </div>`
+      : "";
 
   return `
   ${pageHeader("首页", "IPv6 代理链路状态与控制", statusBadge(headerText, headerTone))}
   <div class="page-scroll">
+    ${readinessBlock}
     <section class="card">
       <div class="card-header">
         <div class="card-title">${icon("network", 16)} <span>IPv6 链路</span></div>
@@ -170,7 +289,7 @@ function renderOverview(model: AppModel): string {
         <div class="row-divider"></div>
         ${stepRow({
           title: "IPv6 节点",
-          detail: selectedOk ? model.selectedAddress : "请先在「IPv6 优选」中选择地址",
+          detail: selectedOk ? model.selectedAddress : "尚未选择有效 IPv6 地址",
           ready: selectedOk || model.routingMode === "direct",
           active: selectedOk && running,
           actionLabel: selectedOk ? "更换" : "选择",
@@ -181,14 +300,19 @@ function renderOverview(model: AppModel): string {
           title: "连接配置",
           detail:
             model.routingMode === "direct"
-              ? "直连模式 · 无需代理入口"
+              ? "直连模式不加载远程代理配置"
               : hasUsableProfile(model)
-                ? "已加载代理入口 profile"
-                : profileOk
-                  ? "已有 YAML（示例配置请替换为真实入口）"
-                  : "尚未配置 profile",
-          ready: profileOk,
-          active: profileOk && running,
+                ? "主内联节点可注入当前 IPv6 地址"
+                : parseProfileSummary(model.profileYaml).hasInlineProxy
+                  ? "配置需要替换示例入口"
+                  : "配置需要包含可注入地址的内联代理",
+          ready:
+            model.routingMode === "direct" ||
+            (parseProfileSummary(model.profileYaml).hasInlineProxy &&
+              !parseProfileSummary(model.profileYaml).looksLikeExample),
+          active:
+            running &&
+            (model.routingMode === "direct" || hasUsableProfile(model)),
           actionLabel: "管理",
           actionAttr: "goto-profiles",
         })}
@@ -214,7 +338,7 @@ function renderOverview(model: AppModel): string {
         <div class="card-body">
           <div class="mode-row">${routingCards}</div>
           <p class="help-text">${escapeHtml(modeDesc)}</p>
-          <p class="help-text muted">当前：${routingModeLabel(model.routingMode)} · 运行中不可切换，请先断开。</p>
+          <p class="help-text muted">routingMode 与网络接入相互独立；运行中切换模式需先停止连接。</p>
         </div>
       </section>
 
@@ -226,15 +350,15 @@ function renderOverview(model: AppModel): string {
           <label class="setting-row">
             <div>
               <div class="setting-title">系统代理</div>
-              <div class="setting-detail">配置 Windows HTTP/HTTPS 代理到 127.0.0.1:11451</div>
+              <div class="setting-detail">独立开关 · Windows HTTP/HTTPS → 127.0.0.1:11451</div>
             </div>
-            <input type="checkbox" id="toggle-sys-proxy" ${model.systemProxyEnabled ? "checked" : ""} ${running ? "disabled" : ""} />
+            <input type="checkbox" id="toggle-sys-proxy" ${model.systemProxyEnabled || model.proxy?.enabled ? "checked" : ""} ${model.busy.sysProxy ? "disabled" : ""} />
           </label>
           <div class="row-divider"></div>
           <label class="setting-row">
             <div>
               <div class="setting-title">虚拟网卡模式</div>
-              <div class="setting-detail">${escapeHtml(virt?.message || "Mihomo TUN + Wintun（通常需管理员）")}</div>
+              <div class="setting-detail">${escapeHtml(virt?.message || "Mihomo TUN + Wintun（切换后需重启内核）")}</div>
             </div>
             <input type="checkbox" id="toggle-virt-net" ${model.virtualNetworkEnabled ? "checked" : ""} ${virt && !virt.available ? "disabled" : ""} />
           </label>
@@ -248,15 +372,16 @@ function renderOverview(model: AppModel): string {
         ${statusBadge(trafficStatus, running ? (traffic?.live ? "positive" : "accent") : "neutral")}
       </div>
       <div class="card-body">
-        <div class="metric-grid">
-          <div class="metric"><div class="metric-label">${icon("arrow-up", 14)} 上传</div><div class="metric-value">${up}</div></div>
-          <div class="metric"><div class="metric-label">${icon("arrow-down", 14)} 下载</div><div class="metric-value">${down}</div></div>
-          <div class="metric"><div class="metric-label">状态</div><div class="metric-value">${running ? (traffic?.live ? "实时采集" : "连接中") : "未连接"}</div></div>
-          <div class="metric"><div class="metric-label">总上传</div><div class="metric-value">${upTotal}</div></div>
-          <div class="metric"><div class="metric-label">总下载</div><div class="metric-value">${downTotal}</div></div>
-          <div class="metric"><div class="metric-label">Controller</div><div class="metric-value">${model.core?.controllerPort ?? "—"}</div></div>
+        <div class="sparkline-wrap" id="sparkline-host">${sparkSvg}</div>
+        <div class="metric-grid" id="metric-grid">
+          <div class="metric tone-accent"><div class="metric-label">${icon("arrow-up", 14)} 上传</div><div class="metric-value" data-metric="up">${up}</div></div>
+          <div class="metric tone-positive"><div class="metric-label">${icon("arrow-down", 14)} 下载</div><div class="metric-value" data-metric="down">${down}</div></div>
+          <div class="metric"><div class="metric-label">状态</div><div class="metric-value" data-metric="status">${running ? (traffic?.live ? "实时采集" : "连接中") : "未连接"}</div></div>
+          <div class="metric tone-accent"><div class="metric-label">总上传</div><div class="metric-value" data-metric="up-total">${upTotal}</div></div>
+          <div class="metric tone-positive"><div class="metric-label">总下载</div><div class="metric-value" data-metric="down-total">${downTotal}</div></div>
+          <div class="metric"><div class="metric-label">Controller</div><div class="metric-value" data-metric="ctrl">${model.core?.controllerPort ?? "—"}</div></div>
         </div>
-        <p class="help-text muted">${escapeHtml(traffic?.message || (running ? "正在采样 /connections" : "启动代理后显示实时上下行速率"))}</p>
+        <p class="help-text muted" id="traffic-help">${escapeHtml(traffic?.message || (running ? "速率由 /connections 采样差分得到；启动后持续刷新曲线" : "启动连接后显示实时上下行速率、累计流量与曲线"))}</p>
       </div>
     </section>
 
@@ -273,15 +398,39 @@ function renderOverview(model: AppModel): string {
         </div>
         <div class="card-body stack-12">
           <div class="ip-block">
-            <div class="ip-label">IPv6 入口</div>
-            <div class="ip-primary mono">${escapeHtml(entryPrimary)}</div>
-            <div class="ip-secondary">运行时注入 profile 主代理 server</div>
+            <div class="ip-label-row">
+              <span class="ip-label">IPv6 入口</span>
+              ${selectedOk ? statusBadge("IPv6", "accent") : statusBadge("未就绪", "warning")}
+            </div>
+            <div class="ip-primary-row">
+              <div class="ip-primary mono" title="${escapeHtml(entryPrimary)}">${escapeHtml(truncateMiddle(entryPrimary, 48))}</div>
+              <button type="button" class="icon-btn" data-action="copy-text" data-copy="${escapeHtml(selectedOk ? model.selectedAddress : "")}" ${selectedOk ? "" : "disabled"} title="复制">${icon("copy", 14)}</button>
+            </div>
+            <div class="ip-secondary">${escapeHtml(selectedNodeSecondary(model))}</div>
           </div>
-          <div class="row-divider"></div>
+          <div class="row-divider flush"></div>
           <div class="ip-block">
-            <div class="ip-label">公网出口</div>
-            <div class="ip-primary mono">${escapeHtml(exitPrimary)}</div>
+            <div class="ip-label-row">
+              <span class="ip-label">公网出口</span>
+              ${
+                model.exitIp
+                  ? statusBadge(model.exitIp.family.toUpperCase(), "neutral")
+                  : statusBadge("—", "neutral")
+              }
+            </div>
+            <div class="ip-primary-row">
+              <div class="ip-primary mono" title="${escapeHtml(exitPrimary)}">${escapeHtml(truncateMiddle(exitPrimary, 48))}</div>
+              <button type="button" class="icon-btn" data-action="copy-text" data-copy="${escapeHtml(model.exitIp?.ip ?? "")}" ${model.exitIp?.ip ? "" : "disabled"} title="复制">${icon("copy", 14)}</button>
+            </div>
             <div class="ip-secondary">${escapeHtml(exitSecondary)}</div>
+            <div class="segmented" role="group" aria-label="出口地址族">
+              ${(["auto", "ipv4", "ipv6"] as const)
+                .map(
+                  (m) =>
+                    `<button type="button" class="seg-btn ${model.exitIpMode === m ? "is-selected" : ""}" data-exit-mode="${m}">${m === "auto" ? "自动" : m.toUpperCase()}</button>`,
+                )
+                .join("")}
+            </div>
           </div>
         </div>
       </section>
@@ -290,55 +439,113 @@ function renderOverview(model: AppModel): string {
         <div class="card-header">
           <div class="card-title">${icon("shield", 16)} <span>应用信息</span></div>
         </div>
-        <div class="card-body stack-8">
-          <div class="kv"><span>版本</span><span>v${escapeHtml(model.version)}</span></div>
-          <div class="kv"><span>平台</span><span>Windows · Tauri 2</span></div>
-          <div class="kv"><span>内核</span><span>${running ? `运行中${model.core?.pid != null ? ` · pid ${model.core.pid}` : ""}` : "已停止"}</span></div>
-          <div class="kv"><span>系统代理</span><span>${model.proxy?.enabled ? "已启用" : "未启用"}</span></div>
-          <p class="help-text muted">产品矩阵与 macOS 对齐：IPv6-first 投影、用户态 Mihomo、可选系统代理与 TUN。</p>
+        <div class="card-body stack-0">
+          ${infoRow("版本", `v${model.version}`)}
+          <div class="row-divider"></div>
+          ${infoRow("系统", "Windows · Tauri 2 / WebView2")}
+          <div class="row-divider"></div>
+          ${infoRow(
+            "运行",
+            running
+              ? `Mihomo${model.core?.pid != null ? ` · pid ${model.core.pid}` : ""}`
+              : "已停止",
+          )}
+          <div class="row-divider"></div>
+          ${infoRow("代理", "127.0.0.1:11451")}
+          <div class="row-divider"></div>
+          ${infoRow("控制", model.core?.controllerPort != null ? `127.0.0.1:${model.core.controllerPort}` : "—")}
+          <div class="row-divider"></div>
+          ${infoRow("模式", routingModeLabel(model.routingMode))}
+          <div class="app-links">
+            <a class="btn btn-sm" href="https://github.com/miofelix/ViaSix" target="_blank" rel="noreferrer">仓库</a>
+            <button type="button" class="btn btn-sm" data-action="goto-settings">设置</button>
+            <button type="button" class="btn btn-sm" data-action="goto-logs">日志</button>
+          </div>
         </div>
       </section>
     </div>
   </div>`;
 }
 
+function infoRow(label: string, value: string): string {
+  return `
+  <div class="info-row">
+    <span class="info-label">${escapeHtml(label)}</span>
+    <span class="info-value mono">${escapeHtml(value)}</span>
+  </div>`;
+}
+
+function sortHeader(label: string, key: NodeSortKey, model: AppModel): string {
+  const active = model.nodeSortKey === key;
+  const arrow = active ? (model.nodeSortAsc ? " ↑" : " ↓") : "";
+  return `<th><button type="button" class="th-sort ${active ? "is-active" : ""}" data-sort="${key}">${escapeHtml(label)}${arrow}</button></th>`;
+}
+
 function renderNodes(model: AppModel): string {
+  const results = sortedSpeedResults(model);
+  const fresh = speedResultsFresh(model);
   const rows =
-    model.speedResults.length === 0
-      ? `<tr><td colspan="5" class="empty-cell">暂无测速结果。填写 IP/CIDR 后开始测速。</td></tr>`
-      : model.speedResults
+    results.length === 0
+      ? `<tr><td colspan="8" class="empty-cell">暂无测速结果。填写 IP/CIDR 并开始测速后，可在此排序、复制与应用节点。</td></tr>`
+      : results
           .map((row, index) => {
             const selected = row.ip === model.selectedAddress;
+            const highlighted = row.ip === model.selectedResultIp;
             return `
-            <tr class="${selected ? "is-selected" : ""}">
+            <tr class="${selected ? "is-selected" : ""} ${highlighted ? "is-focused" : ""}" data-row-ip="${escapeHtml(row.ip)}">
+              <td class="td-actions">
+                <input type="radio" name="node-pick" data-focus-ip="${escapeHtml(row.ip)}" ${highlighted || selected ? "checked" : ""} aria-label="选择 ${escapeHtml(row.ip)}" />
+              </td>
               <td>
                 <button type="button" class="linkish" data-select-ip="${escapeHtml(row.ip)}">
                   ${escapeHtml(row.ip)}
                 </button>
-                ${index === 0 ? `<span class="chip">最佳</span>` : ""}
+                ${index === 0 && model.nodeSortKey === "latency" && model.nodeSortAsc ? `<span class="chip">推荐</span>` : ""}
+                ${selected ? `<span class="chip chip-accent">当前</span>` : ""}
               </td>
-              <td>${escapeHtml(row.latency)}</td>
-              <td>${escapeHtml(row.loss)}</td>
-              <td>${escapeHtml(row.speed)}</td>
+              <td class="mono">${escapeHtml(row.sent)}</td>
+              <td class="mono">${escapeHtml(row.received)}</td>
+              <td class="mono">${escapeHtml(row.loss)}</td>
+              <td class="mono">${escapeHtml(row.latency)}</td>
+              <td class="mono">${escapeHtml(row.speed)}</td>
               <td>${escapeHtml(row.region)}</td>
             </tr>`;
           })
           .join("");
+
+  const paramsOpen = model.showSpeedParams;
+  const p = model.speedParams;
 
   return `
   ${pageHeader(
     "IPv6 优选",
     "测速并选择 IPv6 地址",
     model.selectedAddress
-      ? statusBadge(truncateMiddle(model.selectedAddress, 28), isLikelyIPv6(model.selectedAddress) ? "accent" : "warning")
+      ? statusBadge(
+          truncateMiddle(model.selectedAddress, 28),
+          isLikelyIPv6(model.selectedAddress) ? "accent" : "warning",
+        )
       : statusBadge("未选择", "warning"),
   )}
   <div class="page-scroll">
     <section class="card">
       <div class="card-header">
-        <div class="card-title">${icon("nodes", 16)} <span>测速</span></div>
+        <div class="card-title">${icon("nodes", 16)} <span>测速状态</span></div>
+        ${
+          model.busy.speed
+            ? statusBadge("测速中", "accent")
+            : results.length > 0
+              ? statusBadge(fresh ? "结果可用" : "结果可能过期", fresh ? "positive" : "warning")
+              : statusBadge("空闲", "neutral")
+        }
       </div>
       <div class="card-body">
+        ${
+          model.busy.speed
+            ? `<div class="progress-bar"><div class="progress-indeterminate"></div></div>
+               <p class="help-text">正在运行 CFST，请勿关闭窗口…</p>`
+            : `<p class="help-text">${escapeHtml(model.speedMessage)}</p>`
+        }
         <div class="form-row">
           <label class="field grow">
             <span>IP / CIDR（可多个，逗号分隔）</span>
@@ -346,36 +553,62 @@ function renderNodes(model: AppModel): string {
           </label>
           <label class="check field-align">
             <input id="speed-dd" type="checkbox" ${model.speedDisableDownload ? "checked" : ""} />
-            <span>仅延迟（-dd，更快）</span>
+            <span>仅延迟（-dd）</span>
           </label>
         </div>
-        <div class="inline-actions">
+        <div class="inline-actions wrap">
           <button type="button" class="btn btn-primary" data-action="run-speed" ${model.busy.speed ? "disabled" : ""}>
             ${model.busy.speed ? "测速中…" : "开始测速"}
           </button>
-          <button type="button" class="btn" data-action="apply-best" ${model.speedResults.length === 0 ? "disabled" : ""}>
+          <button type="button" class="btn" data-action="apply-best" ${results.length === 0 ? "disabled" : ""}>
             应用最佳结果
           </button>
+          <button type="button" class="btn" data-action="apply-selected" ${model.selectedResultIp || model.selectedAddress ? "" : "disabled"}>
+            应用所选节点
+          </button>
+          <button type="button" class="btn btn-ghost" data-action="toggle-speed-params">
+            ${icon("params", 14)} ${paramsOpen ? "收起参数" : "高级参数"}
+          </button>
         </div>
-        <p class="help-text" id="speed-status">${escapeHtml(model.speedMessage)}</p>
+        ${
+          paramsOpen
+            ? `<div class="params-grid">
+                <label class="field"><span>线程 (-n)</span><input id="sp-threads" type="number" min="1" max="1000" value="${p.threads}" /></label>
+                <label class="field"><span>Ping 次数 (-t)</span><input id="sp-ping" type="number" min="1" max="50" value="${p.pingCount}" /></label>
+                <label class="field"><span>下载数 (-dn)</span><input id="sp-dn" type="number" min="1" max="50" value="${p.downloadCount}" /></label>
+                <label class="field"><span>下载时长 (-dt 秒)</span><input id="sp-dt" type="number" min="1" max="60" value="${p.downloadTime}" /></label>
+                <label class="field"><span>端口 (-tp)</span><input id="sp-port" type="number" min="1" max="65535" value="${p.port}" /></label>
+                <label class="check field-align"><input id="sp-httping" type="checkbox" ${p.httping ? "checked" : ""} /><span>HTTPing</span></label>
+              </div>
+              <p class="help-text muted">参数会写入会话偏好；与 macOS 测速参数面板对应，完整保留 CFST 控制项。</p>`
+            : ""
+        }
       </div>
     </section>
 
     <section class="card">
       <div class="card-header">
-        <div class="card-title">${icon("logs", 16)} <span>结果</span></div>
-        <span class="muted small">${model.speedResults.length} 条</span>
+        <div class="card-title">${icon("logs", 16)} <span>候选节点</span></div>
+        <div class="inline-actions">
+          <span class="muted small">${results.length} 条</span>
+          <button type="button" class="btn btn-ghost btn-sm" data-action="copy-selected-node" ${model.selectedResultIp || model.selectedAddress ? "" : "disabled"} title="复制所选 IP">
+            ${icon("copy", 14)} 复制
+          </button>
+        </div>
       </div>
       <div class="card-body pad-0">
-        <div class="table-wrap">
-          <table>
+        <div class="table-wrap table-tall">
+          <table class="data-table">
             <thead>
               <tr>
-                <th>IP</th>
-                <th>延迟</th>
-                <th>丢包</th>
-                <th>速度</th>
-                <th>地区</th>
+                <th></th>
+                ${sortHeader("IP", "ip", model)}
+                ${sortHeader("已发", "sent", model)}
+                ${sortHeader("已收", "received", model)}
+                ${sortHeader("丢包", "loss", model)}
+                ${sortHeader("延迟", "latency", model)}
+                ${sortHeader("速度", "speed", model)}
+                ${sortHeader("地区", "region", model)}
               </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -386,25 +619,35 @@ function renderNodes(model: AppModel): string {
 
     <section class="card soft">
       <div class="card-body">
-        <p class="help-text">点击结果中的 IP 即可设为当前入口。当前选中：
+        <p class="help-text">单击 IP 可直接应用；若代理正在运行，将提示是否重新连接。当前入口：
           <span class="mono">${escapeHtml(model.selectedAddress || "—")}</span>
         </p>
-        <p class="help-text muted">与 macOS「IPv6 优选」一致：测速只负责候选排序；启动时由投影将选中 IPv6 写入主代理 server。</p>
+        <p class="help-text muted">测速只负责候选排序；启动时由投影将选中 IPv6 写入主代理 server。结果默认按延迟升序，「推荐」标记对应当前排序下的第一条。</p>
       </div>
     </section>
   </div>`;
 }
 
 function renderProfiles(model: AppModel): string {
-  const tone = hasUsableProfile(model) || model.routingMode === "direct" ? "positive" : "warning";
+  const summary = parseProfileSummary(model.profileYaml);
+  const tone =
+    model.routingMode === "direct"
+      ? "positive"
+      : hasUsableProfile(model)
+        ? "positive"
+        : summary.hasInlineProxy
+          ? "warning"
+          : "warning";
   const status =
     model.routingMode === "direct"
       ? "直连"
       : hasUsableProfile(model)
         ? "已配置"
-        : model.profileYaml.trim()
+        : summary.looksLikeExample
           ? "示例/待替换"
-          : "未配置";
+          : summary.hasInlineProxy
+            ? "可投影"
+            : "未配置";
 
   return `
   ${pageHeader(
@@ -416,8 +659,28 @@ function renderProfiles(model: AppModel): string {
     <section class="card">
       <div class="card-header">
         <div class="card-title">${icon("profile", 16)} <span>当前代理入口</span></div>
+        ${statusBadge(
+          summary.primaryType ? summary.primaryType.toUpperCase() : "YAML",
+          "accent",
+        )}
       </div>
       <div class="card-body">
+        <div class="profile-summary">
+          <div class="profile-icon">${icon("profile", 22)}</div>
+          <div>
+            <div class="profile-name">${escapeHtml(summary.primaryName ?? "ViaSix 代理入口")}</div>
+            <div class="profile-meta muted">
+              ${summary.proxyCount} 个内联代理
+              ${summary.hasXviasix ? " · 含 x-viasix" : " · 无 x-viasix"}
+              ${summary.looksLikeExample ? " · 示例配置" : ""}
+            </div>
+          </div>
+        </div>
+        ${
+          summary.notes.length
+            ? `<ul class="note-list">${summary.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>`
+            : ""
+        }
         <label class="field">
           <span>Profile YAML（内联主代理 · x-viasix）</span>
           <textarea id="profile-yaml" rows="14" spellcheck="false">${escapeHtml(model.profileYaml)}</textarea>
@@ -439,15 +702,18 @@ function renderProfiles(model: AppModel): string {
             </select>
           </label>
         </div>
-        <div class="inline-actions">
+        <div class="inline-actions wrap">
           <button type="button" class="btn btn-primary" data-action="project-config" ${model.busy.project ? "disabled" : ""}>
             ${model.busy.project ? "生成中…" : "生成运行配置"}
           </button>
-          <button type="button" class="btn" data-action="start-core" ${model.busy.start || model.core?.running ? "disabled" : ""}>
+          <button type="button" class="btn" data-action="start-core" ${!canStartProxy(model) || model.busy.start ? "disabled" : ""}>
             启动 Mihomo
           </button>
           <button type="button" class="btn" data-action="stop-core" ${model.busy.stop || !model.core?.running ? "disabled" : ""}>
             停止
+          </button>
+          <button type="button" class="btn btn-ghost" data-action="copy-profile-yaml">
+            ${icon("copy", 14)} 复制 YAML
           </button>
         </div>
       </div>
@@ -456,6 +722,9 @@ function renderProfiles(model: AppModel): string {
     <section class="card">
       <div class="card-header">
         <div class="card-title">${icon("logs", 16)} <span>运行配置预览</span></div>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="copy-runtime-yaml">
+          ${icon("copy", 14)} 复制
+        </button>
       </div>
       <div class="card-body pad-0">
         <pre class="code-block" id="runtime-yaml">${escapeHtml(model.runtimeYaml)}</pre>
@@ -466,14 +735,14 @@ function renderProfiles(model: AppModel): string {
       <div class="card-body stack-8">
         <div class="card-title inline">${icon("shield", 16)} <span>安全说明</span></div>
         <p class="help-text">导入 YAML 中的 Controller、TUN、监听等字段不会进入运行配置；仅投影后的单 IPv6 主代理（或直连规则）会交给 Mihomo。</p>
-        <p class="help-text muted">与 macOS / contracts 对齐：Provider-only 与 IPv4 选择会被拒绝。</p>
+        <p class="help-text muted">与 macOS / contracts 对齐：Provider-only 与 IPv4 选择会被拒绝。直连模式不要求节点或 profile。</p>
       </div>
     </section>
   </div>`;
 }
 
 function renderLogs(model: AppModel): string {
-  const visible = filteredLogs(model).slice().reverse();
+  const visible = filteredLogs(model);
   const rows =
     visible.length === 0
       ? `<div class="empty-state">
@@ -497,9 +766,17 @@ function renderLogs(model: AppModel): string {
   ${pageHeader(
     "日志",
     "实时查看本地代理与节点测速记录",
-    `<button type="button" class="btn btn-ghost btn-sm" data-action="clear-logs" ${model.logs.length === 0 ? "disabled" : ""}>
-       ${icon("trash", 14)} 清空
-     </button>`,
+    `<div class="inline-actions">
+       <button type="button" class="btn btn-ghost btn-sm" data-action="toggle-log-order" title="切换排序">
+         ${icon("sort", 14)} ${model.logNewestFirst ? "最新在上" : "最新在下"}
+       </button>
+       <button type="button" class="btn btn-ghost btn-sm" data-action="export-logs" ${model.logs.length === 0 ? "disabled" : ""}>
+         ${icon("export", 14)} 导出
+       </button>
+       <button type="button" class="btn btn-ghost btn-sm" data-action="clear-logs" ${model.logs.length === 0 ? "disabled" : ""}>
+         ${icon("trash", 14)} 清空
+       </button>
+     </div>`,
   )}
   <div class="page-scroll">
     <section class="card">
@@ -532,11 +809,11 @@ function renderLogs(model: AppModel): string {
             </select>
           </label>
         </div>
-        <p class="help-text muted">${visible.length} / ${model.logs.length} 条（客户端会话日志）</p>
+        <p class="help-text muted">${visible.length} / ${model.logs.length} 条 · 客户端会话日志（最多保留约 800 条）</p>
       </div>
     </section>
     <section class="card">
-      <div class="card-body pad-0 log-list">${rows}</div>
+      <div class="card-body pad-0 log-list" id="log-list">${rows}</div>
     </section>
   </div>`;
 }
@@ -550,6 +827,7 @@ function renderSettings(model: AppModel): string {
       : virt.available
         ? "accent"
         : "warning";
+  const issues = readinessIssues(model);
 
   return `
   ${pageHeader("设置", "连接、网络接入与运行组件")}
@@ -573,7 +851,7 @@ function renderSettings(model: AppModel): string {
         <div class="setting-row static">
           <div>
             <div class="setting-title">Controller 健康</div>
-            <div class="setting-detail">${escapeHtml(model.controller?.message || "尚未探测")}</div>
+            <div class="setting-detail">${escapeHtml(model.controller?.message || "尚未探测")}${model.controller?.version ? ` · v${escapeHtml(model.controller.version)}` : ""}</div>
           </div>
           <button type="button" class="btn btn-sm" data-action="probe-controller" ${model.busy.health ? "disabled" : ""}>
             ${model.busy.health ? "探测中…" : "探测"}
@@ -586,9 +864,17 @@ function renderSettings(model: AppModel): string {
             <div class="setting-detail">${escapeHtml(model.proxy?.message || "—")}</div>
           </div>
           <div class="inline-actions">
-            <button type="button" class="btn btn-sm" data-action="apply-sys-proxy">应用</button>
-            <button type="button" class="btn btn-sm" data-action="clear-sys-proxy">清除</button>
+            <button type="button" class="btn btn-sm" data-action="apply-sys-proxy" ${model.busy.sysProxy ? "disabled" : ""}>应用</button>
+            <button type="button" class="btn btn-sm" data-action="clear-sys-proxy" ${model.busy.sysProxy ? "disabled" : ""}>清除</button>
           </div>
+        </div>
+        <div class="row-divider"></div>
+        <div class="setting-row static">
+          <div>
+            <div class="setting-title">配置就绪</div>
+            <div class="setting-detail">${issues.length === 0 ? "可以启动连接" : issues.map((i) => i.message).join("；")}</div>
+          </div>
+          ${statusBadge(issues.length === 0 ? "就绪" : `${issues.length} 项`, issues.length === 0 ? "positive" : "warning")}
         </div>
       </div>
     </section>
@@ -602,11 +888,34 @@ function renderSettings(model: AppModel): string {
         <div class="kv"><span>后端</span><span>${escapeHtml(virt?.backend || "—")}</span></div>
         <div class="kv"><span>Wintun</span><span class="mono small">${escapeHtml(virt?.wintunPath || "未找到")}</span></div>
         <p class="help-text">${escapeHtml(virt?.message || "")}</p>
-        <p class="help-text muted">Windows 使用进程内 Mihomo TUN + Wintun.dll（通常需管理员）。与 macOS 特权 LaunchDaemon 路径不同，但产品开关语义一致：可与系统代理同时启用。</p>
+        <p class="help-text muted">Windows 使用进程内 Mihomo TUN + Wintun.dll（通常需管理员）。与 macOS 特权 LaunchDaemon 路径不同，但产品开关语义一致：可与系统代理同时启用；切换后需重新启动 Mihomo。</p>
         <label class="check">
           <input type="checkbox" id="settings-virt-net" ${model.virtualNetworkEnabled ? "checked" : ""} ${virt && !virt.available ? "disabled" : ""} />
           <span>启用虚拟网卡（下次启动 Mihomo 时生效）</span>
         </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">${icon("globe", 16)} <span>出口检测</span></div>
+      </div>
+      <div class="card-body">
+        <p class="help-text muted">与首页地址族选择同步；可指定 IPv4 / IPv6 探测端点。</p>
+        <div class="segmented" role="group" aria-label="出口地址族">
+          ${(["auto", "ipv4", "ipv6"] as const)
+            .map(
+              (m) =>
+                `<button type="button" class="seg-btn ${model.exitIpMode === m ? "is-selected" : ""}" data-exit-mode="${m}">${m === "auto" ? "自动" : m.toUpperCase()}</button>`,
+            )
+            .join("")}
+        </div>
+        <div class="inline-actions" style="margin-top:12px">
+          <button type="button" class="btn" data-action="detect-exit" ${model.busy.exitIp ? "disabled" : ""}>
+            ${model.busy.exitIp ? "检测中…" : "立即检测"}
+          </button>
+        </div>
+        <p class="help-text">${model.exitIp ? escapeHtml(`${model.exitIp.message}（${model.exitIp.source}）`) : "尚未检测"}</p>
       </div>
     </section>
 
@@ -619,7 +928,7 @@ function renderSettings(model: AppModel): string {
         <div class="kv"><span>版本</span><span>v${escapeHtml(model.version)}</span></div>
         <div class="kv"><span>本地 mixed</span><span>127.0.0.1:11451</span></div>
         <div class="kv"><span>投影契约</span><span>contracts/fixtures/mihomo-config</span></div>
-        <p class="help-text muted">UI 信息架构对齐 macOS：首页 · IPv6 优选 · 连接配置 · 日志 · 设置。</p>
+        <p class="help-text muted">快捷键：<span class="mono">1–5</span> 切换分区（输入框外），<span class="mono">Ctrl/⌘+Enter</span> 启动/停止连接。</p>
       </div>
     </section>
   </div>`;
@@ -644,24 +953,104 @@ export function syncChrome(model: AppModel): void {
     sidebarIp.title = model.selectedAddress;
   }
 
-  const host = document.querySelector<HTMLDivElement>("#notice-host");
-  if (!host) return;
-  if (!model.notice) {
-    host.hidden = true;
-    host.innerHTML = "";
-    return;
+  const dock = document.querySelector<HTMLElement>("#sidebar-proxy");
+  if (dock) {
+    const running = !!model.core?.running;
+    const busy = model.busy.start || model.busy.stop;
+    const tone = running ? "positive" : configurationReady(model) ? "accent" : "warning";
+    const title = !model.bootstrapped
+      ? "正在准备"
+      : running
+        ? "本地代理运行中"
+        : model.busy.start
+          ? "正在启动代理"
+          : model.busy.stop
+            ? "正在停止代理"
+            : "本地代理未启动";
+    const action =
+      running || model.busy.start
+        ? `<button type="button" class="btn btn-sm btn-dock" data-action="stop-core" ${model.busy.stop || model.busy.start ? "disabled" : ""}>${model.busy.stop ? "停止中" : "停止代理"}</button>`
+        : `<button type="button" class="btn btn-sm btn-dock btn-primary" data-action="start-core" ${!canStartProxy(model) || busy ? "disabled" : ""}>${model.busy.start ? "启动中" : "启动代理"}</button>`;
+    dock.innerHTML = `
+      <div class="dock-status tone-${tone}">${escapeHtml(title)}</div>
+      <div class="dock-endpoint mono">127.0.0.1:11451</div>
+      ${action}`;
   }
-  host.hidden = false;
-  const tone = model.notice.style;
-  host.innerHTML = `
-    <div class="notice tone-${tone}">
-      <span class="notice-icon">${icon(tone === "error" ? "warn" : tone === "success" ? "check" : "info", 16)}</span>
-      <span class="notice-msg">${escapeHtml(model.notice.message)}</span>
-      ${
+
+  const host = document.querySelector<HTMLDivElement>("#notice-host");
+  if (host) {
+    if (!model.notice) {
+      host.hidden = true;
+      host.innerHTML = "";
+    } else {
+      host.hidden = false;
+      const tone = model.notice.style;
+      const actionBtn =
         model.notice.action === "openSettings"
           ? `<button type="button" class="btn btn-ghost btn-sm" data-action="goto-settings">打开设置</button>`
-          : ""
-      }
-      <button type="button" class="icon-btn" data-action="dismiss-notice" aria-label="关闭">${icon("x", 14)}</button>
-    </div>`;
+          : model.notice.action === "gotoNodes"
+            ? `<button type="button" class="btn btn-ghost btn-sm" data-action="goto-nodes">去选节点</button>`
+            : model.notice.action === "gotoProfiles"
+              ? `<button type="button" class="btn btn-ghost btn-sm" data-action="goto-profiles">去配置</button>`
+              : "";
+      host.innerHTML = `
+        <div class="notice tone-${tone}">
+          <span class="notice-icon">${icon(tone === "error" ? "warn" : tone === "success" ? "check" : "info", 16)}</span>
+          <span class="notice-msg">${escapeHtml(model.notice.message)}</span>
+          ${actionBtn}
+          <button type="button" class="icon-btn" data-action="dismiss-notice" aria-label="关闭">${icon("x", 14)}</button>
+        </div>`;
+    }
+  }
+
+  const modal = document.querySelector<HTMLDivElement>("#modal-host");
+  if (modal) {
+    if (!model.confirm) {
+      modal.hidden = true;
+      modal.innerHTML = "";
+    } else {
+      modal.hidden = false;
+      modal.innerHTML = `
+        <div class="modal-backdrop" data-action="cancel-confirm"></div>
+        <div class="modal" role="dialog" aria-modal="true">
+          <h2 class="modal-title">${escapeHtml(model.confirm.title)}</h2>
+          <p class="modal-body">${escapeHtml(model.confirm.message)}</p>
+          <div class="modal-actions">
+            <button type="button" class="btn" data-action="cancel-confirm">取消</button>
+            <button type="button" class="btn btn-primary" data-action="confirm-dialog">${escapeHtml(model.confirm.confirmLabel)}</button>
+          </div>
+        </div>`;
+    }
+  }
+}
+
+/** Soft-update traffic widgets without full section repaint. */
+export function patchTrafficWidgets(model: AppModel, root: HTMLElement): void {
+  const traffic = model.traffic;
+  if (!traffic) return;
+  const running = !!model.core?.running;
+  const set = (key: string, text: string) => {
+    const el = root.querySelector(`[data-metric="${key}"]`);
+    if (el) el.textContent = text;
+  };
+  set("up", traffic.live ? formatRate(traffic.upBps) : "—");
+  set("down", traffic.live ? formatRate(traffic.downBps) : "—");
+  set("status", running ? (traffic.live ? "实时采集" : "连接中") : "未连接");
+  set("up-total", formatBytes(traffic.uploadTotal));
+  set("down-total", formatBytes(traffic.downloadTotal));
+  const help = root.querySelector("#traffic-help");
+  if (help) {
+    help.textContent =
+      traffic.message ||
+      (running ? "速率由 /connections 采样差分得到" : "启动连接后显示实时流量");
+  }
+  const sparkHost = root.querySelector("#sparkline-host");
+  if (sparkHost && model.trafficHistory.length > 1) {
+    const spark = sparklinePaths(model.trafficHistory, 560, 96);
+    sparkHost.innerHTML = `<svg class="sparkline" viewBox="0 0 560 96" preserveAspectRatio="none" aria-label="流量曲线">
+      <path class="spark-area" d="${spark.areaDown}"></path>
+      <path class="spark-down" d="${spark.down}"></path>
+      <path class="spark-up" d="${spark.up}"></path>
+    </svg>`;
+  }
 }

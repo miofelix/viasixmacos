@@ -45,6 +45,12 @@ export function icon(name: string, size = 18): string {
       return `<svg ${common}><path d="M5 7h14"/><path d="M9 7V5h6v2"/><path d="M8 7l1 12h6l1-12"/></svg>`;
     case "search":
       return `<svg ${common}><circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/></svg>`;
+    case "sort":
+      return `<svg ${common}><path d="M8 7h12M8 12h8M8 17h4"/><path d="M4 7v10M4 17l-2-2M4 17l2-2"/></svg>`;
+    case "params":
+      return `<svg ${common}><path d="M4 7h10M18 7h2M14 5v4M4 17h4M12 17h8M8 15v4"/></svg>`;
+    case "export":
+      return `<svg ${common}><path d="M12 4v10"/><path d="M8 8l4-4 4 4"/><path d="M5 16v3h14v-3"/></svg>`;
     default:
       return `<svg ${common}><circle cx="12" cy="12" r="7"/></svg>`;
   }
