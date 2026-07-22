@@ -5,7 +5,7 @@ ViaSix 采用 **契约中心 + 多端壳**（模式 A）结构：共享配置与
 ```text
 viasix/
 ├── contracts/           # 跨端 schema 与黄金 fixture
-├── packages/            # 可选共享库（渐进引入）
+├── packages/            # 共享约定与校验（mihomo-config 等）
 ├── apps/
 │   ├── macos/           # SwiftPM + SwiftUI + XPC TUN helper
 │   ├── windows/         # 桌面壳骨架（用户态 mihomo → 后续 TUN）

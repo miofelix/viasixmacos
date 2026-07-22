@@ -1,0 +1,101 @@
+name: Release
+
+# Tag-driven release orchestration. Builds produce CI artifacts; this workflow
+# validates the monorepo contracts and points maintainers at platform build jobs.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "windows/v*.*.*"
+      - "android/v*.*.*"
+      - "macos/v*.*.*"
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Which platform notes to emit"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - macos
+          - windows
+          - android
+
+permissions:
+  contents: write
+
+jobs:
+  contracts:
+    name: Contracts gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate fixture cases
+        run: node packages/mihomo-config/scripts/validate-cases.mjs
+
+      - name: Layout checks
+        run: |
+          make contracts-check
+          make windows-skeleton
+          make android-skeleton
+          make windows-build-docs
+
+  release-notes:
+    name: Publish draft release notes
+    needs: [contracts]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Compose body
+        id: body
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          {
+            echo "## ViaSix ${TAG}"
+            echo
+            echo "Cross-platform monorepo release tag."
+            echo
+            echo "### Platform artifacts"
+            echo
+            echo "| Platform | How to get build |"
+            echo "| --- | --- |"
+            echo "| macOS | Run CI job \`macos\` / local \`make macos-app\` |"
+            echo "| Windows | Workflow \`Windows Build\` uploads NSIS/exe artifacts |"
+            echo "| Android | Local/CI \`gradle :app:assembleDebug\` (arm64 + fetch-mihomo) |"
+            echo
+            echo "### Contracts"
+            echo
+            echo "- Version: \`$(cat contracts/VERSION)\`"
+            echo "- Validate: \`node packages/mihomo-config/scripts/validate-cases.mjs\`"
+            echo "- Cross-impl: \`make projection-test\`"
+            echo
+            echo "### Notes"
+            echo
+            echo "See CHANGELOG.md for user-facing changes."
+          } > release-body.md
+
+      - name: Create GitHub Release (draft)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ViaSix ${{ github.ref_name }}
+          body_path: release-body.md
+          draft: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

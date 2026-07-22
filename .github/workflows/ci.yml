@@ -23,11 +23,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Verify contracts and platform skeletons
         run: |
           make contracts-check
           make windows-skeleton
           make android-skeleton
+          make windows-build-docs
 
   windows-projection:
     name: Windows projection contracts (Rust)

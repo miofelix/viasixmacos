@@ -31,7 +31,7 @@ help:
 	@echo "  make macos-build       - swift build (macOS)"
 	@echo "  make macos-test        - swift test (macOS)"
 	@echo "  make macos-clean       - clean macOS build artifacts"
-	@echo "  make contracts-check   - verify contracts layout and fixtures"
+	@echo "  make contracts-check   - verify contracts layout + case.json schema"
 	@echo "  make windows-skeleton  - verify Windows app tree"
 	@echo "  make windows-test      - Rust contract projection tests (Windows host crate)"
 	@echo "  make windows-build-docs - verify Windows release docs exist"
@@ -70,6 +70,7 @@ contracts-check:
 	  cases=$$((cases + 1)); \
 	done; \
 	test "$$cases" -ge 1 || { echo "no contract fixture cases found"; exit 1; }; \
+	node packages/mihomo-config/scripts/validate-cases.mjs; \
 	echo "contracts layout OK (version $$(cat "$(CONTRACTS_DIR)/VERSION"), $$cases cases)"
 
 windows-skeleton:

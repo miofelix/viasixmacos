@@ -31,9 +31,13 @@
 - [x] mihomo 资产拉取脚本
 - [x] 嵌入 mihomo 用户态 + VPN HTTP 代理（`setHttpProxy`）
 - [x] 全量路由 + 用户态 IPv4 TCP/DNS 转发（`Tun2SocksEngine`）
+- [x] 用户态 TCP 转发加固（会话上限 / 写队列 / 重传去重）
+- [x] 无系统代理（产品矩阵已约定）
 - [ ] 生产级 tun2socks（hev/native）与完整 UDP/IPv6
-- [ ] 无系统代理（产品矩阵已约定）
 
-## 阶段 3 — 共享实现（按需）
+## 阶段 3 — 共享与发布
 
-- 若多端投影漂移，再抽取 `packages/mihomo-config` 单实现
+- [x] `packages/mihomo-config` 约定 + `validate-cases.mjs`
+- [x] Tag 触发 draft Release 工作流（`release.yml`）
+- [ ] 共享运行时（Rust/Go FFI）——仅当三端投影持续漂移时
+- [ ] 各端签名产物挂到同一正式 Release

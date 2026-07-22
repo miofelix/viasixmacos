@@ -15,7 +15,10 @@ import java.nio.channels.FileChannel
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.random.Random
 
 /**
@@ -23,7 +26,7 @@ import kotlin.random.Random
  * - TCP → SOCKS5 (mihomo mixed port)
  * - UDP/53 → protected DatagramSocket to upstream DNS
  *
- * Full UDP and IPv6 are intentionally out of scope for this milestone.
+ * Full UDP and IPv6 remain out of scope for this milestone.
  */
 class Tun2SocksEngine(
     private val vpnService: VpnService,
@@ -31,10 +34,14 @@ class Tun2SocksEngine(
     private val socksHost: String,
     private val socksPort: Int,
     private val dnsUpstream: InetAddress = InetAddress.getByName("1.1.1.1"),
+    private val maxSessions: Int = 256,
 ) {
     private val running = AtomicBoolean(false)
     private val sessions = ConcurrentHashMap<String, TcpSession>()
+    private val activeSessionCount = AtomicInteger(0)
     private var readerThread: Thread? = null
+    private var writerThread: Thread? = null
+    private val outboundPackets = LinkedBlockingQueue<ByteArray>(512)
     private val executor: ExecutorService =
         Executors.newCachedThreadPool { r ->
             Thread(r, "viasix-tun-worker").apply { isDaemon = true }
@@ -46,6 +53,31 @@ class Tun2SocksEngine(
         if (!running.compareAndSet(false, true)) return
         inChannel = FileInputStream(tun.fileDescriptor).channel
         outStream = FileOutputStream(tun.fileDescriptor)
+
+        writerThread =
+            Thread(
+                {
+                    while (running.get()) {
+                        val packet =
+                            try {
+                                outboundPackets.poll(200, TimeUnit.MILLISECONDS)
+                            } catch (_: InterruptedException) {
+                                break
+                            } ?: continue
+                        try {
+                            outStream.write(packet)
+                            outStream.flush()
+                        } catch (error: Exception) {
+                            Log.w(TAG, "tun write failed: ${error.message}")
+                        }
+                    }
+                },
+                "viasix-tun-writer",
+            ).also {
+                it.isDaemon = true
+                it.start()
+            }
+
         readerThread =
             Thread(
                 {
@@ -78,9 +110,16 @@ class Tun2SocksEngine(
             readerThread?.interrupt()
         } catch (_: Exception) {
         }
+        try {
+            writerThread?.interrupt()
+        } catch (_: Exception) {
+        }
         readerThread = null
+        writerThread = null
         sessions.values.forEach { it.close() }
         sessions.clear()
+        activeSessionCount.set(0)
+        outboundPackets.clear()
         executor.shutdownNow()
         try {
             inChannel.close()
@@ -105,8 +144,13 @@ class Tun2SocksEngine(
         val tcp = Packet.parseTcp(buffer, ip) ?: return
         val key = key(ip.source, tcp.sourcePort, ip.destination, tcp.destPort)
 
+        // Client SYN (new connection)
         if (tcp.flags and Packet.SYN != 0 && tcp.flags and Packet.ACK == 0) {
             if (sessions.containsKey(key)) return
+            if (activeSessionCount.get() >= maxSessions) {
+                Log.w(TAG, "session limit $maxSessions reached; drop SYN")
+                return
+            }
             val session =
                 TcpSession(
                     clientIp = ip.source,
@@ -116,50 +160,59 @@ class Tun2SocksEngine(
                     clientIsn = tcp.seq,
                 )
             sessions[key] = session
+            activeSessionCount.incrementAndGet()
             executor.execute { openTcpSession(key, session) }
             return
         }
 
         val session = sessions[key] ?: return
+
         if (tcp.flags and Packet.RST != 0) {
-            session.close()
-            sessions.remove(key)
+            removeSession(key, session)
             return
         }
 
-        if (tcp.payloadLength > 0 && session.socket != null) {
-            val payload = ByteArray(tcp.payloadLength)
+        // Complete handshake on client ACK after our SYN-ACK.
+        if (!session.handshakeComplete && tcp.flags and Packet.ACK != 0) {
+            if (tcp.ack == session.serverSeq) {
+                session.handshakeComplete = true
+            }
+        }
+
+        if (tcp.payloadLength > 0 && session.handshakeComplete && session.socket != null) {
+            // Drop retransmitted segments that are entirely before clientNextSeq.
+            val payloadEnd = tcp.seq + tcp.payloadLength
+            if (payloadEnd <= session.clientNextSeq) {
+                enqueueAck(session)
+                return
+            }
+            val skip = (session.clientNextSeq - tcp.seq).coerceAtLeast(0).toInt()
+            if (skip >= tcp.payloadLength) {
+                enqueueAck(session)
+                return
+            }
+
+            val payload = ByteArray(tcp.payloadLength - skip)
             val pos = buffer.position()
-            buffer.position(tcp.payloadOffset)
+            buffer.position(tcp.payloadOffset + skip)
             buffer.get(payload)
             buffer.position(pos)
             try {
                 session.socket!!.getOutputStream().write(payload)
                 session.socket!!.getOutputStream().flush()
                 session.clientNextSeq = tcp.seq + tcp.payloadLength
-                // ACK client data
-                writePacket(
-                    Packet.buildIp4Tcp(
-                        source = session.remoteIp,
-                        destination = session.clientIp,
-                        sourcePort = session.remotePort,
-                        destPort = session.clientPort,
-                        seq = session.serverSeq,
-                        ack = session.clientNextSeq,
-                        flags = Packet.ACK,
-                        payload = ByteArray(0),
-                    ),
-                )
+                enqueueAck(session)
             } catch (error: Exception) {
                 Log.w(TAG, "tcp write failed: ${error.message}")
-                session.close()
-                sessions.remove(key)
+                removeSession(key, session)
             }
         }
 
         if (tcp.flags and Packet.FIN != 0) {
-            session.close()
-            sessions.remove(key)
+            // ACK FIN then tear down.
+            session.clientNextSeq = tcp.seq + 1
+            enqueueAck(session)
+            removeSession(key, session)
         }
     }
 
@@ -172,12 +225,17 @@ class Tun2SocksEngine(
                     session.remoteIp,
                     session.remotePort,
                 )
+            if (!running.get()) {
+                socket.close()
+                removeSession(key, session)
+                return
+            }
             session.socket = socket
             session.serverSeq = Random.nextInt().toLong() and 0xffffffffL
             session.clientNextSeq = session.clientIsn + 1
 
             // SYN-ACK to client
-            writePacket(
+            enqueuePacket(
                 Packet.buildIp4Tcp(
                     source = session.remoteIp,
                     destination = session.clientIp,
@@ -190,6 +248,8 @@ class Tun2SocksEngine(
                 ),
             )
             session.serverSeq = (session.serverSeq + 1) and 0xffffffffL
+            // Mark handshake complete optimistically after SYN-ACK; client ACK hardens it.
+            session.handshakeComplete = true
 
             executor.execute {
                 val buf = ByteArray(16 * 1024)
@@ -200,7 +260,7 @@ class Tun2SocksEngine(
                         if (n < 0) break
                         if (n == 0) continue
                         val chunk = buf.copyOf(n)
-                        writePacket(
+                        enqueuePacket(
                             Packet.buildIp4Tcp(
                                 source = session.remoteIp,
                                 destination = session.clientIp,
@@ -216,14 +276,12 @@ class Tun2SocksEngine(
                     }
                 } catch (_: Exception) {
                 } finally {
-                    session.close()
-                    sessions.remove(key)
+                    removeSession(key, session)
                 }
             }
         } catch (error: Exception) {
             Log.w(TAG, "SOCKS connect ${session.remoteIp}:${session.remotePort}: ${error.message}")
-            // RST
-            writePacket(
+            enqueuePacket(
                 Packet.buildIp4Tcp(
                     source = session.remoteIp,
                     destination = session.clientIp,
@@ -235,8 +293,7 @@ class Tun2SocksEngine(
                     payload = ByteArray(0),
                 ),
             )
-            session.close()
-            sessions.remove(key)
+            removeSession(key, session)
         }
     }
 
@@ -265,7 +322,7 @@ class Tun2SocksEngine(
                     val response = DatagramPacket(responseBuf, responseBuf.size)
                     socket.receive(response)
                     val bytes = response.data.copyOf(response.length)
-                    writePacket(
+                    enqueuePacket(
                         Packet.buildIp4Udp(
                             source = ip.destination,
                             destination = ip.source,
@@ -281,14 +338,35 @@ class Tun2SocksEngine(
         }
     }
 
-    @Synchronized
-    private fun writePacket(packet: ByteArray) {
-        try {
-            outStream.write(packet)
-            outStream.flush()
-        } catch (error: Exception) {
-            Log.w(TAG, "tun write failed: ${error.message}")
+    private fun enqueueAck(session: TcpSession) {
+        enqueuePacket(
+            Packet.buildIp4Tcp(
+                source = session.remoteIp,
+                destination = session.clientIp,
+                sourcePort = session.remotePort,
+                destPort = session.clientPort,
+                seq = session.serverSeq,
+                ack = session.clientNextSeq,
+                flags = Packet.ACK,
+                payload = ByteArray(0),
+            ),
+        )
+    }
+
+    private fun enqueuePacket(packet: ByteArray) {
+        if (!running.get()) return
+        if (!outboundPackets.offer(packet)) {
+            // Drop oldest to make room under pressure.
+            outboundPackets.poll()
+            outboundPackets.offer(packet)
         }
+    }
+
+    private fun removeSession(key: String, session: TcpSession) {
+        if (sessions.remove(key, session)) {
+            activeSessionCount.updateAndGet { (it - 1).coerceAtLeast(0) }
+        }
+        session.close()
     }
 
     private fun key(
@@ -305,9 +383,10 @@ class Tun2SocksEngine(
         val remotePort: Int,
         val clientIsn: Long,
     ) {
-        var socket: Socket? = null
-        var serverSeq: Long = 0
-        var clientNextSeq: Long = 0
+        @Volatile var socket: Socket? = null
+        @Volatile var serverSeq: Long = 0
+        @Volatile var clientNextSeq: Long = 0
+        @Volatile var handshakeComplete: Boolean = false
 
         fun close() {
             try {
