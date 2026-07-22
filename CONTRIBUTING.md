@@ -21,9 +21,14 @@
 仓库根目录：
 
 ```bash
-make check              # contracts + macOS
-make check-all          # 另含 windows/android 骨架校验
+make contracts-check    # schema + fixture case 结构
+make projection-test    # macOS + Windows + Android 投影契约
+make check              # contracts + macOS + windows-test + android-test
+make check-all          # 另含平台骨架校验
 make macos-app          # 打包 macOS 应用
+make windows-test
+make android-test
+make android-assemble   # 需 Android SDK
 ```
 
 仅改 macOS 时也可：
