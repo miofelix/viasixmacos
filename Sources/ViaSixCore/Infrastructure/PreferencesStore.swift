@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct PreferencesLoadResult: Equatable, Sendable {
@@ -46,7 +47,12 @@ public actor PreferencesStore {
         let fileManager = FileManager.default
         let data: Data
         do {
-            data = try Data(contentsOf: fileURL)
+            guard let loaded = try Self.regularFileDataIfPresent(at: fileURL) else {
+                return PreferencesLoadResult(preferences: defaults, source: .missing)
+            }
+            data = loaded
+        } catch let error as PreferencesStoreError {
+            throw error
         } catch {
             if Self.isMissingFileError(error) {
                 return PreferencesLoadResult(preferences: defaults, source: .missing)
@@ -101,6 +107,15 @@ public actor PreferencesStore {
         let data = try encoder.encode(preferences)
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // Refuse to write through an existing symbolic link. Atomic write
+        // normally replaces the link node, but fail closed first so a planted
+        // link is never treated as the preferences store.
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: fileURL.path)) != nil {
+            throw PreferencesStoreError.unreadableFile(
+                fileURL,
+                reason: "偏好文件不能是符号链接"
+            )
+        }
         try data.write(to: fileURL, options: .atomic)
         try FilePermissions.restrictFile(fileURL)
     }
@@ -119,5 +134,27 @@ public actor PreferencesStore {
             try fileManager.moveItem(at: fileURL, to: backupURL)
             return backupURL
         }
+    }
+
+    /// Reads preferences only from a regular file. Symbolic links and other
+    /// non-file types fail closed so load cannot follow a planted path.
+    private nonisolated static func regularFileDataIfPresent(at url: URL) throws -> Data? {
+        var metadata = stat()
+        guard lstat(url.path, &metadata) == 0 else {
+            if errno == ENOENT { return nil }
+            throw PreferencesStoreError.unreadableFile(
+                url,
+                reason: String(cString: strerror(errno))
+            )
+        }
+
+        let fileType = metadata.st_mode & S_IFMT
+        guard fileType != S_IFLNK else {
+            throw PreferencesStoreError.unreadableFile(url, reason: "偏好文件不能是符号链接")
+        }
+        guard fileType == S_IFREG else {
+            throw PreferencesStoreError.unreadableFile(url, reason: "偏好文件必须是普通文件")
+        }
+        return try Data(contentsOf: url)
     }
 }

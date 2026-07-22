@@ -128,6 +128,45 @@ final class PersistenceTests: XCTestCase {
         XCTAssertTrue(try corruptPreferenceBackups(in: paths).isEmpty)
     }
 
+    func testPreferencesSymbolicLinkIsRejectedWithoutFollowingOrMovingTarget() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ViaSixTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = AppPaths(root: root)
+        try paths.prepare()
+
+        let outside = root.appendingPathComponent("outside-preferences.json")
+        let sensitive = Data(#"{"selectedIP":"should-not-load"}"#.utf8)
+        try sensitive.write(to: outside)
+        try FileManager.default.createSymbolicLink(at: paths.preferences, withDestinationURL: outside)
+
+        let store = PreferencesStore(fileURL: paths.preferences)
+        let defaults = UserPreferences(parameters: .defaults(ipv6File: paths.ipv6List))
+
+        do {
+            _ = try await store.load(defaults: defaults)
+            XCTFail("Expected symbolic-link preferences to throw")
+        } catch {
+            guard case .unreadableFile(let url, let reason) = error as? PreferencesStoreError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(url, paths.preferences)
+            XCTAssertTrue(reason.contains("符号链接"))
+        }
+
+        do {
+            try await store.save(defaults)
+            XCTFail("Expected save through symbolic link to throw")
+        } catch {
+            guard case .unreadableFile = error as? PreferencesStoreError else {
+                return XCTFail("Unexpected save error: \(error)")
+            }
+        }
+
+        XCTAssertEqual(try Data(contentsOf: outside), sensitive)
+        XCTAssertTrue(try corruptPreferenceBackups(in: paths).isEmpty)
+    }
+
     func testApplicationDataUsesOwnerOnlyPermissions() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ViaSixTests-\(UUID().uuidString)", isDirectory: true)
