@@ -7,42 +7,27 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.foundation.layout.Row
-import androidx.compose.ui.Alignment
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import dev.viasix.app.mihomo.ControllerClient
-import dev.viasix.app.prefs.SessionPrefs
+import dev.viasix.app.mihomo.TrafficSample
 import dev.viasix.app.prefs.SessionPrefsStore
+import dev.viasix.app.state.LogLevel
+import dev.viasix.app.state.RuntimeSnapshot
+import dev.viasix.app.state.SessionUiState
+import dev.viasix.app.state.appendLog
+import dev.viasix.app.ui.AppSection
+import dev.viasix.app.ui.ViaSixApp
 import dev.viasix.app.vpn.ViaSixVpnService
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import dev.viasix.core.projection.MihomoProjection
 import dev.viasix.core.projection.ProjectError
 import dev.viasix.core.projection.ProjectOptions
 import dev.viasix.core.projection.RoutingMode
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private var pendingStart: Intent? = null
@@ -51,258 +36,170 @@ class MainActivity : ComponentActivity() {
     private val vpnPermission =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
-                pendingStart?.let { startForegroundServiceCompat(it) }
+                pendingStart?.let { startForegroundService(it) }
             }
             pendingStart = null
         }
 
-    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefsStore = SessionPrefsStore(this)
-        val initial = prefsStore.load()
-        val defaultProfile =
-            """
-            proxies:
-              - name: My VLESS
-                type: vless
-                server: origin.example.com
-                port: 443
-                uuid: 11111111-1111-4111-1111-111111111111
-            x-viasix:
-              version: 1
-              primary-server: selected-ip
-            """.trimIndent()
+        val initial = SessionUiState.fromPrefs(prefsStore.load())
 
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    var profile by remember {
-                        mutableStateOf(
-                            initial.profileYaml.ifBlank { defaultProfile },
-                        )
-                    }
-                    var selectedIp by remember {
-                        mutableStateOf(initial.selectedAddress.ifBlank { "2001:db8::1" })
-                    }
-                    var mode by remember {
-                        mutableStateOf(RoutingMode.parse(initial.routingMode) ?: RoutingMode.RULE)
-                    }
-                    var modeExpanded by remember { mutableStateOf(false) }
-                    var fullTunnel by remember { mutableStateOf(initial.fullTunnel) }
-                    var preview by remember { mutableStateOf("# 点击生成运行配置") }
-                    var status by remember {
-                        mutableStateOf("Android · 投影 + mihomo + 全量隧道(TCP/DNS)")
-                    }
-                    var runtimeLine by remember { mutableStateOf("运行时：—") }
+            var state by remember { mutableStateOf(initial) }
+            var selectedSection by remember { mutableStateOf(AppSection.OVERVIEW) }
 
-                    fun persist() {
-                        prefsStore.save(
-                            SessionPrefs(
-                                profileYaml = profile,
-                                selectedAddress = selectedIp,
-                                routingMode = mode.wire,
-                                fullTunnel = fullTunnel,
+            fun persist(next: SessionUiState) {
+                prefsStore.save(next.toPrefs())
+            }
+
+            fun update(transform: (SessionUiState) -> SessionUiState) {
+                val next = transform(state)
+                state = next
+                persist(next)
+            }
+
+            LaunchedEffect(Unit) {
+                while (true) {
+                    val runtimePrefs =
+                        getSharedPreferences(
+                            ViaSixVpnService.RUNTIME_PREFS,
+                            MODE_PRIVATE,
+                        )
+                    val running = runtimePrefs.getBoolean(ViaSixVpnService.KEY_RUNNING, false)
+                    val health =
+                        runtimePrefs.getString(ViaSixVpnService.KEY_HEALTH, "—") ?: "—"
+                    val port =
+                        runtimePrefs.getInt(
+                            ViaSixVpnService.KEY_CONTROLLER_PORT,
+                            ViaSixVpnService.CONTROLLER_PORT,
+                        )
+                    val mixed =
+                        runtimePrefs.getInt(
+                            ViaSixVpnService.KEY_MIXED_PORT,
+                            ViaSixVpnService.MIXED_PORT,
+                        )
+                    val secret =
+                        runtimePrefs.getString(ViaSixVpnService.KEY_SECRET, "") ?: ""
+
+                    val traffic =
+                        if (running) {
+                            withContext(Dispatchers.IO) {
+                                ControllerClient.connectionsTotals(
+                                    "127.0.0.1",
+                                    port,
+                                    secret,
+                                )
+                            }
+                        } else {
+                            IdleTraffic
+                        }
+
+                    // Runtime snapshot does not rewrite session prefs.
+                    state =
+                        state.copy(
+                            runtime =
+                                RuntimeSnapshot(
+                                    running = running,
+                                    health = health,
+                                    traffic = traffic,
+                                    controllerPort = port,
+                                    mixedPort = mixed,
+                                ),
+                        )
+                    kotlinx.coroutines.delay(1500)
+                }
+            }
+
+            fun buildStartIntent(): Intent =
+                Intent(this@MainActivity, ViaSixVpnService::class.java)
+                    .putExtra(ViaSixVpnService.EXTRA_PROFILE, state.profileYaml)
+                    .putExtra(ViaSixVpnService.EXTRA_SELECTED_IP, state.selectedAddress)
+                    .putExtra(ViaSixVpnService.EXTRA_MODE, state.routingMode.wire)
+                    .putExtra(ViaSixVpnService.EXTRA_FULL_TUNNEL, state.fullTunnel)
+
+            fun startVpn() {
+                val intent = buildStartIntent()
+                val prepare = VpnService.prepare(this@MainActivity)
+                if (prepare != null) {
+                    pendingStart = intent
+                    vpnPermission.launch(prepare)
+                    update { it.appendLog("请求 VPN 权限…", LogLevel.Info) }
+                } else {
+                    startForegroundService(intent)
+                    update { it.appendLog("正在启动 VPN + mihomo…", LogLevel.Info) }
+                }
+            }
+
+            fun stopVpn() {
+                startService(
+                    Intent(this@MainActivity, ViaSixVpnService::class.java)
+                        .setAction(ViaSixVpnService.ACTION_STOP),
+                )
+                update { it.appendLog("已发送停止意图", LogLevel.Info) }
+            }
+
+            fun projectPreview() {
+                try {
+                    val preview =
+                        MihomoProjection.projectYaml(
+                            if (state.routingMode == RoutingMode.DIRECT) {
+                                null
+                            } else {
+                                state.profileYaml
+                            },
+                            ProjectOptions(
+                                routingMode = state.routingMode,
+                                selectedAddress =
+                                    if (state.routingMode == RoutingMode.DIRECT) {
+                                        null
+                                    } else {
+                                        state.selectedAddress
+                                    },
                             ),
                         )
+                    update {
+                        it.copy(configPreview = preview)
+                            .appendLog("投影成功", LogLevel.Success)
                     }
-
-                    LaunchedEffect(profile, selectedIp, mode, fullTunnel) {
-                        persist()
+                } catch (error: ProjectError) {
+                    update {
+                        it.copy(configPreview = error.contractCode)
+                            .appendLog("投影失败：${error.contractCode}", LogLevel.Error)
                     }
-
-                    LaunchedEffect(Unit) {
-                        while (true) {
-                            val runtime =
-                                getSharedPreferences(
-                                    ViaSixVpnService.RUNTIME_PREFS,
-                                    MODE_PRIVATE,
-                                )
-                            val running = runtime.getBoolean(ViaSixVpnService.KEY_RUNNING, false)
-                            val health =
-                                runtime.getString(ViaSixVpnService.KEY_HEALTH, "—") ?: "—"
-                            if (!running) {
-                                runtimeLine = "运行时：已停止"
-                            } else {
-                                val port =
-                                    runtime.getInt(
-                                        ViaSixVpnService.KEY_CONTROLLER_PORT,
-                                        ViaSixVpnService.CONTROLLER_PORT,
-                                    )
-                                val secret =
-                                    runtime.getString(ViaSixVpnService.KEY_SECRET, "") ?: ""
-                                val traffic =
-                                    withContext(Dispatchers.IO) {
-                                        ControllerClient.connectionsTotals(
-                                            "127.0.0.1",
-                                            port,
-                                            secret,
-                                        )
-                                    }
-                                runtimeLine =
-                                    if (traffic.live) {
-                                        "运行时：$health · ${traffic.message}"
-                                    } else {
-                                        "运行时：$health · ${traffic.message}"
-                                    }
-                            }
-                            kotlinx.coroutines.delay(1500)
-                        }
-                    }
-
-                    fun buildStartIntent(): Intent =
-                        Intent(this@MainActivity, ViaSixVpnService::class.java)
-                            .putExtra(ViaSixVpnService.EXTRA_PROFILE, profile)
-                            .putExtra(ViaSixVpnService.EXTRA_SELECTED_IP, selectedIp)
-                            .putExtra(ViaSixVpnService.EXTRA_MODE, mode.wire)
-                            .putExtra(ViaSixVpnService.EXTRA_FULL_TUNNEL, fullTunnel)
-
-                    Column(
-                        modifier =
-                            Modifier
-                                .fillMaxSize()
-                                .verticalScroll(rememberScrollState())
-                                .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Text("ViaSix", style = MaterialTheme.typography.headlineMedium)
-                        Text(
-                            "IPv6-first · contracts 投影 · mihomo · VpnService HTTP 代理",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        OutlinedTextField(
-                            value = profile,
-                            onValueChange = {
-                                profile = it
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Profile YAML") },
-                            minLines = 8,
-                        )
-                        OutlinedTextField(
-                            value = selectedIp,
-                            onValueChange = {
-                                selectedIp = it
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("选中 IPv6") },
-                            singleLine = true,
-                        )
-                        ExposedDropdownMenuBox(
-                            expanded = modeExpanded,
-                            onExpandedChange = { modeExpanded = it },
-                        ) {
-                            OutlinedTextField(
-                                value = mode.wire,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("路由模式") },
-                                trailingIcon = {
-                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = modeExpanded)
-                                },
-                                modifier =
-                                    Modifier
-                                        .menuAnchor()
-                                        .fillMaxWidth(),
-                            )
-                            ExposedDropdownMenu(
-                                expanded = modeExpanded,
-                                onDismissRequest = { modeExpanded = false },
-                            ) {
-                                RoutingMode.entries.forEach { item ->
-                                    DropdownMenuItem(
-                                        text = { Text(item.wire) },
-                                        onClick = {
-                                            mode = item
-                                            modeExpanded = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                        Button(
-                            onClick = {
-                                try {
-                                    preview =
-                                        MihomoProjection.projectYaml(
-                                            if (mode == RoutingMode.DIRECT) null else profile,
-                                            ProjectOptions(
-                                                routingMode = mode,
-                                                selectedAddress =
-                                                    if (mode == RoutingMode.DIRECT) {
-                                                        null
-                                                    } else {
-                                                        selectedIp
-                                                    },
-                                            ),
-                                        )
-                                    status = "投影成功"
-                                } catch (error: ProjectError) {
-                                    preview = error.contractCode
-                                    status = "投影失败：${error.contractCode}"
-                                } catch (error: Exception) {
-                                    preview = error.message ?: "error"
-                                    status = "投影失败"
-                                }
-                            },
-                        ) {
-                            Text("生成运行配置")
-                        }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Switch(checked = fullTunnel, onCheckedChange = { fullTunnel = it })
-                            Text(
-                                if (fullTunnel) {
-                                    "全量隧道（IPv4 TCP→SOCKS + DNS）"
-                                } else {
-                                    "仅 HTTP 代理 VPN（无默认路由）"
-                                },
-                            )
-                        }
-                        Button(
-                            onClick = {
-                                val intent = buildStartIntent()
-                                val prepare = VpnService.prepare(this@MainActivity)
-                                if (prepare != null) {
-                                    pendingStart = intent
-                                    vpnPermission.launch(prepare)
-                                    status = "请求 VPN 权限…"
-                                } else {
-                                    startForegroundServiceCompat(intent)
-                                    status = "正在启动 VPN + mihomo…"
-                                }
-                            },
-                        ) {
-                            Text("启动（VPN + mihomo）")
-                        }
-                        Button(
-                            onClick = {
-                                startService(
-                                    Intent(this@MainActivity, ViaSixVpnService::class.java)
-                                        .setAction(ViaSixVpnService.ACTION_STOP),
-                                )
-                                status = "已发送停止意图"
-                            },
-                        ) {
-                            Text("停止")
-                        }
-                        Text(status, style = MaterialTheme.typography.bodySmall)
-                        Text(runtimeLine, style = MaterialTheme.typography.bodySmall)
-                        Text(
-                            "全量隧道：默认路由 + 用户态转发（TCP via mihomo SOCKS，DNS protect 出站）。" +
-                                "本应用 UID 排除在 VPN 外以防环路。需 arm64 + fetch-mihomo.mjs。",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        Text(preview, style = MaterialTheme.typography.bodySmall)
+                } catch (error: Exception) {
+                    update {
+                        it.copy(configPreview = error.message ?: "error")
+                            .appendLog("投影失败：${error.message}", LogLevel.Error)
                     }
                 }
             }
+
+            ViaSixApp(
+                state = state,
+                selectedSection = selectedSection,
+                onSectionChange = { selectedSection = it },
+                onProfileChange = { yaml -> update { it.copy(profileYaml = yaml) } },
+                onSelectedAddressChange = { ip -> update { it.copy(selectedAddress = ip) } },
+                onRoutingModeChange = { mode -> update { it.copy(routingMode = mode) } },
+                onFullTunnelChange = { full -> update { it.copy(fullTunnel = full) } },
+                onStart = ::startVpn,
+                onStop = ::stopVpn,
+                onProjectPreview = ::projectPreview,
+                onClearLogs = {
+                    state = state.copy(logs = emptyList(), statusMessage = "日志已清空")
+                },
+            )
         }
     }
-
-    private fun startForegroundServiceCompat(intent: Intent) {
-        startForegroundService(intent)
-    }
 }
+
+/** Idle traffic sample without hitting the controller. */
+private val IdleTraffic =
+    TrafficSample(
+        live = false,
+        message = "—",
+        uploadTotal = 0,
+        downloadTotal = 0,
+    )

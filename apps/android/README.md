@@ -31,12 +31,26 @@ make android-test
 make android-skeleton
 ```
 
+## UI 结构（对齐 macOS）
+
+底部导航对应桌面端侧栏 `AppSection`：
+
+| 分区 | 说明 |
+| --- | --- |
+| 首页 | IPv6 链路步骤、代理模式、网络接入、流量、IP / 应用信息 |
+| IPv6 优选 | 手动指定入口 IPv6（测速后续对齐） |
+| 连接配置 | Profile YAML 编辑 + 运行配置投影预览 |
+| 日志 | 会话活动时间线 |
+| 设置 | 全量隧道开关、运行组件、关于 |
+
+设计令牌与卡片组件见 `ui/theme/`（对应 macOS `VisualStyle` / `SurfaceCard` 等）。
+
 ## 当前范围
 
 | 能力 | 状态 |
 | --- | --- |
 | contracts 投影 | ✓（`:core` 测试） |
-| 基础 UI 生成运行配置 | ✓ |
+| 分区导航 UI（对齐 macOS 信息架构） | ✓ |
 | VpnService 权限与前台会话 | ✓ |
 | mihomo 用户态启动（assets → filesDir） | ✓ |
 | 全量隧道 IPv4 TCP→SOCKS + DNS protect | ✓（`Tun2SocksEngine`） |
@@ -46,6 +60,7 @@ make android-skeleton
 | 会话偏好持久化 | ✓ SharedPreferences |
 | Controller 健康 + 累计流量展示 | ✓ |
 | mihomo 资产拉取脚本 | ✓ `scripts/fetch-mihomo.mjs` |
+| CloudflareSpeedTest 测速 | 未实现（macOS 优先） |
 
 ## 契约
 
