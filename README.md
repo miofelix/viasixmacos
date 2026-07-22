@@ -25,7 +25,7 @@ docs/               架构与平台说明
 | 平台 | 状态 | 入口 |
 | --- | --- | --- |
 | macOS | **可用** | [apps/macos](apps/macos/README.md) |
-| Windows | 骨架 | [apps/windows](apps/windows/README.md) |
+| Windows | MVP（Tauri） | [apps/windows](apps/windows/README.md) |
 | Android | 骨架 | [apps/android](apps/android/README.md) |
 
 布局与路线图：

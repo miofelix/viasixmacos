@@ -1,39 +1,53 @@
 # ViaSix for Windows
 
-**状态：骨架占位（阶段 1 实现前不可运行）。**
+**状态：MVP 骨架（用户态投影 + Mihomo 启停）**
 
-## 目标能力
+技术栈：
 
-| 阶段 | 能力 |
+- UI：Vite + TypeScript（Tauri WebView）
+- 宿主：Tauri 2 + Rust
+- 投影：`src-tauri/src/projection`（对齐 monorepo `contracts/fixtures`）
+- 内核：预编译 mihomo（`pnpm prebuild` → `src-tauri/sidecar/`）
+
+## 要求
+
+- Node.js 20+ / pnpm
+- Rust stable（MSVC toolchain on Windows）
+- Windows 上还需 WebView2
+
+macOS/Linux 上可运行 **投影契约测试** 与大部分开发流程；完整桌面壳建议在 Windows 验证。
+
+## 命令
+
+```bash
+cd apps/windows
+pnpm install
+pnpm prebuild                 # 拉取当前 host 的 mihomo
+cargo test --manifest-path src-tauri/Cargo.toml   # contracts fixtures
+pnpm app:dev                  # Tauri 开发（需本机 GUI）
+pnpm app:build                # 安装包（主要在 Windows）
+```
+
+从仓库根：
+
+```bash
+make windows-test             # cargo test（投影契约）
+make windows-skeleton         # 目录/文件校验
+```
+
+## 当前范围
+
+| 能力 | 状态 |
 | --- | --- |
-| MVP | 配置导入、contracts 对齐投影、用户态 mihomo、测速、基础 UI |
-| 后续 | 系统代理、Windows Service + Wintun（虚拟网卡） |
+| contracts 投影（rule/global/direct + 拒绝用例） | ✓ |
+| UI：导入 YAML、选 IPv6、生成运行配置 | ✓ |
+| 用户态 Mihomo 启停 | ✓（需 `prebuild`） |
+| 系统代理 | 未做 |
+| Wintun / Service | 未做（二期） |
 
-## 建议技术选型（实现阶段锁定）
+## 契约
 
-- **选项 A**：Tauri 2（Web UI + Rust 宿主），与常见代理客户端类似
-- **选项 B**：WinUI 3 / C# 原生壳
+修改投影行为前请更新 `contracts/fixtures/mihomo-config/cases`，并保证：
 
-代理内核：构建期拉取预编译 mihomo（见 `scripts/fetch-mihomo.ps1` 占位）。
-
-配置与投影行为必须符合仓库根 [`contracts/`](../../contracts)。
-
-## 目录
-
-```text
-apps/windows/
-├── README.md
-├── src/                 # 应用源码（待实现）
-├── scripts/             # 拉取内核、打包
-└── packaging/           # 安装器 / MSIX 资源
-```
-
-## 本地开发（占位）
-
-```powershell
-# 后续提供：
-# .\scripts\fetch-mihomo.ps1
-# 构建与运行命令将在选定技术栈后写入
-```
-
-从 monorepo 根目录：`make windows-skeleton` 仅校验本骨架文件存在。
+- macOS：`ContractFixtureTests`
+- Windows：`cargo test` in `src-tauri`

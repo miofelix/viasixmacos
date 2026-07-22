@@ -14,6 +14,7 @@ CONTRACTS_DIR := contracts
 	macos-app \
 	macos-clean \
 	windows-skeleton \
+	windows-test \
 	android-skeleton \
 	contracts-check \
 	check \
@@ -27,9 +28,10 @@ help:
 	@echo "  make macos-test        - swift test (macOS)"
 	@echo "  make macos-clean       - clean macOS build artifacts"
 	@echo "  make contracts-check   - verify contracts layout and fixtures"
-	@echo "  make windows-skeleton  - verify Windows placeholder tree"
+	@echo "  make windows-skeleton  - verify Windows app tree"
+	@echo "  make windows-test      - Rust contract projection tests (Windows host crate)"
 	@echo "  make android-skeleton  - verify Android placeholder tree"
-	@echo "  make check             - contracts + macOS check (default CI)"
+	@echo "  make check             - contracts + macOS check + windows-test (default CI)"
 	@echo "  make check-all         - check + platform skeletons"
 
 macos-build:
@@ -64,10 +66,15 @@ contracts-check:
 
 windows-skeleton:
 	@test -f "$(WINDOWS_DIR)/README.md"
-	@test -f "$(WINDOWS_DIR)/scripts/fetch-mihomo.ps1"
-	@test -d "$(WINDOWS_DIR)/src"
-	@test -d "$(WINDOWS_DIR)/packaging"
+	@test -f "$(WINDOWS_DIR)/package.json"
+	@test -f "$(WINDOWS_DIR)/src-tauri/Cargo.toml"
+	@test -f "$(WINDOWS_DIR)/src-tauri/src/projection/mod.rs"
+	@test -f "$(WINDOWS_DIR)/scripts/fetch-mihomo.mjs"
+	@test -f "$(WINDOWS_DIR)/src/main.ts"
 	@echo "windows skeleton OK"
+
+windows-test:
+	cargo test --manifest-path "$(WINDOWS_DIR)/src-tauri/Cargo.toml"
 
 android-skeleton:
 	@test -f "$(ANDROID_DIR)/README.md"
@@ -76,6 +83,6 @@ android-skeleton:
 	@test -f "$(ANDROID_DIR)/app/src/main/java/dev/viasix/app/Placeholder.kt"
 	@echo "android skeleton OK"
 
-check: contracts-check macos-check
+check: contracts-check macos-check windows-test
 
 check-all: check windows-skeleton android-skeleton

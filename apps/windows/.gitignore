@@ -1,0 +1,8 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/sidecar/*
+!src-tauri/sidecar/.gitkeep
+src-tauri/gen/
+*.log
+.DS_Store

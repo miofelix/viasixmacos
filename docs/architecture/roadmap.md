@@ -10,10 +10,14 @@
 
 ## 阶段 1 — Windows MVP
 
-- 导入 profile，按 contracts 投影
-- 用户态 mihomo、测速、基础 UI
-- 系统代理（可选）
-- TUN / Windows Service 留待二期
+- [x] Tauri 2 工程骨架（`apps/windows`）
+- [x] Rust 投影引擎 + contracts fixtures（`cargo test`）
+- [x] 基础 UI：YAML 导入、IPv6、模式、运行配置预览
+- [x] 用户态 Mihomo 启停（需 `pnpm prebuild`）
+- [ ] 系统代理
+- [ ] 测速 / 出口检测
+- [ ] TUN / Windows Service（二期）
+- [ ] 正式 NSIS 发布流水线（Windows runner）
 
 ## 阶段 2 — Android MVP
 
