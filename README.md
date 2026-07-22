@@ -24,10 +24,11 @@ ViaSix 只保留一套 IPv6-first 运行模型：
 - 一键应用 IPv6 节点，运行中自动重新连接；
 - 首页切换规则、全局和直连模式；
 - 首页独立控制 macOS 系统代理和 TUN 虚拟网卡；
+- 首页实时流量统计：上下行速率、流量曲线与 Mihomo 内存占用；
 - 导入并编辑 VLESS、VMess、Trojan 和 Shadowsocks 内联代理；
 - 检测最终出口 IP，并区分“IPv6 代理入口”和“网站出口”；
 - 完整日志界面支持来源/级别筛选、跟随、排序和清空；
-- 菜单栏提供启停、重连、IPv6 优选、日志和设置入口；
+- 菜单栏提供启停、重连、IPv6 优选、日志、设置入口，以及运行中的上下行速率；
 - 配置只保存在本机，不收集遥测。
 
 ViaSix 使用 XIU2/CloudflareSpeedTest 完成节点测速，使用 MetaCubeX/mihomo 提供代理能力。CloudflareSpeedTest 并非 Cloudflare 官方产品。

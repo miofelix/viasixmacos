@@ -203,6 +203,11 @@ struct AppState: Equatable, Sendable {
         var completedAt: Date?
     }
 
+    struct TrafficState: Equatable, Sendable {
+        var snapshot = TrafficSnapshot.empty
+        var isMonitoring = false
+    }
+
     var launchPhase: LaunchPhase = .idle
     var preferences: UserPreferences
     var results: [SpeedTestResult] = []
@@ -224,6 +229,7 @@ struct AppState: Equatable, Sendable {
     var proxyEndpoint = ProxyEndpoint()
     var localProxyConfiguration = LocalProxyConfiguration()
     var exit = ExitState()
+    var traffic = TrafficState()
     var logs: [AppLogEntry] = []
     var notice: AppNotice?
 

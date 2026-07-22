@@ -351,6 +351,8 @@ final class AppModel {
     @ObservationIgnored private var tunMonitorTask: Task<Void, Never>?
     @ObservationIgnored private var activeTunMonitorID: UUID?
     @ObservationIgnored private var routingModeTask: Task<Void, Never>?
+    @ObservationIgnored private var trafficMonitorTask: Task<Void, Never>?
+    @ObservationIgnored private var trafficMonitor = TrafficMonitor()
     @ObservationIgnored private var activeRunner: CfstRunner?
     @ObservationIgnored private var activeSpeedTestID: UUID?
     @ObservationIgnored private var activeConfigurationTestID: UUID?
@@ -1567,6 +1569,10 @@ final class AppModel {
                 guard activeProxyCoreID == controllerID, await controller.isRunning else {
                     throw AppModelError.proxyExitedDuringStart
                 }
+                if state.proxyCorePhase != .running {
+                    state.proxyCorePhase = .running
+                }
+                syncTrafficMonitoring()
                 appendLog(
                     source: .proxy,
                     level: .success,
@@ -1576,8 +1582,10 @@ final class AppModel {
                 refreshExitIPAfterNetworkChangeIfNeeded()
             } catch MihomoControllerError.cancelled where proxyStopRequested || isShuttingDown {
                 state.proxyCorePhase = .stopped
+                syncTrafficMonitoring()
             } catch is CancellationError where proxyStopRequested || isShuttingDown {
                 state.proxyCorePhase = .stopped
+                syncTrafficMonitoring()
             } catch {
                 if let startedController {
                     await startedController.stop()
@@ -1587,6 +1595,7 @@ final class AppModel {
                     state.proxyConfigurationPhase = .needsSetup(configError.localizedDescription)
                 }
                 state.proxyCorePhase = .failed(error.localizedDescription)
+                syncTrafficMonitoring()
                 appendLog(source: .proxy, level: .error, message: error.localizedDescription)
                 let recoveryAction: AppNotice.Action? =
                     error is MihomoConfigurationError ? .openSettings : nil
@@ -1664,6 +1673,7 @@ final class AppModel {
                 }
                 state.proxyCorePhase = .running
                 beginTunStatusMonitoring()
+                syncTrafficMonitoring()
                 try await applySystemProxyIfRequested(endpoint: endpoint)
                 appendLog(
                     source: .proxy,
@@ -1674,11 +1684,13 @@ final class AppModel {
                 refreshExitIPAfterNetworkChangeIfNeeded()
             } catch is CancellationError where proxyStopRequested || isShuttingDown {
                 state.proxyCorePhase = .stopped
+                syncTrafficMonitoring()
             } catch {
                 await refreshTunState(recoverIfNeeded: false)
                 if state.tun.isRunning, state.tun.sessionOwnedByCurrentUser {
                     state.proxyCorePhase = .running
                     beginTunStatusMonitoring()
+                    syncTrafficMonitoring()
                     if state.localProxyConfiguration.systemProxyEnabled,
                         case .failed(let message) = state.systemProxyPhase
                     {
@@ -1695,6 +1707,7 @@ final class AppModel {
                 }
                 state.tun.sessionPhase = .failed(error.localizedDescription)
                 state.proxyCorePhase = .failed(error.localizedDescription)
+                syncTrafficMonitoring()
                 appendLog(
                     source: .proxy,
                     level: .error,
@@ -1757,12 +1770,14 @@ final class AppModel {
                 activeProxyCore = nil
                 activeProxyCoreID = nil
                 state.proxyCorePhase = .stopped
+                syncTrafficMonitoring()
                 appendLog(source: .proxy, level: .warning, message: "本地代理已停止")
                 showNotice("本地代理已停止")
                 refreshExitIPAfterNetworkChangeIfNeeded()
             } catch {
                 let controllerStillRunning = await controller?.isRunning == true
                 state.proxyCorePhase = controllerStillRunning ? .running : .failed(error.localizedDescription)
+                syncTrafficMonitoring()
                 appendLog(
                     source: .app,
                     level: .error,
@@ -1804,6 +1819,7 @@ final class AppModel {
                 applyTunSnapshot(snapshot)
                 state.proxyCorePhase = .stopped
                 stopTunStatusMonitoring()
+                syncTrafficMonitoring()
                 appendLog(source: .proxy, level: .warning, message: "虚拟网卡已停止")
                 showNotice("虚拟网卡模式已停止")
                 refreshExitIPAfterNetworkChangeIfNeeded()
@@ -1812,9 +1828,11 @@ final class AppModel {
                 if state.tun.sessionPhase == .inactive {
                     state.proxyCorePhase = .stopped
                     stopTunStatusMonitoring()
+                    syncTrafficMonitoring()
                     return
                 }
                 state.proxyCorePhase = .failed(error.localizedDescription)
+                syncTrafficMonitoring()
                 appendLog(
                     source: .app,
                     level: .error,
@@ -1929,6 +1947,8 @@ final class AppModel {
         guard !isShuttingDown else { return false }
         isShuttingDown = true
 
+        stopTrafficMonitoring()
+
         let pendingTasks = [
             bootstrapTask,
             runtimeTask,
@@ -1946,6 +1966,7 @@ final class AppModel {
             systemProxyCleanupTask,
             tunOperationTask,
             tunMonitorTask,
+            trafficMonitorTask,
             routingModeTask,
         ].compactMap { $0 }
         let pendingTemplateSaveTask = templateSaveTask
@@ -2135,6 +2156,7 @@ final class AppModel {
                 if localProxyConfiguration.networkAccessMode == .virtualInterface {
                     state.proxyCorePhase = .running
                     beginTunStatusMonitoring()
+                    syncTrafficMonitoring()
                     appendLog(source: .app, level: .success, message: "已接管现有虚拟网卡会话")
                     if localProxyConfiguration.systemProxyEnabled {
                         do {
@@ -2413,12 +2435,14 @@ final class AppModel {
             }
             state.proxyCorePhase = .running
             beginTunStatusMonitoring()
+            syncTrafficMonitoring()
             appendLog(source: .proxy, level: .success, message: "虚拟网卡已应用最新配置")
             refreshExitIPAfterNetworkChangeIfNeeded()
         } catch {
             state.proxyCorePhase = .failed(error.localizedDescription)
             state.tun.sessionPhase = .failed(error.localizedDescription)
             stopTunStatusMonitoring()
+            syncTrafficMonitoring()
             appendLog(
                 source: .proxy,
                 level: .error,
@@ -2449,6 +2473,7 @@ final class AppModel {
                     else {
                         let detail = snapshot.lastError ?? "特权 TUN 会话已停止"
                         state.proxyCorePhase = .failed(detail)
+                        syncTrafficMonitoring()
                         await restoreSystemProxyAfterProxyFailure()
                         appendLog(source: .proxy, level: .error, message: detail)
                         showNotice("虚拟网卡异常停止：\(detail)", style: .error)
@@ -2477,6 +2502,54 @@ final class AppModel {
         tunMonitorTask = nil
     }
 
+    private func syncTrafficMonitoring() {
+        if state.isProxyRunning {
+            startTrafficMonitoring()
+        } else {
+            stopTrafficMonitoring()
+        }
+    }
+
+    private func startTrafficMonitoring() {
+        guard !isShuttingDown, state.isProxyRunning else { return }
+
+        state.traffic.isMonitoring = true
+        trafficMonitorTask?.cancel()
+        trafficMonitorTask = Task { [weak self] in
+            guard let self else { return }
+            let apiConfiguration: MihomoAPIConfiguration
+            do {
+                apiConfiguration = try await bootstrapper.mihomoAPIConfiguration()
+            } catch {
+                guard !Task.isCancelled, !isShuttingDown else { return }
+                appendLog(
+                    source: .app,
+                    level: .warning,
+                    message: "无法读取 Controller 配置，流量统计暂不可用：\(error.localizedDescription)"
+                )
+                state.traffic.isMonitoring = false
+                return
+            }
+
+            guard !Task.isCancelled, !isShuttingDown, state.isProxyRunning else { return }
+            await trafficMonitor.start(configuration: apiConfiguration)
+            let stream = trafficMonitor.snapshots()
+            for await snapshot in stream {
+                guard !Task.isCancelled, !isShuttingDown else { break }
+                state.traffic.snapshot = snapshot
+                state.traffic.isMonitoring = true
+            }
+        }
+    }
+
+    private func stopTrafficMonitoring() {
+        trafficMonitorTask?.cancel()
+        trafficMonitorTask = nil
+        state.traffic.isMonitoring = false
+        state.traffic.snapshot = .empty
+        Task { await trafficMonitor.stop() }
+    }
+
     private func receiveProxyCoreEvent(_ event: MihomoEvent, controllerID: UUID) {
         guard activeProxyCoreID == controllerID else { return }
         switch event {
@@ -2494,6 +2567,7 @@ final class AppModel {
             case .stopping:
                 state.proxyCorePhase = .stopping
             }
+            syncTrafficMonitoring()
         case .log(let line):
             let clean = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if !clean.isEmpty {
@@ -2503,6 +2577,7 @@ final class AppModel {
             cancelExitIPDetection()
             let detail = output.isEmpty ? "状态码 \(status)" : output
             state.proxyCorePhase = .failed("本地代理意外退出：\(detail)")
+            syncTrafficMonitoring()
             appendLog(source: .proxy, level: .error, message: "本地代理意外退出：\(detail)")
             showNotice("本地代理意外退出", style: .error)
             activeProxyCore = nil

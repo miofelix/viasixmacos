@@ -61,7 +61,19 @@ struct ViaSixMacApp: App {
                     }
                 }
         } label: {
-            Label(AppMetadata.name, systemImage: menuBarIcon)
+            if let speedTitle = menuBarSpeedTitle {
+                Label {
+                    Text(speedTitle)
+                        .font(.system(size: 9.5, weight: .regular, design: .monospaced))
+                        .multilineTextAlignment(.trailing)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: true, vertical: true)
+                } icon: {
+                    Image(systemName: menuBarIcon)
+                }
+            } else {
+                Label(AppMetadata.name, systemImage: menuBarIcon)
+            }
         }
         .menuBarExtraStyle(.menu)
         .commands {
@@ -87,6 +99,13 @@ struct ViaSixMacApp: App {
         case .failed:
             "network.slash"
         }
+    }
+
+    private var menuBarSpeedTitle: String? {
+        MenuBarTrafficPresentation.speedTitle(
+            isProxyRunning: model.state.isProxyRunning,
+            snapshot: model.state.traffic.snapshot
+        )
     }
 }
 

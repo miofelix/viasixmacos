@@ -22,6 +22,10 @@ struct OverviewView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
                     ipv6LinkCard
+                    TrafficStatsView(
+                        snapshot: model.state.traffic.snapshot,
+                        isProxyRunning: model.state.isProxyRunning
+                    )
                     HStack(alignment: .top, spacing: VisualStyle.spacing12) {
                         routingModeCard
                         networkAccessCard

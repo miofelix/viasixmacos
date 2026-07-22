@@ -19,6 +19,15 @@ struct MenuBarView: View {
         Label(transportTitle, systemImage: transportIcon)
         Label(proxyStatusTitle, systemImage: proxyStatusIcon)
 
+        if let trafficSummary = MenuBarTrafficPresentation.menuSummary(
+            isProxyRunning: model.state.isProxyRunning,
+            snapshot: model.state.traffic.snapshot
+        ) {
+            Text(trafficSummary)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+
         if !selectedNode.isEmpty {
             Text("IPv6 节点：\(selectedNode)")
                 .font(.caption.monospaced())
