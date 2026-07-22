@@ -603,6 +603,34 @@ final class AppBootstrapperTests: XCTestCase {
         XCTAssertEqual(explicitSelection?.region, "SJC")
     }
 
+    func testLoadResultsRejectsSymbolicLinkResultCSV() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let bootstrapper = AppBootstrapper(paths: paths)
+        try await bootstrapper.prepareDefaults()
+
+        let outside = paths.data.appendingPathComponent("outside-results.csv")
+        let planted = Data(
+            """
+            IP,Sent,Recv,Loss,Latency,Speed,Region
+            2606::9,4,4,0.00,1,1,EVIL
+            """.utf8
+        )
+        try planted.write(to: outside)
+        try FileManager.default.createSymbolicLink(
+            at: paths.resultCSV,
+            withDestinationURL: outside
+        )
+
+        do {
+            _ = try await bootstrapper.loadResults()
+            XCTFail("Expected symbolic-link result.csv to be rejected")
+        } catch let error as AppBootstrapperError {
+            XCTAssertEqual(error, .invalidConfigurationFile(paths.resultCSV))
+        }
+        XCTAssertEqual(try Data(contentsOf: outside), planted)
+    }
+
     func testPrepareDefaultsCreatesTokenSafeControllerSecret() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }

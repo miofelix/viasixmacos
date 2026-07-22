@@ -150,6 +150,43 @@ final class SystemProxyManagerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotURL.path))
     }
 
+    func testRecoveryRejectsSymbolicLinkSnapshotWithoutFollowingTarget() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("viasix-system-proxy-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let outside = root.appendingPathComponent("outside-snapshot.json")
+        let snapshotURL = root.appendingPathComponent("system-proxy.json")
+        let planted = Data(
+            #"{"version":1,"sessionID":"00000000-0000-0000-0000-000000000001","createdAt":0,"endpoint":{"host":"127.0.0.1","port":1},"services":[]}"#
+                .utf8)
+        try planted.write(to: outside)
+        try FileManager.default.createSymbolicLink(at: snapshotURL, withDestinationURL: outside)
+
+        let store = FakeSystemProxyStore(states: [
+            .init(
+                serviceID: "wifi",
+                serviceName: "Wi-Fi",
+                isEnabled: true,
+                protocolIsEnabled: true,
+                configuration: nil
+            )
+        ])
+        let manager = SystemProxyManager(store: store, snapshotURL: snapshotURL)
+
+        do {
+            _ = try await manager.recoverIfNeeded()
+            XCTFail("Expected symbolic-link snapshot to be rejected")
+        } catch let error as SystemProxyManagerError {
+            guard case .snapshotUnreadable(let reason) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertTrue(reason.contains("符号链接"))
+        }
+        XCTAssertEqual(try Data(contentsOf: outside), planted)
+    }
+
     func testEnableRejectsInvalidEndpointAndNoEnabledService() async throws {
         let (manager, _, _, _) = try makeManager()
         do {

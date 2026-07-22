@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Security
 import SystemConfiguration
@@ -500,7 +501,22 @@ public actor SystemProxyManager {
     }
 
     private func loadSnapshotIfPresent() throws -> SystemProxySnapshot? {
-        guard snapshotExists() else { return nil }
+        var metadata = stat()
+        guard lstat(snapshotURL.path, &metadata) == 0 else {
+            if errno == ENOENT { return nil }
+            throw SystemProxyManagerError.snapshotUnreadable(String(cString: strerror(errno)))
+        }
+
+        let fileType = metadata.st_mode & S_IFMT
+        // System proxy recovery must not follow a planted snapshot link into
+        // attacker-controlled JSON that restores arbitrary proxy settings.
+        guard fileType != S_IFLNK else {
+            throw SystemProxyManagerError.snapshotUnreadable("系统代理快照不能是符号链接")
+        }
+        guard fileType == S_IFREG else {
+            throw SystemProxyManagerError.snapshotUnreadable("系统代理快照必须是普通文件")
+        }
+
         do {
             let data = try Data(contentsOf: snapshotURL)
             let snapshot = try JSONDecoder().decode(SystemProxySnapshot.self, from: data)
@@ -523,10 +539,15 @@ public actor SystemProxyManager {
                 at: snapshotURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
+            if (try? fileManager.destinationOfSymbolicLink(atPath: snapshotURL.path)) != nil {
+                throw SystemProxyManagerError.snapshotWriteFailed("系统代理快照不能是符号链接")
+            }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(snapshot).write(to: snapshotURL, options: .atomic)
             try FilePermissions.restrictFile(snapshotURL, using: fileManager)
+        } catch let error as SystemProxyManagerError {
+            throw error
         } catch {
             throw SystemProxyManagerError.snapshotWriteFailed(String(describing: error))
         }

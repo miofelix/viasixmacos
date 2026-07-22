@@ -191,8 +191,10 @@ public actor AppBootstrapper {
     }
 
     public func loadResults() throws -> [SpeedTestResult] {
-        guard FileManager.default.fileExists(atPath: paths.resultCSV.path) else { return [] }
-        return try SpeedTestResultParser.parse(data: Data(contentsOf: paths.resultCSV))
+        // Fail closed on symbolic links so a planted result.csv cannot redirect
+        // bootstrap into parsing an attacker-chosen file.
+        guard let data = try regularFileDataIfPresent(at: paths.resultCSV) else { return [] }
+        return try SpeedTestResultParser.parse(data: data)
     }
 
     @discardableResult
