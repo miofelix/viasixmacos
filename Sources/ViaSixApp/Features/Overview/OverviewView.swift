@@ -22,17 +22,20 @@ struct OverviewView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
                     ipv6LinkCard
-                    TrafficStatsView(
-                        snapshot: model.state.traffic.snapshot,
-                        isProxyRunning: model.state.isProxyRunning
-                    )
+
                     HStack(alignment: .top, spacing: VisualStyle.spacing12) {
                         routingModeCard
                         networkAccessCard
                     }
+
+                    TrafficStatsView(
+                        snapshot: model.state.traffic.snapshot,
+                        isProxyRunning: model.state.isProxyRunning
+                    )
+
                     HStack(alignment: .top, spacing: VisualStyle.spacing12) {
-                        nodeCard
-                        exitIPCard
+                        ipInfoCard
+                        appInfoCard
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -42,6 +45,8 @@ struct OverviewView: View {
             .scrollbarSafeContent()
         }
     }
+
+    // MARK: - Link card
 
     private var ipv6LinkCard: some View {
         SurfaceCard {
@@ -91,6 +96,8 @@ struct OverviewView: View {
             .padding(.bottom, VisualStyle.spacing12)
         }
     }
+
+    // MARK: - Routing / network
 
     private var routingModeCard: some View {
         SurfaceCard {
@@ -149,6 +156,201 @@ struct OverviewView: View {
         .frame(maxWidth: .infinity)
     }
 
+    // MARK: - IP info (entry + exit)
+
+    private var ipInfoCard: some View {
+        SurfaceCard {
+            CardHeader("IP 信息", systemImage: "globe.asia.australia.fill", tone: selectedNodeIsIPv6 ? .accent : .warning) {
+                HStack(spacing: VisualStyle.spacing8) {
+                    Button("选择节点", systemImage: "list.bullet", action: onSelectNodes)
+                        .controlSize(.small)
+                    Button(
+                        model.state.exit.isDetecting ? "检测中…" : "检测出口",
+                        systemImage: "arrow.clockwise",
+                        action: model.detectExitIP
+                    )
+                    .controlSize(.small)
+                    .disabled(model.state.exit.isDetecting)
+                }
+            }
+            Divider()
+
+            VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
+                ipInfoSection(title: "IPv6 入口", systemImage: "6.circle") {
+                    VStack(alignment: .leading, spacing: VisualStyle.spacing8) {
+                        HStack(alignment: .firstTextBaseline, spacing: VisualStyle.spacing8) {
+                            Text(
+                                model.state.preferences.selectedIP.isEmpty
+                                    ? "尚未选择"
+                                    : model.state.preferences.selectedIP
+                            )
+                            .font(.body.monospaced().weight(.semibold))
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                            Spacer(minLength: 0)
+                            if selectedNodeIsIPv6 {
+                                copyButton(model.state.preferences.selectedIP)
+                            }
+                        }
+
+                        if let result = currentNodeResult {
+                            Text(result.performanceSummary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("优选 IPv6 地址后，ViaSix 会在运行时注入代理入口。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        HStack {
+                            Button(configurationTestTitle, systemImage: "scope") {
+                                if configurationTestIsRunning {
+                                    model.stopCurrentConfigurationTest()
+                                } else {
+                                    model.startCurrentConfigurationTest()
+                                }
+                            }
+                            .controlSize(.small)
+                            .disabled(
+                                !configurationTestIsRunning
+                                    && model.currentConfigurationTestUnavailableReason != nil
+                            )
+                            if let family = entryAddressFamilyLabel {
+                                StatusBadge(family, tone: .accent, systemImage: "network")
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
+                ipInfoSection(title: "公网出口", systemImage: "location.fill") {
+                    VStack(alignment: .leading, spacing: VisualStyle.spacing8) {
+                        HStack(alignment: .firstTextBaseline, spacing: VisualStyle.spacing8) {
+                            Text(model.state.exit.info?.ip ?? "尚未检测")
+                                .font(.body.monospaced().weight(.semibold))
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                            Spacer(minLength: 0)
+                            if let ip = model.state.exit.info?.ip, !ip.isEmpty {
+                                copyButton(ip)
+                            }
+                        }
+
+                        if let info = model.state.exit.info {
+                            if !info.location.isEmpty {
+                                infoRow("位置", info.location)
+                            }
+                            if !info.details.isEmpty {
+                                infoRow("详情", info.details)
+                            }
+                            if let family = info.addressFamily {
+                                StatusBadge(
+                                    family.displayName,
+                                    tone: .neutral,
+                                    systemImage: family == .ipv6 ? "6.circle" : "4.circle"
+                                )
+                            }
+                        } else if let error = model.state.exit.errorMessage, !error.isEmpty {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(AppTone.negative.color)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text("检测网站出口 IP。它可能是 IPv4，不代表入口地址族。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        HStack {
+                            Picker("地址族", selection: exitModeBinding) {
+                                Text("自动").tag(ExitIPDetectionMode.automatic)
+                                Text("IPv4").tag(ExitIPDetectionMode.ipv4)
+                                Text("IPv6").tag(ExitIPDetectionMode.ipv6)
+                            }
+                            .labelsHidden()
+                            .frame(width: 100)
+
+                            if let route = model.exitIPRouteDescription {
+                                Text(route)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(VisualStyle.spacing16)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - App info
+
+    private var appInfoCard: some View {
+        SurfaceCard {
+            CardHeader("应用信息", systemImage: "info.circle.fill", tone: .neutral) {
+                Link(destination: AppMetadata.repositoryURL) {
+                    Label("GitHub", systemImage: "arrow.up.right.square")
+                }
+                .controlSize(.small)
+            }
+            Divider()
+
+            VStack(alignment: .leading, spacing: 0) {
+                infoDetailRow("应用版本", AppMetadata.displayVersion, systemImage: "app.badge")
+                Divider().padding(.leading, 52)
+                infoDetailRow("系统", macOSVersionSummary, systemImage: "desktopcomputer")
+                Divider().padding(.leading, 52)
+                infoDetailRow("运行方式", runtimeModeSummary, systemImage: "gearshape.2")
+                Divider().padding(.leading, 52)
+                infoDetailRow(
+                    "本地代理",
+                    model.state.proxyEndpoint.displayAddress,
+                    systemImage: "point.3.filled.connected.trianglepath.dotted"
+                )
+                Divider().padding(.leading, 52)
+                infoDetailRow(
+                    "Controller",
+                    "127.0.0.1:\(model.state.localProxyConfiguration.controllerPort)",
+                    systemImage: "antenna.radiowaves.left.and.right"
+                )
+                Divider().padding(.leading, 52)
+                infoDetailRow("代理模式", routingMode.displayName, systemImage: routingMode.appSystemImage)
+
+                HStack(spacing: VisualStyle.spacing8) {
+                    Link(destination: AppMetadata.repositoryURL) {
+                        Label("打开仓库", systemImage: "link")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Link(destination: AppMetadata.issuesURL) {
+                        Label("反馈问题", systemImage: "exclamationmark.bubble")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button("使用帮助", systemImage: "questionmark.circle") {
+                        AppDocumentOpener.open(.userGuide)
+                    }
+                    .controlSize(.small)
+                }
+                .padding(.top, VisualStyle.spacing12)
+            }
+            .padding(VisualStyle.spacing16)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Shared chrome
+
     private func linkStep(
         _ title: String,
         detail: String,
@@ -174,104 +376,48 @@ struct OverviewView: View {
         }
     }
 
-    private var nodeCard: some View {
-        SurfaceCard {
-            CardHeader("当前 IPv6 节点", systemImage: "network", tone: selectedNodeIsIPv6 ? .accent : .warning)
-            Divider()
-            VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
-                Text(model.state.preferences.selectedIP.isEmpty ? "尚未选择" : model.state.preferences.selectedIP)
-                    .font(.title3.monospaced().weight(.semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-
-                if let result = currentNodeResult {
-                    Text(result.performanceSummary)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("选择 IPv6 优选地址后，ViaSix 会在运行时将它注入代理入口。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                HStack {
-                    Button("选择节点", systemImage: "list.bullet", action: onSelectNodes)
-                    Button(configurationTestTitle, systemImage: "scope") {
-                        if configurationTestIsRunning {
-                            model.stopCurrentConfigurationTest()
-                        } else {
-                            model.startCurrentConfigurationTest()
-                        }
-                    }
-                    .disabled(
-                        !configurationTestIsRunning
-                            && model.currentConfigurationTestUnavailableReason != nil
-                    )
-                }
-            }
-            .padding(VisualStyle.spacing16)
+    private func ipInfoSection<Content: View>(
+        title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: VisualStyle.spacing8) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content()
         }
-        .frame(maxWidth: .infinity)
     }
 
-    private var exitIPCard: some View {
-        SurfaceCard {
-            CardHeader("公网出口", systemImage: "location", tone: .neutral)
-            Divider()
-            VStack(alignment: .leading, spacing: VisualStyle.spacing12) {
-                HStack {
-                    Text(model.state.exit.info?.ip ?? "尚未检测")
-                        .font(.title3.monospaced().weight(.semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                    Spacer()
-                    if model.state.exit.info != nil {
-                        Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(
-                                model.state.exit.info?.ip ?? "",
-                                forType: .string
-                            )
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                }
-
-                if let info = model.state.exit.info, !info.location.isEmpty {
-                    Text(info.location)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-
-                Text("出口地址可能是 IPv4；它不代表客户端到代理入口所使用的地址族。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack {
-                    Picker("地址族", selection: exitModeBinding) {
-                        Text("自动").tag(ExitIPDetectionMode.automatic)
-                        Text("IPv4").tag(ExitIPDetectionMode.ipv4)
-                        Text("IPv6").tag(ExitIPDetectionMode.ipv6)
-                    }
-                    .labelsHidden()
-                    .frame(width: 100)
-                    Button(
-                        model.state.exit.isDetecting ? "检测中…" : "检测",
-                        systemImage: "arrow.clockwise",
-                        action: model.detectExitIP
-                    )
-                    .disabled(model.state.exit.isDetecting)
-                }
-            }
-            .padding(VisualStyle.spacing16)
+    private func infoRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: VisualStyle.spacing8) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 36, alignment: .leading)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity)
+    }
+
+    private func infoDetailRow(_ title: String, _ value: String, systemImage: String) -> some View {
+        SettingRow(title, detail: value, systemImage: systemImage) {
+            EmptyView()
+        }
+    }
+
+    private func copyButton(_ text: String) -> some View {
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        } label: {
+            Image(systemName: "doc.on.doc")
+        }
+        .buttonStyle(.borderless)
+        .help("复制")
     }
 
     private var proxyActionButton: some View {
@@ -282,6 +428,8 @@ struct OverviewView: View {
         .disabled(proxyActionDisabled)
         .help(model.proxyConfigurationIssue ?? proxyActionTitle)
     }
+
+    // MARK: - Computed state
 
     private var proxyActionTitle: String {
         switch model.state.proxyCorePhase {
@@ -327,6 +475,10 @@ struct OverviewView: View {
         IPv6Address(
             model.state.preferences.selectedIP.trimmingCharacters(in: .whitespacesAndNewlines)
         ) != nil
+    }
+
+    private var entryAddressFamilyLabel: String? {
+        selectedNodeIsIPv6 ? "IPv6" : nil
     }
 
     private var selectedNodeDetail: String {
@@ -470,5 +622,36 @@ struct OverviewView: View {
 
     private var exitModeBinding: Binding<ExitIPDetectionMode> {
         Binding(get: { model.exitIPDetectionMode }, set: { model.exitIPDetectionMode = $0 })
+    }
+
+    private var macOSVersionSummary: String {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        var parts = [
+            "macOS \(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
+        ]
+        #if arch(arm64)
+            parts.append("Apple Silicon")
+        #elseif arch(x86_64)
+            parts.append("Intel")
+        #endif
+        return parts.joined(separator: " · ")
+    }
+
+    private var runtimeModeSummary: String {
+        var parts: [String] = []
+        if tunIsRequested {
+            parts.append(model.state.tun.isRunning ? "TUN 运行中" : "TUN")
+        } else {
+            parts.append(model.state.isProxyRunning ? "本地代理运行中" : "本地代理")
+        }
+        if model.state.localProxyConfiguration.systemProxyEnabled {
+            switch model.state.systemProxyPhase {
+            case .enabled: parts.append("系统代理已启用")
+            case .enabling, .disabling: parts.append("系统代理切换中")
+            case .failed: parts.append("系统代理异常")
+            case .disabled: parts.append("系统代理偏好开")
+            }
+        }
+        return parts.joined(separator: " · ")
     }
 }

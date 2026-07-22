@@ -15,6 +15,36 @@ public enum AppMetadata {
     public static let controllerPort = 9_090
     public static let proxyDelayTestURL = "https://www.gstatic.com/generate_204"
     public static let proxyDelayTimeoutMilliseconds = 5_000
+    public static let repositoryURL = URL(string: "https://github.com/miofelix/ViaSix")!
+    public static let issuesURL = URL(string: "https://github.com/miofelix/ViaSix/issues")!
+    public static let fallbackVersion = "1.0.0"
+
+    /// Marketing version from the app bundle, with a package fallback for `swift run`.
+    public static var shortVersion: String {
+        if let value = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+            !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return value
+        }
+        return fallbackVersion
+    }
+
+    /// Build number when available.
+    public static var buildNumber: String? {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    public static var displayVersion: String {
+        if let buildNumber, buildNumber != shortVersion {
+            return "\(shortVersion) (\(buildNumber))"
+        }
+        return shortVersion
+    }
 
     public static func exitIPEndpoint(
         for mode: ExitIPDetectionMode,
