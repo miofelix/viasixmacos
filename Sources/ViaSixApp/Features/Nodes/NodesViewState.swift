@@ -220,8 +220,8 @@ extension NodesView {
 
     var applySelectionDisabled: Bool {
         guard let candidateSelection else { return true }
-        if model.usesIPv6RequiredTransport, IPv6Address(candidateSelection) == nil { return true }
-        guard model.state.proxySupportsNodeSelection else { return true }
+        if IPv6Address(candidateSelection) == nil { return true }
+        guard model.state.proxySupportsNodeSelection || routingModeIsDirect else { return true }
         guard model.state.speedTestResultsAreCurrent else { return true }
         guard case .idle = model.state.speedTest.phase else { return true }
         if candidateSelection == model.state.preferences.selectedIP { return true }
@@ -244,10 +244,10 @@ extension NodesView {
 
     var applySelectionHelp: String {
         guard let candidateSelection else { return "请先选择一个候选节点" }
-        if model.usesIPv6RequiredTransport, IPv6Address(candidateSelection) == nil {
-            return "IPv6 模式只能应用 IPv6 节点"
+        if IPv6Address(candidateSelection) == nil {
+            return "ViaSix 只能应用 IPv6 节点"
         }
-        guard model.state.proxySupportsNodeSelection else {
+        guard model.state.proxySupportsNodeSelection || routingModeIsDirect else {
             return "当前代理配置不支持直接应用测速节点"
         }
         guard model.state.speedTestResultsAreCurrent else { return "测速参数已变更，请重新测速" }
@@ -270,6 +270,10 @@ extension NodesView {
         case .stopped, .running, .failed:
             return model.state.isProxyRunning ? "应用节点并重新连接" : "应用所选节点"
         }
+    }
+
+    private var routingModeIsDirect: Bool {
+        model.state.localProxyConfiguration.routingMode == .direct
     }
 
     var reconnectConfirmationPresented: Binding<Bool> {

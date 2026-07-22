@@ -34,13 +34,6 @@ protocol ProxyCoreControlling: Sendable {
 
 extension MihomoController: ProxyCoreControlling {}
 
-protocol MihomoAPIControlling: Sendable {
-    func proxySelectionSnapshot() async throws -> MihomoProxySelectionSnapshot
-    func selectProxy(group: String, proxy: String) async throws
-}
-
-extension MihomoAPIClient: MihomoAPIControlling {}
-
 struct ProxyCoreControllerConfiguration: Sendable {
     let executableURL: URL
     let configURL: URL
@@ -51,7 +44,6 @@ struct ProxyCoreControllerConfiguration: Sendable {
 }
 
 typealias ProxyCoreControllerFactory = @Sendable (ProxyCoreControllerConfiguration) -> any ProxyCoreControlling
-typealias MihomoAPIClientFactory = @Sendable (MihomoAPIConfiguration) -> any MihomoAPIControlling
 
 extension AppBootstrapper: ProxyProfileReplacing {
     func replaceProfile(
@@ -110,26 +102,24 @@ final class AppModel {
         state.proxyConfigurationPhase == .ready && ipv6TransportReadinessIssue == nil
     }
 
-    var usesIPv6RequiredTransport: Bool {
-        state.localProxyConfiguration.ipv6TransportPolicy == .required
-    }
-
     var effectiveNetworkAccessUsesTun: Bool {
-        usesIPv6RequiredTransport
-            || state.localProxyConfiguration.networkAccessMode == .virtualInterface
+        state.localProxyConfiguration.networkAccessMode == .virtualInterface
     }
 
     var ipv6TransportReadinessIssue: String? {
-        guard usesIPv6RequiredTransport else { return nil }
-        let selected = state.preferences.selectedIP.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard IPv6Address(selected) != nil else {
-            return "IPv6 模式需要先选择有效的 IPv6 节点"
+        if state.localProxyConfiguration.routingMode != .direct {
+            let selected = state.preferences.selectedIP.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            guard IPv6Address(selected) != nil else {
+                return "IPv6 模式需要先选择有效的 IPv6 节点"
+            }
+            guard state.proxySupportsNodeSelection else {
+                return "当前配置无法注入 IPv6 节点，请更换为包含内联代理的配置"
+            }
         }
-        guard state.proxySupportsNodeSelection else {
-            return "当前配置无法注入 IPv6 节点，请更换内联配置或启用兼容模式"
-        }
-        guard canUseTunMode else {
-            return "IPv6 模式需要先准备虚拟网卡服务"
+        if effectiveNetworkAccessUsesTun, !canUseTunMode {
+            return "虚拟网卡模式需要先准备 TUN 服务"
         }
         return nil
     }
@@ -199,10 +189,6 @@ final class AppModel {
         routingModeTask != nil
     }
 
-    var isMihomoActionBusy: Bool {
-        mihomoActionTask != nil
-    }
-
     var currentConfigurationTestUnavailableReason: String? {
         if isShuttingDown { return "应用正在退出" }
         guard state.launchPhase == .ready else {
@@ -216,9 +202,7 @@ final class AppModel {
         if state.templateOperationPhase != .idle { return "代理配置操作进行中" }
         if selectionTask != nil { return "正在应用节点，请稍后再试" }
         if activeRunner != nil { return "另一项测速正在进行" }
-        if !usesIPv6RequiredTransport,
-            state.localProxyConfiguration.routingMode == .direct
-        {
+        if state.localProxyConfiguration.routingMode == .direct {
             return "直连模式不使用代理节点"
         }
         if !state.proxySupportsNodeSelection {
@@ -247,9 +231,12 @@ final class AppModel {
     }
 
     var proxyConfigurationIssue: String? {
-        if let issue = ipv6TransportReadinessIssue { return issue }
-        guard case .needsSetup(let message) = state.proxyConfigurationPhase else { return nil }
-        return message
+        if state.localProxyConfiguration.routingMode != .direct,
+            case .needsSetup(let message) = state.proxyConfigurationPhase
+        {
+            return message
+        }
+        return ipv6TransportReadinessIssue
     }
 
     var runtimeIntegrityIssue: String? {
@@ -339,7 +326,6 @@ final class AppModel {
     @ObservationIgnored private let systemProxyManager: any SystemProxyManaging
     @ObservationIgnored private let tunCoordinator: any TunModeCoordinating
     @ObservationIgnored private let proxyCoreControllerFactory: ProxyCoreControllerFactory
-    @ObservationIgnored private let mihomoAPIClientFactory: MihomoAPIClientFactory?
 
     @ObservationIgnored private var bootstrapTask: Task<Void, Never>?
     @ObservationIgnored private var runtimeTask: Task<Void, Never>?
@@ -362,14 +348,11 @@ final class AppModel {
     @ObservationIgnored private var tunMonitorTask: Task<Void, Never>?
     @ObservationIgnored private var activeTunMonitorID: UUID?
     @ObservationIgnored private var routingModeTask: Task<Void, Never>?
-    @ObservationIgnored private var mihomoMonitorTask: Task<Void, Never>?
-    @ObservationIgnored private var mihomoActionTask: Task<Void, Never>?
     @ObservationIgnored private var activeRunner: CfstRunner?
     @ObservationIgnored private var activeSpeedTestID: UUID?
     @ObservationIgnored private var activeConfigurationTestID: UUID?
     @ObservationIgnored private var activeProxyCore: (any ProxyCoreControlling)?
     @ObservationIgnored private var activeProxyCoreID: UUID?
-    @ObservationIgnored private var mihomoAPIClient: (any MihomoAPIControlling)?
     @ObservationIgnored private var proxyStopRequested = false
     @ObservationIgnored private var isShuttingDown = false
 
@@ -382,8 +365,7 @@ final class AppModel {
         profileReplacer: (any ProxyProfileReplacing)? = nil,
         systemProxyManager: (any SystemProxyManaging)? = nil,
         tunCoordinator: (any TunModeCoordinating)? = nil,
-        proxyCoreControllerFactory: ProxyCoreControllerFactory? = nil,
-        mihomoAPIClientFactory: MihomoAPIClientFactory? = nil
+        proxyCoreControllerFactory: ProxyCoreControllerFactory? = nil
     ) {
         self.paths = paths
         self.preferencesStore = preferencesStore
@@ -404,7 +386,6 @@ final class AppModel {
                     port: configuration.port
                 )
             }
-        self.mihomoAPIClientFactory = mihomoAPIClientFactory
         self.state = AppState(
             preferences: UserPreferences(parameters: .defaults(ipv6File: paths.ipv6List))
         )
@@ -417,8 +398,7 @@ final class AppModel {
             preferencesStore: PreferencesStore(fileURL: paths.preferences),
             bootstrapper: AppBootstrapper(paths: paths),
             runtimeManager: RuntimeComponentManager(paths: paths),
-            exitDetector: ExitIPDetector(),
-            mihomoAPIClientFactory: { MihomoAPIClient(configuration: $0) }
+            exitDetector: ExitIPDetector()
         )
     }
 
@@ -951,17 +931,12 @@ final class AppModel {
     }
 
     func setRoutingMode(_ mode: ProxyRoutingMode) {
-        guard !usesIPv6RequiredTransport else {
-            showNotice("IPv6 模式使用固定公网代理策略；请先启用兼容模式", style: .error)
-            return
-        }
         guard
             !isShuttingDown,
             state.launchPhase == .ready,
             routingModeTask == nil,
             systemProxyTask == nil,
             runtimeTask == nil,
-            mihomoActionTask == nil,
             state.templateOperationPhase == .idle,
             selectionTask == nil
         else { return }
@@ -1024,14 +999,6 @@ final class AppModel {
     }
 
     func setNetworkAccessMode(_ mode: NetworkAccessMode) {
-        guard !usesIPv6RequiredTransport else {
-            showNotice("IPv6 模式固定使用 TUN；请先启用兼容模式", style: .error)
-            return
-        }
-        if mode == .systemProxy {
-            setSystemProxyEnabled(true)
-            return
-        }
         guard
             !isShuttingDown,
             state.launchPhase == .ready,
@@ -1089,7 +1056,6 @@ final class AppModel {
                     case (.virtualInterface, false): "已启用 TUN 模式偏好"
                     case (.localProxy, true): "正在关闭 TUN 并切换到本地代理"
                     case (.localProxy, false): "已关闭 TUN 模式偏好"
-                    case (.systemProxy, _): "系统代理设置已更新"
                     }
                 showNotice(message, style: .success)
             } catch is CancellationError {
@@ -1111,10 +1077,6 @@ final class AppModel {
     }
 
     func setSystemProxyEnabled(_ enabled: Bool) {
-        guard !usesIPv6RequiredTransport else {
-            showNotice("IPv6 模式由 TUN 接管流量；系统代理仅在兼容模式可用", style: .error)
-            return
-        }
         guard
             !isShuttingDown,
             state.launchPhase == .ready,
@@ -1458,8 +1420,8 @@ final class AppModel {
     }
 
     func selectIP(_ ip: String) {
-        if usesIPv6RequiredTransport, IPv6Address(ip) == nil {
-            showNotice("IPv6 模式不能应用 IPv4 节点；请先启用兼容模式", style: .error)
+        if IPv6Address(ip) == nil {
+            showNotice("ViaSix 只能应用 IPv6 节点", style: .error)
             return
         }
         guard !isShuttingDown else { return }
@@ -1494,8 +1456,7 @@ final class AppModel {
 
         let shouldRestartProxy =
             state.isProxyRunning
-            && (usesIPv6RequiredTransport
-                || state.localProxyConfiguration.routingMode != .direct)
+            && state.localProxyConfiguration.routingMode != .direct
         if shouldRestartProxy {
             cancelExitIPDetection()
         }
@@ -1599,7 +1560,6 @@ final class AppModel {
                     await self?.receiveProxyCoreEvent(event, controllerID: controllerID)
                 }
                 guard activeProxyCoreID == controllerID else { return }
-                beginMihomoMonitoring()
                 try await applySystemProxyIfRequested(endpoint: proxyEndpoint)
                 guard activeProxyCoreID == controllerID, await controller.isRunning else {
                     throw AppModelError.proxyExitedDuringStart
@@ -1624,7 +1584,6 @@ final class AppModel {
                     state.proxyConfigurationPhase = .needsSetup(configError.localizedDescription)
                 }
                 state.proxyCorePhase = .failed(error.localizedDescription)
-                stopMihomoMonitoring()
                 appendLog(source: .proxy, level: .error, message: error.localizedDescription)
                 let recoveryAction: AppNotice.Action? =
                     error is MihomoConfigurationError ? .openSettings : nil
@@ -1701,7 +1660,6 @@ final class AppModel {
                     throw AppModelError.virtualInterfaceStartNotConfirmed
                 }
                 state.proxyCorePhase = .running
-                beginMihomoMonitoring()
                 beginTunStatusMonitoring()
                 try await applySystemProxyIfRequested(endpoint: endpoint)
                 appendLog(
@@ -1717,7 +1675,6 @@ final class AppModel {
                 await refreshTunState(recoverIfNeeded: false)
                 if state.tun.isRunning, state.tun.sessionOwnedByCurrentUser {
                     state.proxyCorePhase = .running
-                    beginMihomoMonitoring()
                     beginTunStatusMonitoring()
                     if state.localProxyConfiguration.systemProxyEnabled,
                         case .failed(let message) = state.systemProxyPhase
@@ -1735,7 +1692,6 @@ final class AppModel {
                 }
                 state.tun.sessionPhase = .failed(error.localizedDescription)
                 state.proxyCorePhase = .failed(error.localizedDescription)
-                stopMihomoMonitoring()
                 appendLog(
                     source: .proxy,
                     level: .error,
@@ -1798,7 +1754,6 @@ final class AppModel {
                 activeProxyCore = nil
                 activeProxyCoreID = nil
                 state.proxyCorePhase = .stopped
-                stopMihomoMonitoring()
                 appendLog(source: .proxy, level: .warning, message: "本地代理已停止")
                 showNotice("本地代理已停止")
                 refreshExitIPAfterNetworkChangeIfNeeded()
@@ -1846,7 +1801,6 @@ final class AppModel {
                 applyTunSnapshot(snapshot)
                 state.proxyCorePhase = .stopped
                 stopTunStatusMonitoring()
-                stopMihomoMonitoring()
                 appendLog(source: .proxy, level: .warning, message: "虚拟网卡已停止")
                 showNotice("虚拟网卡模式已停止")
                 refreshExitIPAfterNetworkChangeIfNeeded()
@@ -1855,7 +1809,6 @@ final class AppModel {
                 if state.tun.sessionPhase == .inactive {
                     state.proxyCorePhase = .stopped
                     stopTunStatusMonitoring()
-                    stopMihomoMonitoring()
                     return
                 }
                 state.proxyCorePhase = .failed(error.localizedDescription)
@@ -1968,35 +1921,6 @@ final class AppModel {
         state.notice = nil
     }
 
-    func refreshMihomoRuntime() {
-        guard let client = mihomoAPIClient, mihomoActionTask == nil else { return }
-        mihomoActionTask = Task { [weak self] in
-            guard let self else { return }
-            defer { mihomoActionTask = nil }
-            await fetchMihomoProxySelection(using: client, reportsErrors: true)
-        }
-    }
-
-    func selectProxy(group: String, proxy: String) {
-        guard !usesIPv6RequiredTransport else { return }
-        guard let client = mihomoAPIClient, mihomoActionTask == nil else { return }
-        state.mihomoRuntime.selectingProxyGroup = group
-        mihomoActionTask = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                state.mihomoRuntime.selectingProxyGroup = nil
-                mihomoActionTask = nil
-            }
-            do {
-                try await client.selectProxy(group: group, proxy: proxy)
-                await fetchMihomoProxySelection(using: client, reportsErrors: false)
-                showNotice("已将 \(group) 切换为 \(proxy)", style: .success)
-            } catch {
-                showNotice("切换代理失败：\(error.localizedDescription)", style: .error)
-            }
-        }
-    }
-
     @discardableResult
     func shutdown() async -> Bool {
         guard !isShuttingDown else { return false }
@@ -2020,8 +1944,6 @@ final class AppModel {
             tunOperationTask,
             tunMonitorTask,
             routingModeTask,
-            mihomoMonitorTask,
-            mihomoActionTask,
         ].compactMap { $0 }
         let pendingTemplateSaveTask = templateSaveTask
         pendingTasks.forEach { $0.cancel() }
@@ -2083,7 +2005,6 @@ final class AppModel {
         }
         await tunCoordinator.invalidate()
         stopTunStatusMonitoring()
-        stopMihomoMonitoring()
         state.templateOperationPhase = .idle
         if state.launchPhase == .ready {
             try? await preferencesStore.save(state.preferences)
@@ -2169,8 +2090,7 @@ final class AppModel {
                 proxySupportsNodeSelection = configuration.supportsNodeSelection
                 if let effectiveIP = configuration.effectiveIP {
                     preferences.selectedIP = effectiveIP
-                } else if configuration.local.ipv6TransportPolicy == .compatibility,
-                    configuration.local.routingMode != .direct,
+                } else if configuration.local.routingMode != .direct,
                     !configuration.supportsNodeSelection
                 {
                     preferences.selectedIP = ""
@@ -2209,11 +2129,8 @@ final class AppModel {
             state.launchPhase = .ready
             await refreshTunState(recoverIfNeeded: true)
             if state.tun.isRunning, state.tun.sessionOwnedByCurrentUser {
-                if localProxyConfiguration.ipv6TransportPolicy == .required
-                    || localProxyConfiguration.networkAccessMode == .virtualInterface
-                {
+                if localProxyConfiguration.networkAccessMode == .virtualInterface {
                     state.proxyCorePhase = .running
-                    beginMihomoMonitoring()
                     beginTunStatusMonitoring()
                     appendLog(source: .app, level: .success, message: "已接管现有虚拟网卡会话")
                     if localProxyConfiguration.systemProxyEnabled {
@@ -2398,9 +2315,11 @@ final class AppModel {
     private func applySelection(_ ip: String) async throws {
         let normalized = ip.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
-        guard try await bootstrapper.writeConfig(ip: normalized) else {
-            state.proxySupportsNodeSelection = false
-            throw AppModelError.nodeSelectionUnsupported
+        if state.localProxyConfiguration.routingMode != .direct {
+            guard try await bootstrapper.writeConfig(ip: normalized) else {
+                state.proxySupportsNodeSelection = false
+                throw AppModelError.nodeSelectionUnsupported
+            }
         }
         state.preferences.selectedIP = normalized
         invalidateConfigurationTestResult()
@@ -2415,9 +2334,7 @@ final class AppModel {
     private func updateNodeSelectionCapability(from profileData: Data) {
         let profileSupportsNodeSelection =
             (try? MihomoServerConfiguration(data: profileData).hasReplaceablePrimaryServer) == true
-        let isDirect =
-            !usesIPv6RequiredTransport
-            && state.localProxyConfiguration.routingMode == .direct
+        let isDirect = state.localProxyConfiguration.routingMode == .direct
         state.proxySupportsNodeSelection = !isDirect && profileSupportsNodeSelection
         guard !isDirect, !profileSupportsNodeSelection, !state.preferences.selectedIP.isEmpty else {
             return
@@ -2443,7 +2360,6 @@ final class AppModel {
         guard let controller = activeProxyCore, let controllerID = activeProxyCoreID else {
             throw AppModelError.proxyNotActive
         }
-        stopMihomoMonitoring()
         appendLog(source: .proxy, message: "节点已变更，正在重新连接本地代理")
         do {
             try await controller.restart { [weak self] event in
@@ -2452,13 +2368,11 @@ final class AppModel {
             guard activeProxyCoreID == controllerID else {
                 throw AppModelError.proxyExitedDuringRestart
             }
-            beginMihomoMonitoring()
             appendLog(source: .proxy, level: .success, message: "本地代理已应用新节点")
             refreshExitIPAfterNetworkChangeIfNeeded()
         } catch {
             if activeProxyCoreID == controllerID {
                 state.proxyCorePhase = .failed(error.localizedDescription)
-                stopMihomoMonitoring()
                 appendLog(
                     source: .proxy,
                     level: .error,
@@ -2474,7 +2388,6 @@ final class AppModel {
 
     private func restartTunSession() async throws {
         stopTunStatusMonitoring()
-        stopMihomoMonitoring()
         let selectedIP = state.preferences.selectedIP
             .trimmingCharacters(in: .whitespacesAndNewlines)
         do {
@@ -2496,7 +2409,6 @@ final class AppModel {
                 throw AppModelError.virtualInterfaceStartNotConfirmed
             }
             state.proxyCorePhase = .running
-            beginMihomoMonitoring()
             beginTunStatusMonitoring()
             appendLog(source: .proxy, level: .success, message: "虚拟网卡已应用最新配置")
             refreshExitIPAfterNetworkChangeIfNeeded()
@@ -2504,34 +2416,12 @@ final class AppModel {
             state.proxyCorePhase = .failed(error.localizedDescription)
             state.tun.sessionPhase = .failed(error.localizedDescription)
             stopTunStatusMonitoring()
-            stopMihomoMonitoring()
             appendLog(
                 source: .proxy,
                 level: .error,
                 message: "虚拟网卡重新启动失败：\(error.localizedDescription)"
             )
             throw error
-        }
-    }
-
-    private func beginMihomoMonitoring() {
-        stopMihomoMonitoring()
-        guard let mihomoAPIClientFactory else { return }
-        state.mihomoRuntime.phase = .loading
-        mihomoMonitorTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let configuration = try await bootstrapper.mihomoAPIConfiguration()
-                try Task.checkCancellation()
-                let client = mihomoAPIClientFactory(configuration)
-                mihomoAPIClient = client
-                await fetchMihomoProxySelection(using: client, reportsErrors: false)
-            } catch is CancellationError {
-                return
-            } catch {
-                guard !Task.isCancelled else { return }
-                state.mihomoRuntime.phase = .failed(error.localizedDescription)
-            }
         }
     }
 
@@ -2556,7 +2446,6 @@ final class AppModel {
                     else {
                         let detail = snapshot.lastError ?? "特权 TUN 会话已停止"
                         state.proxyCorePhase = .failed(detail)
-                        stopMihomoMonitoring()
                         await restoreSystemProxyAfterProxyFailure()
                         appendLog(source: .proxy, level: .error, message: detail)
                         showNotice("虚拟网卡异常停止：\(detail)", style: .error)
@@ -2585,36 +2474,6 @@ final class AppModel {
         tunMonitorTask = nil
     }
 
-    private func stopMihomoMonitoring() {
-        mihomoMonitorTask?.cancel()
-        mihomoMonitorTask = nil
-        mihomoActionTask?.cancel()
-        mihomoActionTask = nil
-        mihomoAPIClient = nil
-        state.mihomoRuntime = AppState.MihomoRuntimeState()
-    }
-
-    private func fetchMihomoProxySelection(
-        using client: any MihomoAPIControlling,
-        reportsErrors: Bool
-    ) async {
-        do {
-            let snapshot = try await client.proxySelectionSnapshot()
-            try Task.checkCancellation()
-            state.mihomoRuntime.snapshot = snapshot
-            state.mihomoRuntime.lastUpdatedAt = snapshot.fetchedAt
-            state.mihomoRuntime.phase = .available
-        } catch is CancellationError {
-            return
-        } catch {
-            if state.mihomoRuntime.snapshot == nil {
-                state.mihomoRuntime.phase = .failed(error.localizedDescription)
-            }
-            if reportsErrors {
-                showNotice("刷新代理选择失败：\(error.localizedDescription)", style: .error)
-            }
-        }
-    }
     private func receiveProxyCoreEvent(_ event: MihomoEvent, controllerID: UUID) {
         guard activeProxyCoreID == controllerID else { return }
         switch event {
@@ -2639,7 +2498,6 @@ final class AppModel {
             }
         case .unexpectedExit(let status, let output):
             cancelExitIPDetection()
-            stopMihomoMonitoring()
             let detail = output.isEmpty ? "状态码 \(status)" : output
             state.proxyCorePhase = .failed("本地代理意外退出：\(detail)")
             appendLog(source: .proxy, level: .error, message: "本地代理意外退出：\(detail)")
@@ -2665,9 +2523,7 @@ final class AppModel {
     }
 
     private func applySystemProxyIfRequested(endpoint: ProxyEndpoint) async throws {
-        guard !usesIPv6RequiredTransport,
-            state.localProxyConfiguration.systemProxyEnabled
-        else {
+        guard state.localProxyConfiguration.systemProxyEnabled else {
             try await restoreSystemProxyIfNeeded()
             if case .failed(let message) = state.systemProxyPhase {
                 throw AppModelError.systemProxyRecoveryRequired(message)

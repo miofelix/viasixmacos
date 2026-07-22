@@ -161,20 +161,6 @@ struct AppState: Equatable, Sendable {
         case saving
     }
 
-    enum MihomoRuntimePhase: Equatable, Sendable {
-        case unavailable
-        case loading
-        case available
-        case failed(String)
-    }
-
-    struct MihomoRuntimeState: Equatable, Sendable {
-        var phase: MihomoRuntimePhase = .unavailable
-        var snapshot: MihomoProxySelectionSnapshot?
-        var lastUpdatedAt: Date?
-        var selectingProxyGroup: String?
-    }
-
     struct SpeedTestState: Equatable, Sendable {
         var phase: SpeedTestPhase = .idle
         var current = 0
@@ -237,7 +223,6 @@ struct AppState: Equatable, Sendable {
     var templateOperationError: String?
     var proxyEndpoint = ProxyEndpoint()
     var localProxyConfiguration = LocalProxyConfiguration()
-    var mihomoRuntime = MihomoRuntimeState()
     var exit = ExitState()
     var logs: [AppLogEntry] = []
     var notice: AppNotice?

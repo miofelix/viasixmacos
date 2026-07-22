@@ -166,30 +166,25 @@ dist/client/
 └── viasix-mihomo.yaml
 ```
 
-推荐在 ViaSix 中导入 `dist/client/viasix-mihomo.yaml`。该 YAML 故意不包含节点 `server` 地址；ViaSix 会在导入时使用当前选中的优选 IP。导入前请先完成测速并选择一个当前节点。
+推荐在 ViaSix 中导入 `dist/client/viasix-mihomo.yaml`。该 YAML 故意不包含节点 `server` 地址；ViaSix 会在运行时注入当前选中的 IPv6 优选地址。导入前请先在“IPv6 优选”页面完成测速并应用一个节点。
 
-## 9. YAML 自动应用的 ViaSix 设置
+## 9. ViaSix 扩展字段
 
-无需再到“设置 → 本机代理”手动调整路由、UDP 或日志级别。生成的 YAML 包含以下 ViaSix 扩展：
+生成的 YAML 只使用以下 ViaSix 扩展声明节点地址来源：
 
 ```yaml
 x-viasix:
   version: 1
   primary-server: selected-ip
-  routing-mode: rule
-  udp-enabled: false
-  log-level: info
-  sniffing-enabled: true
-  bypass-private-networks: true
 ```
 
-导入时 ViaSix 会原子地应用这些低风险偏好，并把当前优选 IP 注入运行配置。节点模板本身仍不保存地址。
+ViaSix 不会从 YAML 覆盖本机设置。代理模式（规则、全局、直连）、系统代理和 TUN 虚拟网卡均在首页控制；系统代理与 TUN 相互独立，可以单独或同时开启。
 
-为避免配置文件静默扩大本机权限，YAML 不会覆盖监听地址、监听端口、Controller、系统代理、TUN 或 DNS。系统代理和 TUN 仍由使用者在验证普通 HTTPS 访问及出口 IP 后主动启用。
+Cloudflare Pages 模板中的 `udp: false` 是该 VLESS 节点自身的固定能力设置，不是 ViaSix 本机偏好。
 
 ## 10. 使用 Cloudflare 优选 IP
 
-在 ViaSix“节点”页面完成测速并选择 IPv4 或 IPv6 优选地址，然后导入 YAML。ViaSix 会把所选地址写入临时运行配置的 `server`，不会把它写回 YAML。
+在 ViaSix“IPv6 优选”页面完成测速并应用一个 IPv6 地址，然后导入 YAML。ViaSix 会把所选 IPv6 写入临时运行配置的 `server`，不会把它写回 YAML。IPv4 节点不会被接受。
 
 以下字段始终使用 Pages 域名，不随优选 IP 改变：
 
@@ -219,11 +214,11 @@ WebSocket path: /?ed=2560
 
 ### 域名和 WebSocket 正常，但 HTTPS 目标无法访问
 
-重新导入本目录生成的 YAML，并确认 ViaSix 的本机 UDP 状态已由配置显示为关闭。随后使用未托管在 Cloudflare 上的 HTTPS 站点测试。如果只有 Cloudflare 托管目标失败，通常是 Cloudflare TCP loop 限制；本实现不会使用 ProxyIP 绕过该限制。
+重新导入本目录生成的 YAML，并确认节点配置中的 `udp: false`。随后使用未托管在 Cloudflare 上的 HTTPS 站点测试。如果只有 Cloudflare 托管目标失败，通常是 Cloudflare TCP loop 限制；本实现不会使用 ProxyIP 绕过该限制。
 
 ### 导入时提示需要先选择当前节点
 
-这是预期行为。YAML 不提供 `server` 地址，ViaSix 必须从当前测速选择中注入一个 IPv4 或 IPv6 地址。先在“节点”页面测速并应用一个节点，再重新导入 YAML。
+这是预期行为。YAML 不提供 `server` 地址，ViaSix 必须从当前测速选择中注入一个 IPv6 地址。先在“IPv6 优选”页面测速并应用一个节点，再重新导入 YAML。
 
 ### 出口 IP 检测报 TLS 错误
 

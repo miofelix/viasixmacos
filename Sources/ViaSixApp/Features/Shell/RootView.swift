@@ -48,14 +48,11 @@ struct RootView: View {
             VStack(alignment: .leading, spacing: 7) {
                 Divider()
                 Label(
-                    model.usesIPv6RequiredTransport ? "IPv6 模式" : "兼容模式",
-                    systemImage: model.usesIPv6RequiredTransport
-                        ? "6.circle.fill" : "exclamationmark.triangle.fill"
+                    "IPv6 代理入口",
+                    systemImage: "6.circle.fill"
                 )
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(
-                    model.usesIPv6RequiredTransport ? VisualStyle.positive : .orange
-                )
+                .foregroundStyle(VisualStyle.positive)
 
                 if !model.state.preferences.selectedIP.isEmpty {
                     Text(model.state.preferences.selectedIP)

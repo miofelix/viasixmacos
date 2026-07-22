@@ -149,19 +149,11 @@ struct MihomoProfileEditorView: View {
                 .disabled(text.isEmpty || isSaving)
                 .help("复制 YAML 原文")
 
-                if draftAnalysis.canMigrate {
-                    Button("迁移为 YAML", systemImage: "arrow.triangle.2.circlepath") {
-                        migrateDraft()
-                    }
-                    .disabled(isSaving)
-                    .help("将可兼容的旧配置转换为 Mihomo YAML")
-                } else {
-                    Button("格式化", systemImage: "text.alignleft") {
-                        formatDraft()
-                    }
-                    .disabled(!draftAnalysis.canFormat || isSaving)
-                    .help("使用稳定的键名顺序和缩进格式化 YAML")
+                Button("格式化", systemImage: "text.alignleft") {
+                    formatDraft()
                 }
+                .disabled(!draftAnalysis.canFormat || isSaving)
+                .help("使用稳定的键名顺序和缩进格式化 YAML")
 
                 Button("重新载入", systemImage: "arrow.clockwise") {
                     requestReload()
@@ -199,22 +191,6 @@ struct MihomoProfileEditorView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        case .providerOnly:
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("节点来源")
-                    .font(.caption.weight(.medium))
-                Text("Proxy Provider")
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 10)
-                Text("节点由 Provider 管理，测速节点不会覆盖订阅中的服务器地址。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        case .legacyXrayMigratable, .legacyXrayMigrationFailed:
-            Text("旧配置不会直接写入 profile.yaml；仅在迁移成功后才能保存。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         case .empty, .invalidYAML, .invalidConfiguration:
             EmptyView()
         }
@@ -300,7 +276,7 @@ struct MihomoProfileEditorView: View {
                     || !hasUnsavedChanges
                     || !draftAnalysis.isValid
             )
-            .help(draftAnalysis.isValid ? "保存配置（⌘S）" : "修正或迁移配置后才能保存")
+            .help(draftAnalysis.isValid ? "保存配置（⌘S）" : "修正配置后才能保存")
         }
     }
 
@@ -345,9 +321,8 @@ struct MihomoProfileEditorView: View {
     private var draftStatusColor: Color {
         switch draftAnalysis.status {
         case .empty: .secondary
-        case .invalidYAML, .invalidConfiguration, .legacyXrayMigrationFailed: .orange
-        case .legacyXrayMigratable: .blue
-        case .inlineProxy, .providerOnly: .green
+        case .invalidYAML, .invalidConfiguration: .orange
+        case .inlineProxy: .green
         }
     }
 
@@ -423,18 +398,6 @@ struct MihomoProfileEditorView: View {
         }
     }
 
-    private func migrateDraft() {
-        do {
-            text = try MihomoProfileDraftAnalysis.migratedYAML(text)
-            if !hasExternalConflict {
-                saveError = nil
-            }
-            refreshDraftAnalysis()
-        } catch {
-            saveError = "迁移失败：\(error.localizedDescription)"
-        }
-    }
-
     private func copyDraft() {
         copyToPasteboard(text)
         didCopy = true
@@ -505,11 +468,8 @@ struct MihomoProfileDraftAnalysis: Equatable, Sendable {
     enum Status: Equatable, Sendable {
         case empty
         case inlineProxy(String)
-        case providerOnly
         case invalidYAML(String)
         case invalidConfiguration(String)
-        case legacyXrayMigratable(String)
-        case legacyXrayMigrationFailed(String)
     }
 
     let status: Status
@@ -518,39 +478,27 @@ struct MihomoProfileDraftAnalysis: Equatable, Sendable {
 
     var inlineServer: String? {
         switch status {
-        case .inlineProxy(let server), .legacyXrayMigratable(let server):
-            server
-        case .empty, .providerOnly, .invalidYAML, .invalidConfiguration,
-            .legacyXrayMigrationFailed:
-            nil
+        case .inlineProxy(let server): server
+        case .empty, .invalidYAML, .invalidConfiguration: nil
         }
     }
 
     var isValid: Bool {
         switch status {
-        case .inlineProxy, .providerOnly: true
-        case .empty, .invalidYAML, .invalidConfiguration, .legacyXrayMigratable,
-            .legacyXrayMigrationFailed:
-            false
+        case .inlineProxy: true
+        case .empty, .invalidYAML, .invalidConfiguration: false
         }
     }
 
     var canFormat: Bool { isValid }
 
-    var canMigrate: Bool {
-        if case .legacyXrayMigratable = status { true } else { false }
-    }
-
     var issue: String? {
         switch status {
         case .empty:
             "配置内容不能为空"
-        case .invalidYAML(let message), .invalidConfiguration(let message),
-            .legacyXrayMigrationFailed(let message):
+        case .invalidYAML(let message), .invalidConfiguration(let message):
             message
-        case .legacyXrayMigratable:
-            "检测到可兼容的旧版 Xray JSON，请先迁移为 Mihomo YAML。"
-        case .inlineProxy, .providerOnly:
+        case .inlineProxy:
             nil
         }
     }
@@ -559,11 +507,8 @@ struct MihomoProfileDraftAnalysis: Equatable, Sendable {
         switch status {
         case .empty: "等待配置"
         case .inlineProxy: "内联节点配置有效"
-        case .providerOnly: "Provider 配置有效"
         case .invalidYAML: "YAML 需要修正"
         case .invalidConfiguration: "配置需要修正"
-        case .legacyXrayMigratable: "可迁移旧配置"
-        case .legacyXrayMigrationFailed: "旧配置无法迁移"
         }
     }
 
@@ -571,10 +516,7 @@ struct MihomoProfileDraftAnalysis: Equatable, Sendable {
         switch status {
         case .empty: "doc.text"
         case .inlineProxy: "server.rack"
-        case .providerOnly: "shippingbox"
-        case .invalidYAML, .invalidConfiguration, .legacyXrayMigrationFailed:
-            "exclamationmark.circle.fill"
-        case .legacyXrayMigratable: "arrow.triangle.2.circlepath"
+        case .invalidYAML, .invalidConfiguration: "exclamationmark.circle.fill"
         }
     }
 
@@ -595,11 +537,13 @@ struct MihomoProfileDraftAnalysis: Equatable, Sendable {
             if configuration.requiresSelectedPrimaryServer {
                 return Self(status: .inlineProxy("当前优选节点（运行时注入）"))
             }
-            return Self(status: .providerOnly)
+            return Self(
+                status: .invalidConfiguration("ViaSix 需要包含可注入 IPv6 地址的内联代理")
+            )
         } catch let error as MihomoConfigurationError {
             switch error {
             case .legacyXrayConfiguration:
-                return inspectLegacyXray(data)
+                return Self(status: .invalidConfiguration("不再支持旧版 Xray JSON，请使用 Mihomo YAML"))
             case .invalidUTF8, .invalidYAML:
                 return Self(status: .invalidYAML(error.localizedDescription))
             default:
@@ -621,21 +565,4 @@ struct MihomoProfileDraftAnalysis: Equatable, Sendable {
         String(decoding: try canonicalData(text), as: UTF8.self)
     }
 
-    static func migratedYAML(_ text: String) throws -> String {
-        guard let data = text.data(using: .utf8) else {
-            throw MihomoConfigurationError.invalidUTF8
-        }
-        let migrated = try LegacyXrayConfigurationMigrator.serverConfiguration(from: data)
-        return String(decoding: try migrated.formattedData(), as: UTF8.self)
-    }
-
-    private static func inspectLegacyXray(_ data: Data) -> Self {
-        do {
-            let migrated = try LegacyXrayConfigurationMigrator.serverConfiguration(from: data)
-            let server = MihomoServerConfiguration.proxyServerAddress(in: migrated.data) ?? "内联节点"
-            return Self(status: .legacyXrayMigratable(server))
-        } catch {
-            return Self(status: .legacyXrayMigrationFailed(error.localizedDescription))
-        }
-    }
 }

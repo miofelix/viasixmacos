@@ -105,11 +105,6 @@ public enum MihomoRuntimeProjection: Equatable, Sendable {
     case privilegedTun
 }
 
-public enum MihomoRuntimePolicy: String, Codable, Equatable, Sendable {
-    case compatibility
-    case ipv6Required = "ipv6-required"
-}
-
 public struct MihomoTunConfiguration: Codable, Equatable, Sendable {
     public var stack: MihomoTunStack
     public var strictRoute: Bool
@@ -140,7 +135,6 @@ public struct MihomoRuntimeOptions: Codable, Equatable, Sendable {
     public var bypassPrivateNetworks: Bool
     public var externalController: MihomoExternalControllerConfiguration?
     public var tun: MihomoTunConfiguration?
-    public var runtimePolicy: MihomoRuntimePolicy
 
     public init(
         listenAddress: String = "127.0.0.1",
@@ -152,8 +146,7 @@ public struct MihomoRuntimeOptions: Codable, Equatable, Sendable {
         sniffingEnabled: Bool = true,
         bypassPrivateNetworks: Bool = true,
         externalController: MihomoExternalControllerConfiguration? = nil,
-        tun: MihomoTunConfiguration? = nil,
-        runtimePolicy: MihomoRuntimePolicy = .compatibility
+        tun: MihomoTunConfiguration? = nil
     ) {
         self.listenAddress = listenAddress
         self.mixedPort = mixedPort
@@ -165,7 +158,6 @@ public struct MihomoRuntimeOptions: Codable, Equatable, Sendable {
         self.bypassPrivateNetworks = bypassPrivateNetworks
         self.externalController = externalController
         self.tun = tun
-        self.runtimePolicy = runtimePolicy
     }
 }
 

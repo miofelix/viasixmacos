@@ -20,11 +20,11 @@ final class DefaultResourceInstallerTests: XCTestCase {
             LocalProxyConfiguration.self,
             from: Data(contentsOf: paths.localProxyConfig)
         )
-        XCTAssertEqual(local.networkAccessMode, .localProxy)
+        XCTAssertEqual(local.networkAccessMode, .virtualInterface)
         XCTAssertEqual(local.logLevel, .warning)
     }
 
-    func testInstallUpgradesOnlyExactLegacyLocalDefaults() throws {
+    func testInstallPreservesLegacyLocalConfigurationWithoutMigratingIt() throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
         try paths.prepare()
@@ -47,18 +47,15 @@ final class DefaultResourceInstallerTests: XCTestCase {
         try DefaultResourceInstaller.install(
             into: paths,
             legacyDigests: .init(
-                ipv4: "not-installed",
-                localProxy: RuntimeSHA256.hexDigest(of: legacy)
+                ipv4: "not-installed"
             )
         )
 
         let installed = try Data(contentsOf: paths.localProxyConfig)
-        XCTAssertNotEqual(installed, legacy)
-        let local = try JSONDecoder().decode(LocalProxyConfiguration.self, from: installed)
-        XCTAssertEqual(local.networkAccessMode, .localProxy)
-        XCTAssertEqual(local.logLevel, .warning)
-        XCTAssertFalse(local.systemProxyEnabled)
-        XCTAssertTrue(String(decoding: installed, as: UTF8.self).contains("systemProxyEnabled"))
+        XCTAssertEqual(installed, legacy)
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(LocalProxyConfiguration.self, from: installed)
+        )
     }
 
     func testInstallPreservesCustomizedLocalConfigurationAndLegacyInputs() throws {
@@ -70,7 +67,8 @@ final class DefaultResourceInstallerTests: XCTestCase {
                 port: 20_280,
                 logLevel: .debug,
                 routingMode: .global,
-                networkAccessMode: .systemProxy
+                networkAccessMode: .localProxy,
+                systemProxyEnabled: true
             )
         )
         let legacyServer = Data("custom legacy server".utf8)

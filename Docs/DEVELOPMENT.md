@@ -218,7 +218,7 @@ CloudflareSpeedTest 是 XIU2 维护的独立第三方项目，并非 Cloudflare 
 - `preferences.json`：`Codable` 用户偏好；新增字段应提供向后兼容默认值。`mihomoPath` 与历史 `xrayPath` 不兼容，不能自动复制。
 - `ip.txt` / `ipv6.txt`：复制到用户目录后的地址源。
 - `profile.yaml`：用户维护的 Mihomo 节点、Provider、代理组和规则，不包含本机监听设置。
-- `local-proxy.json`：本机监听地址、端口、UDP、嗅探、私网直连、代理模式、独立的系统代理开关和 TUN 运行方式。
+- `local-proxy.json`：版本化的本机监听地址、端口、UDP、嗅探、私网直连、代理模式、独立的系统代理开关和 TUN 运行方式；字段缺失或旧版本直接拒绝。
 - `Mihomo/config.yaml`：按当前模式生成的运行配置，不是配置的唯一来源。
 - `Mihomo/providers/` / `Mihomo/rules/`：HTTP Provider 的受控相对路径和缓存。
 - `system-proxy.json`：系统代理会话恢复快照。
@@ -230,40 +230,31 @@ ViaSix 会把目录权限收紧为 `0700`，把偏好、地址列表和代理配
 
 ## 默认资源与迁移
 
-`DefaultResourceInstaller` 负责首次复制和安全迁移：
+`DefaultResourceInstaller` 负责首次复制默认资源，并只对内置地址列表执行精确更新：
 
 - 目标文件不存在时，从 bundle 复制 `ip.txt`、`ipv6.txt` 和 `local-proxy.json`。
-- 已存在文件只有在 SHA-256 与历史默认版本完全一致时才会迁移。
-- 用户修改过的地址列表和本机设置必须保留。
-- 旧版 `server.json` 优先于 `template.json` 作为只读迁移输入；支持的单节点 Xray JSON 转换为 Mihomo `profile.yaml`。
-- 旧 JSON 保留用于用户回退和人工核对，不作为当前运行配置。
-- 旧 `config.json` 是可丢弃派生文件；当前运行配置只写入 `Data/Mihomo/config.yaml`。
+- 已存在的地址列表只有在 SHA-256 与历史默认版本完全一致时才会更新。
+- 用户修改过的地址列表和所有已有 `local-proxy.json` 必须原样保留；旧本机配置不会自动迁移，加载时会因 schema 不匹配而失败。
+- 旧 `server.json`、`template.json` 和 `config.json` 不作为迁移输入或当前运行配置。
 
-增加新的默认资源迁移时，应：
+更新内置地址列表时，应：
 
 1. 固定历史资源的准确哈希。
-2. 为完全匹配、用户已修改、目标缺失和派生文件清理分别增加测试。
+2. 为完全匹配、用户已修改和目标缺失分别增加测试。
 3. 不使用文件名、修改时间或模糊内容匹配覆盖用户文件。
-4. 保证失败可重试，并且不会执行旧内核路径。
+4. 不为旧代理配置增加转换或静默默认值。
 
 ## Mihomo 配置流程
 
-`MihomoServerConfiguration` 接受 UTF-8 YAML，限制文档大小、深度和复杂度，并只保留服务器侧键：
+`MihomoServerConfiguration` 接受 UTF-8 YAML，限制文档大小、深度和复杂度。导入内容只是节点来源；运行时会投影为单 IPv6 主代理，不保留导入的 Provider、代理组和规则。
 
-- `proxies`
-- `proxy-providers`
-- `proxy-groups`
-- `rules`
-- `rule-providers`
-- `sub-rules`
-
-本机监听、端口、日志、嗅探、UDP、代理模式和网络接入方式必须来自 `local-proxy.json`，不能由导入的服务器 YAML 覆盖。所有运行配置固定 `allow-lan: false`，监听地址必须是回环地址。
+本机监听、端口、日志、嗅探、UDP、代理模式和网络接入方式必须来自 `local-proxy.json`，不能由导入的服务器 YAML 覆盖。所有运行配置固定 `allow-lan: false`，监听地址必须是回环地址。`x-viasix` 只接受 `version: 1` 与 `primary-server: selected-ip`。
 
 配置流向：
 
 ```text
 profile.yaml + local-proxy.json + 当前模式
-    + 可选的当前测速节点
+    + 当前 IPv6 测速节点（rule/global）
     ↓
 MihomoServerConfiguration.runtimeConfiguration
     ↓
@@ -276,14 +267,13 @@ Mihomo 用户态运行
 
 重要语义：
 
-- `rule` / `global` 需要内联 `proxies` 或 `proxy-providers`；Provider-only 配置不需要当前测速节点。
-- 当前测速节点存在时，只替换第一个内联节点的 `server`；没有当前节点时保留原地址。
+- `rule` / `global` 需要至少一个内联代理和当前 IPv6 测速节点；只保留第一个可注入地址的代理，并替换其 `server`。
+- Provider-only、IPv4 节点和缺少当前 IPv6 节点的配置直接拒绝，不做旧配置迁移或降级运行。
+- `rule` 只生成私网、回环、链路本地直连规则和最后的 `MATCH,<主代理>`；`global` 只生成单主代理并使用 Mihomo 全局模式。
 - `direct` 不复制代理、Provider、代理组或远端规则，生成 `MATCH,DIRECT`，避免订阅刷新和上游握手。
-- HTTP Provider 的 `path` 被改写到 `providers/` 或 `rules/`；inline Provider 不落任意外部路径；其他 Provider 类型被拒绝。
-- 表单支持 VLESS、VMess、Trojan 和 Shadowsocks；高级编辑器用于多节点、Provider、代理组和规则。
-- 旧 Xray JSON 仅通过 `LegacyXrayConfigurationMigrator` 转换受支持的单节点结构，不直接交给 Mihomo。
+- 表单支持 VLESS、VMess、Trojan 和 Shadowsocks；高级编辑器可编辑导入 YAML，但实际运行仍按上述单 IPv6 主代理语义投影。
 
-修改配置模型时，应覆盖原生 YAML 往返、Provider-only、内联节点覆盖、无节点保留、direct 去远端依赖、旧 JSON 迁移失败和 Mihomo 自身 `-t` 校验。
+修改配置模型时，应覆盖原生 YAML 往返、Provider-only/IPv4/无节点拒绝、rule/global 单 IPv6 代理投影、direct 去远端依赖、特权 envelope 往返和 Mihomo 自身 `-t` 校验。
 
 ## 进程与并发约定
 

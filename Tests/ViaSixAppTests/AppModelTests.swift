@@ -8,7 +8,7 @@ import XCTest
 
 @MainActor
 final class AppModelTests: XCTestCase {
-    func testIPv6RequiredModeBlocksStartupWithoutIPv6SelectionOrTunReadiness() async throws {
+    func testIPv6RuntimeBlocksStartupWithoutIPv6SelectionOrTunReadiness() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
         let store = PreferencesStore(fileURL: paths.preferences)
@@ -31,7 +31,6 @@ final class AppModelTests: XCTestCase {
 
         model.start()
         try await waitUntilReady(model)
-        XCTAssertTrue(model.usesIPv6RequiredTransport)
         XCTAssertEqual(model.ipv6TransportReadinessIssue, "IPv6 模式需要先选择有效的 IPv6 节点")
 
         model.startProxy()
@@ -42,7 +41,7 @@ final class AppModelTests: XCTestCase {
         model.selectIP("2606:4700::10")
         try await waitUntil { model.switchingIP == nil }
         XCTAssertEqual(model.state.preferences.selectedIP, "2606:4700::10")
-        XCTAssertEqual(model.ipv6TransportReadinessIssue, "IPv6 模式需要先准备虚拟网卡服务")
+        XCTAssertEqual(model.ipv6TransportReadinessIssue, "虚拟网卡模式需要先准备 TUN 服务")
 
         model.startProxy()
         try await Task.sleep(for: .milliseconds(40))
@@ -51,7 +50,7 @@ final class AppModelTests: XCTestCase {
         await model.shutdown()
     }
 
-    func testIPv6RequiredModeBlocksProviderOnlyProfile() async throws {
+    func testIPv6RuntimeBlocksProviderOnlyProfile() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
         let store = PreferencesStore(fileURL: paths.preferences)
@@ -77,8 +76,8 @@ final class AppModelTests: XCTestCase {
 
         XCTAssertFalse(model.state.proxySupportsNodeSelection)
         XCTAssertEqual(
-            model.ipv6TransportReadinessIssue,
-            "当前配置无法注入 IPv6 节点，请更换内联配置或启用兼容模式"
+            model.proxyConfigurationIssue,
+            MihomoConfigurationError.ipv6ManagedProfileRequired.localizedDescription
         )
         model.startProxy()
         try await Task.sleep(for: .milliseconds(40))
@@ -90,6 +89,7 @@ final class AppModelTests: XCTestCase {
     func testSystemProxyCanToggleWhileTunKeepsRunning() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
+        let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
         try await bootstrapper.replaceProfile(with: validProfile(), selectedIP: "2606::1")
@@ -97,10 +97,17 @@ final class AppModelTests: XCTestCase {
             with: LocalProxyConfiguration(networkAccessMode: .virtualInterface),
             selectedIP: "2606::1"
         )
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                selectedIP: "2606::1"
+            )
+        )
         let systemProxy = ControlledSystemProxyManager()
         let tunCoordinator = ControlledTunModeCoordinator()
         let model = makeModel(
             paths: paths,
+            store: store,
             bootstrapper: bootstrapper,
             systemProxyManager: systemProxy,
             tunCoordinator: tunCoordinator
@@ -153,6 +160,7 @@ final class AppModelTests: XCTestCase {
     func testSystemProxyAndTunCanRunTogetherAndStopCleanly() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
+        let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
         try await bootstrapper.replaceProfile(with: validProfile(), selectedIP: "2606::1")
@@ -163,10 +171,17 @@ final class AppModelTests: XCTestCase {
             ),
             selectedIP: "2606::1"
         )
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                selectedIP: "2606::1"
+            )
+        )
         let systemProxy = ControlledSystemProxyManager()
         let tunCoordinator = ControlledTunModeCoordinator()
         let model = makeModel(
             paths: paths,
+            store: store,
             bootstrapper: bootstrapper,
             systemProxyManager: systemProxy,
             tunCoordinator: tunCoordinator
@@ -210,7 +225,10 @@ final class AppModelTests: XCTestCase {
         try await bootstrapper.prepareDefaults()
         try await bootstrapper.replaceProfile(with: validProfile(), selectedIP: "2606::1")
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
-            with: LocalProxyConfiguration(systemProxyEnabled: true),
+            with: LocalProxyConfiguration(
+                networkAccessMode: .localProxy,
+                systemProxyEnabled: true
+            ),
             selectedIP: "2606::1"
         )
         let executableURL = try makeExecutable(in: paths)
@@ -278,6 +296,7 @@ final class AppModelTests: XCTestCase {
     {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
+        let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
         try await bootstrapper.replaceProfile(with: validProfile(), selectedIP: "2606::1")
@@ -290,9 +309,16 @@ final class AppModelTests: XCTestCase {
             ),
             selectedIP: "2606::1"
         )
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                selectedIP: "2606::1"
+            )
+        )
         let tunCoordinator = ControlledTunModeCoordinator()
         let model = makeModel(
             paths: paths,
+            store: store,
             bootstrapper: bootstrapper,
             tunCoordinator: tunCoordinator
         )
@@ -535,7 +561,7 @@ final class AppModelTests: XCTestCase {
         let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
+        try await useLocalProxyMode(bootstrapper)
         try await bootstrapper.replaceProfile(with: validProfile())
         try FileManager.default.removeItem(at: paths.generatedConfig)
         try await store.save(
@@ -659,18 +685,27 @@ final class AppModelTests: XCTestCase {
     func testBootstrapUsesProxyEndpointFromLocalConfiguration() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
+        let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
+        try await useLocalProxyMode(bootstrapper)
         try await bootstrapper.replaceProfile(with: validProfile())
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
             with: LocalProxyConfiguration(
                 listenAddress: "127.0.0.2",
-                port: 18_080
+                port: 18_080,
+                networkAccessMode: .localProxy
+            ),
+            selectedIP: "2606:4700::100"
+        )
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                selectedIP: "2606:4700::100"
             )
         )
 
-        let model = makeModel(paths: paths, bootstrapper: bootstrapper)
+        let model = makeModel(paths: paths, store: store, bootstrapper: bootstrapper)
         model.start()
         try await waitUntilReady(model)
 
@@ -683,6 +718,7 @@ final class AppModelTests: XCTestCase {
     func testBootstrapRebuildsGeneratedConfigWhenProfileDetailsChange() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
+        let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
         let firstProfile = validProfile(
@@ -706,8 +742,14 @@ final class AppModelTests: XCTestCase {
             path: "/second"
         )
         try secondProfile.write(to: paths.profileConfig, options: .atomic)
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                selectedIP: "2606::5"
+            )
+        )
 
-        let model = makeModel(paths: paths, bootstrapper: bootstrapper)
+        let model = makeModel(paths: paths, store: store, bootstrapper: bootstrapper)
         model.start()
         try await waitUntilReady(model)
 
@@ -716,7 +758,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.state.proxyEndpoint, ProxyEndpoint(host: "127.0.0.3", port: 18_081))
         XCTAssertEqual(
             MihomoServerConfiguration.proxyServerAddress(in: generatedData),
-            "second-origin.example.net"
+            "2606::5"
         )
         XCTAssertTrue(generated.contains("22de5d8d-17f7-40e8-a83f-567ae87c865a"))
         XCTAssertTrue(generated.contains("second.example.net"))
@@ -731,7 +773,7 @@ final class AppModelTests: XCTestCase {
         let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
+        try await useLocalProxyMode(bootstrapper)
 
         let executableURL = paths.root.appendingPathComponent("mihomo-test")
         let invocationMarkerURL = paths.root.appendingPathComponent("mihomo-invoked.txt")
@@ -779,7 +821,10 @@ final class AppModelTests: XCTestCase {
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
-            with: LocalProxyConfiguration(routingMode: .direct)
+            with: LocalProxyConfiguration(
+                routingMode: .direct,
+                networkAccessMode: .localProxy
+            )
         )
 
         let legacyExecutable = paths.root.appendingPathComponent("xray-test")
@@ -826,7 +871,7 @@ final class AppModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: paths.root) }
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
+        try await useLocalProxyMode(bootstrapper)
         let model = makeModel(paths: paths, bootstrapper: bootstrapper)
         model.start()
         try await waitUntilReady(model)
@@ -857,9 +902,12 @@ final class AppModelTests: XCTestCase {
         let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
+        try await useLocalProxyMode(bootstrapper)
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
-            with: LocalProxyConfiguration(routingMode: .direct),
+            with: LocalProxyConfiguration(
+                routingMode: .direct,
+                networkAccessMode: .localProxy
+            ),
             selectedIP: nil
         )
         let executableURL = try makeExecutable(in: paths)
@@ -922,19 +970,19 @@ final class AppModelTests: XCTestCase {
         await model.shutdown()
     }
 
-    func testProviderOnlyProfileStartsWithoutSelectedIP() async throws {
+    func testProviderOnlyProfileIsBlocked() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
         let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
-        try await bootstrapper.replaceProfile(with: providerOnlyProfile())
+        try await useLocalProxyMode(bootstrapper)
+        try providerOnlyProfile().write(to: paths.profileConfig, options: .atomic)
         let executableURL = try makeExecutable(in: paths)
         try await store.save(
             UserPreferences(
                 parameters: .defaults(ipv6File: paths.ipv6List),
-                selectedIP: "",
+                selectedIP: "2606::30",
                 mihomoPath: executableURL.path
             ))
         let proxyCore = ControlledMihomoController()
@@ -947,39 +995,22 @@ final class AppModelTests: XCTestCase {
 
         model.start()
         try await waitUntilReady(model)
-        XCTAssertTrue(model.isProxyConfigurationReady)
+        XCTAssertFalse(model.isProxyConfigurationReady)
+        XCTAssertEqual(
+            model.proxyConfigurationIssue,
+            MihomoConfigurationError.ipv6ManagedProfileRequired.localizedDescription
+        )
 
         model.startProxy()
-        try await waitUntil { model.state.proxyCorePhase == .running }
-
-        XCTAssertEqual(model.state.preferences.selectedIP, "")
-        let generated = String(
-            decoding: try Data(contentsOf: paths.generatedConfig),
-            as: UTF8.self
-        )
-        XCTAssertTrue(generated.contains("proxy-providers:"))
-        XCTAssertFalse(generated.contains("2606::"))
-
-        model.selectIP("2606::30")
         try await Task.sleep(for: .milliseconds(50))
-
-        XCTAssertNil(model.switchingIP)
-        XCTAssertEqual(model.state.preferences.selectedIP, "")
-        let restartCount = await proxyCore.restartCount
-        XCTAssertEqual(restartCount, 0)
-        XCTAssertEqual(
-            model.state.notice?.message,
-            AppModelError.nodeSelectionUnsupported.localizedDescription
-        )
-        XCTAssertFalse(model.state.logs.contains { $0.message.contains("已切换节点：2606::30") })
-        let persisted = try await store.load(
-            defaults: UserPreferences(parameters: .defaults(ipv6File: paths.ipv6List))
-        )
-        XCTAssertEqual(persisted.preferences.selectedIP, "")
+        XCTAssertEqual(model.state.proxyCorePhase, .stopped)
+        let startCount = await proxyCore.startCount
+        XCTAssertEqual(startCount, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.generatedConfig.path))
         await model.shutdown()
     }
 
-    func testInlineProfileWithoutSelectedIPKeepsServerAndPassesMihomoLaunchConfiguration()
+    func testInlineHostnameProfileWithoutSelectedIPv6IsBlocked()
         async throws
     {
         let paths = makePaths()
@@ -987,14 +1018,18 @@ final class AppModelTests: XCTestCase {
         let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
-        try await bootstrapper.replaceProfile(with: validProfile(address: "origin.example"))
+        try await useLocalProxyMode(bootstrapper)
+        try validProfile(address: "origin.example").write(
+            to: paths.profileConfig,
+            options: .atomic
+        )
         let local = LocalProxyConfiguration(
             listenAddress: "127.0.0.4",
             port: 19_090,
-            routingMode: .rule
+            routingMode: .rule,
+            networkAccessMode: .localProxy
         )
-        _ = try await bootstrapper.replaceLocalProxyConfiguration(with: local)
+        try JSONEncoder.pretty.encode(local).write(to: paths.localProxyConfig, options: .atomic)
         let executableURL = try makeExecutable(in: paths)
         try await store.save(
             UserPreferences(
@@ -1016,120 +1051,18 @@ final class AppModelTests: XCTestCase {
 
         model.start()
         try await waitUntilReady(model)
+        XCTAssertFalse(model.isProxyConfigurationReady)
+        XCTAssertEqual(
+            model.proxyConfigurationIssue,
+            MihomoConfigurationError.selectedNodeMustBeIPv6.localizedDescription
+        )
         model.startProxy()
-        try await waitUntil { model.state.proxyCorePhase == .running }
-
+        try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(model.state.preferences.selectedIP, "")
         XCTAssertTrue(model.state.proxySupportsNodeSelection)
-        XCTAssertEqual(
-            MihomoServerConfiguration.proxyServerAddress(
-                in: try Data(contentsOf: paths.generatedConfig)
-            ),
-            "origin.example"
-        )
-        let configuration = try XCTUnwrap(recorder.configuration)
-        XCTAssertEqual(configuration.executableURL, executableURL)
-        XCTAssertEqual(configuration.configURL, paths.generatedConfig)
-        XCTAssertEqual(configuration.homeURL, paths.mihomoHome)
-        XCTAssertEqual(configuration.host, "127.0.0.4")
-        XCTAssertEqual(configuration.port, 19_090)
-        XCTAssertEqual(configuration.environment, [:])
-        await model.shutdown()
-    }
-
-    func testMihomoProxySelectionRefreshesAfterProxyRestart() async throws {
-        let paths = makePaths()
-        defer { try? FileManager.default.removeItem(at: paths.root) }
-        let store = PreferencesStore(fileURL: paths.preferences)
-        let bootstrapper = AppBootstrapper(paths: paths)
-        try await bootstrapper.prepareDefaults()
-        _ = try await bootstrapper.replaceLocalProxyConfiguration(
-            with: LocalProxyConfiguration(routingMode: .direct)
-        )
-        let executableURL = try makeExecutable(in: paths)
-        try await store.save(
-            UserPreferences(
-                parameters: .defaults(ipv6File: paths.ipv6List),
-                mihomoPath: executableURL.path
-            ))
-        let proxyCore = ControlledMihomoController(restartDelay: .milliseconds(1_200))
-        let apiClient = ControlledMihomoAPIClient()
-        let model = makeModel(
-            paths: paths,
-            store: store,
-            bootstrapper: bootstrapper,
-            proxyCoreControllerFactory: { _ in proxyCore },
-            mihomoAPIClientFactory: { _ in apiClient }
-        )
-
-        model.start()
-        try await waitUntilReady(model)
-        model.startProxy()
-        try await waitUntilAsync {
-            await apiClient.snapshotCount > 0 && model.state.mihomoRuntime.phase == .available
-        }
-        let snapshotCountBeforeRestart = await apiClient.snapshotCount
-
-        model.restartProxy()
-        try await waitUntilAsync {
-            let restarted = await proxyCore.restartCount == 1
-            let fetchedAgain = await apiClient.snapshotCount > snapshotCountBeforeRestart
-            return restarted
-                && fetchedAgain
-                && model.state.proxyCorePhase == .running
-                && model.state.mihomoRuntime.phase == .available
-        }
-
-        await model.shutdown()
-    }
-
-    func testCompatibilityModeCanSelectProxyGroup() async throws {
-        let paths = makePaths()
-        defer { try? FileManager.default.removeItem(at: paths.root) }
-        let store = PreferencesStore(fileURL: paths.preferences)
-        let bootstrapper = AppBootstrapper(paths: paths)
-        try await bootstrapper.prepareDefaults()
-        _ = try await bootstrapper.replaceLocalProxyConfiguration(
-            with: LocalProxyConfiguration(routingMode: .direct)
-        )
-        let executableURL = try makeExecutable(in: paths)
-        try await store.save(
-            UserPreferences(
-                parameters: .defaults(ipv6File: paths.ipv6List),
-                mihomoPath: executableURL.path
-            ))
-        let apiClient = ControlledMihomoAPIClient(
-            proxyGroups: [
-                MihomoProxyGroup(
-                    name: "GLOBAL",
-                    type: "Selector",
-                    selected: "edge-a",
-                    candidates: ["edge-a", "edge-b"]
-                )
-            ]
-        )
-        let proxyCore = ControlledMihomoController()
-        let model = makeModel(
-            paths: paths,
-            store: store,
-            bootstrapper: bootstrapper,
-            proxyCoreControllerFactory: { _ in proxyCore },
-            mihomoAPIClientFactory: { _ in apiClient }
-        )
-
-        model.start()
-        try await waitUntilReady(model)
-        model.startProxy()
-        try await waitUntil {
-            model.state.mihomoRuntime.phase == .available
-        }
-
-        model.selectProxy(group: "GLOBAL", proxy: "edge-b")
-        try await waitUntilAsync {
-            await apiClient.selections == ["GLOBAL=edge-b"]
-                && model.state.mihomoRuntime.snapshot?.proxyGroups.first?.selected == "edge-b"
-        }
-
+        XCTAssertEqual(model.state.proxyCorePhase, .stopped)
+        XCTAssertNil(recorder.configuration)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.generatedConfig.path))
         await model.shutdown()
     }
 
@@ -1139,8 +1072,11 @@ final class AppModelTests: XCTestCase {
         let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
-        try await bootstrapper.replaceProfile(with: twoProxyProfile())
+        try await useLocalProxyMode(bootstrapper)
+        try await bootstrapper.replaceProfile(
+            with: twoProxyProfile(),
+            selectedIP: "2606::20"
+        )
         try FileManager.default.removeItem(at: paths.generatedConfig)
         try await store.save(
             UserPreferences(
@@ -1163,7 +1099,7 @@ final class AppModelTests: XCTestCase {
             "2606::20"
         )
         XCTAssertTrue(generated.contains("2606::20"))
-        XCTAssertTrue(generated.contains("second-origin.example"))
+        XCTAssertFalse(generated.contains("second-origin.example"))
         XCTAssertFalse(generated.contains("server: first-origin.example"))
         await model.shutdown()
     }
@@ -1177,7 +1113,8 @@ final class AppModelTests: XCTestCase {
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
             with: LocalProxyConfiguration(
                 routingMode: .direct,
-                networkAccessMode: .systemProxy
+                networkAccessMode: .localProxy,
+                systemProxyEnabled: true
             ),
             selectedIP: nil
         )
@@ -1218,14 +1155,17 @@ final class AppModelTests: XCTestCase {
         await model.shutdown()
     }
 
-    func testSystemProxyModeChangeFailureRollsBackPersistedPreference() async throws {
+    func testSystemProxyPreferenceFailureRollsBackPersistedPreference() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
         let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
-            with: LocalProxyConfiguration(routingMode: .direct)
+            with: LocalProxyConfiguration(
+                routingMode: .direct,
+                networkAccessMode: .localProxy
+            )
         )
         let executableURL = try makeExecutable(in: paths)
         try await store.save(
@@ -1247,11 +1187,11 @@ final class AppModelTests: XCTestCase {
         model.startProxy()
         try await waitUntil { model.state.proxyCorePhase == .running }
 
-        model.setNetworkAccessMode(.systemProxy)
+        model.setSystemProxyEnabled(true)
         try await waitUntilAsync {
             let enableCount = await systemProxy.enableCount
             guard enableCount == 1 else { return false }
-            guard model.state.localProxyConfiguration.networkAccessMode == .localProxy else {
+            guard !model.state.localProxyConfiguration.systemProxyEnabled else {
                 return false
             }
             if case .failed = model.state.systemProxyPhase { return true }
@@ -1260,6 +1200,7 @@ final class AppModelTests: XCTestCase {
 
         let stored = try await bootstrapper.loadLocalProxyConfiguration()
         XCTAssertEqual(stored.networkAccessMode, .localProxy)
+        XCTAssertFalse(stored.systemProxyEnabled)
         XCTAssertEqual(model.state.proxyCorePhase, .running)
         await model.shutdown()
     }
@@ -1273,7 +1214,8 @@ final class AppModelTests: XCTestCase {
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
             with: LocalProxyConfiguration(
                 routingMode: .direct,
-                networkAccessMode: .systemProxy
+                networkAccessMode: .localProxy,
+                systemProxyEnabled: true
             ),
             selectedIP: nil
         )
@@ -1325,7 +1267,8 @@ final class AppModelTests: XCTestCase {
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
             with: LocalProxyConfiguration(
                 routingMode: .direct,
-                networkAccessMode: .systemProxy
+                networkAccessMode: .localProxy,
+                systemProxyEnabled: true
             ),
             selectedIP: nil
         )
@@ -1395,7 +1338,8 @@ final class AppModelTests: XCTestCase {
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
             with: LocalProxyConfiguration(
                 routingMode: .direct,
-                networkAccessMode: .systemProxy
+                networkAccessMode: .localProxy,
+                systemProxyEnabled: true
             ),
             selectedIP: nil
         )
@@ -1459,7 +1403,10 @@ final class AppModelTests: XCTestCase {
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
-            with: LocalProxyConfiguration(routingMode: .direct),
+            with: LocalProxyConfiguration(
+                routingMode: .direct,
+                networkAccessMode: .localProxy
+            ),
             selectedIP: nil
         )
         let executableURL = try makeExecutable(in: paths)
@@ -1482,7 +1429,7 @@ final class AppModelTests: XCTestCase {
         model.startProxy()
         try await waitUntil { model.state.proxyCorePhase == .running }
 
-        model.setNetworkAccessMode(.systemProxy)
+        model.setSystemProxyEnabled(true)
         try await waitUntilAsync {
             let enableCount = await systemProxy.enableCount
             let isActive = await systemProxy.isActive
@@ -1516,7 +1463,8 @@ final class AppModelTests: XCTestCase {
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
             with: LocalProxyConfiguration(
                 routingMode: .direct,
-                networkAccessMode: .systemProxy
+                networkAccessMode: .localProxy,
+                systemProxyEnabled: true
             ),
             selectedIP: nil
         )
@@ -1571,7 +1519,10 @@ final class AppModelTests: XCTestCase {
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
-            with: LocalProxyConfiguration(routingMode: .direct),
+            with: LocalProxyConfiguration(
+                routingMode: .direct,
+                networkAccessMode: .localProxy
+            ),
             selectedIP: nil
         )
         let executableURL = try makeExecutable(in: paths)
@@ -1626,7 +1577,10 @@ final class AppModelTests: XCTestCase {
         let setupBootstrapper = AppBootstrapper(paths: paths)
         try await setupBootstrapper.prepareDefaults()
         _ = try await setupBootstrapper.replaceLocalProxyConfiguration(
-            with: LocalProxyConfiguration(routingMode: .direct),
+            with: LocalProxyConfiguration(
+                routingMode: .direct,
+                networkAccessMode: .localProxy
+            ),
             selectedIP: nil
         )
         let writer = ControlledConfigurationWriter()
@@ -1683,7 +1637,7 @@ final class AppModelTests: XCTestCase {
         let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
+        try await useLocalProxyMode(bootstrapper)
         try await bootstrapper.replaceProfile(with: validProfile(), selectedIP: "2606::40")
         try await store.save(
             UserPreferences(
@@ -1742,17 +1696,19 @@ final class AppModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: paths.root) }
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
-        try await bootstrapper.replaceProfile(with: validProfile(address: "opened.example"))
+        try await useLocalProxyMode(bootstrapper)
+        try await bootstrapper.replaceProfile(with: validProfile(address: "2606:4700::201"))
         _ = try await bootstrapper.replaceLocalProxyConfiguration(
             with: LocalProxyConfiguration(
                 listenAddress: "127.0.0.2",
-                port: 18_081
-            )
+                port: 18_081,
+                networkAccessMode: .localProxy
+            ),
+            selectedIP: "2606:4700::201"
         )
         let model = makeModel(paths: paths, bootstrapper: bootstrapper)
         let openedProfile = try Data(contentsOf: paths.profileConfig)
-        let profile = validProfile(address: "saved.example")
+        let profile = validProfile(address: "2606:4700::202")
 
         try await model.saveProfileConfiguration(
             profile,
@@ -1774,16 +1730,16 @@ final class AppModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: paths.root) }
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
-        try await bootstrapper.replaceProfile(with: validProfile(address: "opened.example"))
+        try await useLocalProxyMode(bootstrapper)
+        try await bootstrapper.replaceProfile(with: validProfile(address: "2606:4700::211"))
         let openedProfile = try Data(contentsOf: paths.profileConfig)
-        let externalProfile = validProfile(address: "external.example")
+        let externalProfile = validProfile(address: "2606:4700::212")
         try externalProfile.write(to: paths.profileConfig, options: .atomic)
         let model = makeModel(paths: paths, bootstrapper: bootstrapper)
 
         do {
             try await model.saveProfileConfiguration(
-                validProfile(address: "editor.example"),
+                validProfile(address: "2606:4700::213"),
                 expectedProfileData: openedProfile
             )
             XCTFail("Expected the externally changed profile to be preserved")
@@ -1802,8 +1758,8 @@ final class AppModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: paths.root) }
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
-        let importedProfile = validProfile(address: "imported.example")
+        try await useLocalProxyMode(bootstrapper)
+        let importedProfile = validProfile(address: "2606:4700::221")
         let importURL = paths.root.appendingPathComponent("imported-profile.yaml")
         try importedProfile.write(to: importURL, options: .atomic)
         let model = makeModel(paths: paths, bootstrapper: bootstrapper)
@@ -1812,7 +1768,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.state.templateOperationPhase, .importing)
 
         do {
-            try await model.saveProfileConfiguration(validProfile(address: "overlap.example"))
+            try await model.saveProfileConfiguration(validProfile(address: "2606:4700::222"))
             XCTFail("Expected saving to be rejected while a profile import is running")
         } catch {
             XCTAssertEqual(error as? AppModelError, .templateOperationInProgress)
@@ -1824,7 +1780,8 @@ final class AppModelTests: XCTestCase {
             try MihomoServerConfiguration(data: importedProfile).data
         )
         XCTAssertEqual(model.state.proxyEndpoint, ProxyEndpoint())
-        XCTAssertTrue(model.isProxyConfigurationReady)
+        XCTAssertFalse(model.isProxyConfigurationReady)
+        XCTAssertTrue(model.state.proxySupportsNodeSelection)
         XCTAssertNil(model.state.templateOperationError)
         await model.shutdown()
     }
@@ -1832,11 +1789,18 @@ final class AppModelTests: XCTestCase {
     func testFailedProfileImportPublishesSettingsVisibleError() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }
+        let store = PreferencesStore(fileURL: paths.preferences)
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
-        try await bootstrapper.replaceProfile(with: validProfile(address: "stable.example"))
-        let model = makeModel(paths: paths, bootstrapper: bootstrapper)
+        try await useLocalProxyMode(bootstrapper)
+        try await bootstrapper.replaceProfile(with: validProfile(address: "2606:4700::231"))
+        try await store.save(
+            UserPreferences(
+                parameters: .defaults(ipv6File: paths.ipv6List),
+                selectedIP: "2606:4700::231"
+            )
+        )
+        let model = makeModel(paths: paths, store: store, bootstrapper: bootstrapper)
         model.start()
         try await waitUntilReady(model)
         let originalProfile = try Data(contentsOf: paths.profileConfig)
@@ -1872,7 +1836,7 @@ final class AppModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: paths.root) }
         let bootstrapper = AppBootstrapper(paths: paths)
         try await bootstrapper.prepareDefaults()
-        try await enableCompatibilityMode(bootstrapper)
+        try await useLocalProxyMode(bootstrapper)
         try await bootstrapper.replaceProfile(with: validProfile())
         let model = makeModel(paths: paths, bootstrapper: bootstrapper)
         let importURL = paths.root.appendingPathComponent("imported-profile.yaml")
@@ -2701,8 +2665,7 @@ final class AppModelTests: XCTestCase {
         profileReplacer: (any ProxyProfileReplacing)? = nil,
         systemProxyManager: (any SystemProxyManaging)? = nil,
         tunCoordinator: (any TunModeCoordinating)? = nil,
-        proxyCoreControllerFactory: ProxyCoreControllerFactory? = nil,
-        mihomoAPIClientFactory: MihomoAPIClientFactory? = nil
+        proxyCoreControllerFactory: ProxyCoreControllerFactory? = nil
     ) -> AppModel {
         AppModel(
             paths: paths,
@@ -2713,8 +2676,7 @@ final class AppModelTests: XCTestCase {
             profileReplacer: profileReplacer,
             systemProxyManager: systemProxyManager,
             tunCoordinator: tunCoordinator,
-            proxyCoreControllerFactory: proxyCoreControllerFactory,
-            mihomoAPIClientFactory: mihomoAPIClientFactory
+            proxyCoreControllerFactory: proxyCoreControllerFactory
         )
     }
 
@@ -2773,12 +2735,13 @@ final class AppModelTests: XCTestCase {
         )
     }
 
-    private func enableCompatibilityMode(_ bootstrapper: AppBootstrapper) async throws {
-        var local = try await bootstrapper.loadLocalProxyConfiguration()
-        local.ipv6TransportPolicy = .compatibility
-        let data = try JSONEncoder.pretty.encode(local)
+    private func useLocalProxyMode(_ bootstrapper: AppBootstrapper) async throws {
+        let local = LocalProxyConfiguration(networkAccessMode: .localProxy)
         let paths = await bootstrapper.paths
-        try data.write(to: paths.localProxyConfig, options: .atomic)
+        try JSONEncoder.pretty.encode(local).write(
+            to: paths.localProxyConfig,
+            options: .atomic
+        )
     }
 
     private func corruptPreferenceBackups(in paths: AppPaths) throws -> [URL] {
@@ -2792,7 +2755,7 @@ final class AppModelTests: XCTestCase {
     }
 
     private func validProfile(
-        address: String = "origin.example",
+        address: String = "2606:4700::100",
         userID: String = "7b602ceb-cc3f-4274-a79d-c1a38f0fb0da",
         serverName: String = "proxy.example.net",
         path: String = "/viasix"
@@ -3195,37 +3158,6 @@ private actor ControlledMihomoController: ProxyCoreControlling {
         isRunning = false
         self.eventHandler = nil
         await eventHandler(.unexpectedExit(status: 9, output: "test exit"))
-    }
-}
-
-private actor ControlledMihomoAPIClient: MihomoAPIControlling {
-    private(set) var snapshotCount = 0
-    private(set) var selections: [String] = []
-    private var proxyGroups: [MihomoProxyGroup]
-
-    init(proxyGroups: [MihomoProxyGroup] = []) {
-        self.proxyGroups = proxyGroups
-    }
-
-    func proxySelectionSnapshot() async throws -> MihomoProxySelectionSnapshot {
-        snapshotCount += 1
-        return MihomoProxySelectionSnapshot(
-            version: "test",
-            proxyGroups: proxyGroups
-        )
-    }
-
-    func selectProxy(group: String, proxy: String) async throws {
-        selections.append("\(group)=\(proxy)")
-        proxyGroups = proxyGroups.map { proxyGroup in
-            guard proxyGroup.name == group else { return proxyGroup }
-            return MihomoProxyGroup(
-                name: proxyGroup.name,
-                type: proxyGroup.type,
-                selected: proxy,
-                candidates: proxyGroup.candidates
-            )
-        }
     }
 }
 

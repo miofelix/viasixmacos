@@ -1,11 +1,6 @@
 x-viasix:
   version: 1
   primary-server: selected-ip
-  routing-mode: rule
-  udp-enabled: false
-  log-level: info
-  sniffing-enabled: true
-  bypass-private-networks: true
 proxies:
   - name: ViaSix Cloudflare Pages
     type: vless

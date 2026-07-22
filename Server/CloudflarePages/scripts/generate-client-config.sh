@@ -126,11 +126,6 @@ cat > "$yaml_temporary" <<EOF
 x-viasix:
   version: 1
   primary-server: selected-ip
-  routing-mode: rule
-  udp-enabled: false
-  log-level: info
-  sniffing-enabled: true
-  bypass-private-networks: true
 proxies:
   - name: ViaSix Cloudflare Pages
     type: vless
@@ -154,4 +149,4 @@ EOF
 yaml_temporary=""
 
 print "Prepared ViaSix Mihomo YAML: $yaml_path"
-print -u2 "The YAML intentionally omits server; select a current node in ViaSix before importing it."
+print -u2 "The YAML intentionally omits server; apply a current IPv6 node in ViaSix before importing it."

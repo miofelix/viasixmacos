@@ -144,11 +144,14 @@ for resource_name in ip.txt ipv6.txt local-proxy.json; do
 done
 plutil -convert xml1 -o /dev/null "$contents_dir/Resources/local-proxy.json"
 listen_address=$(plutil -extract listenAddress raw "$contents_dir/Resources/local-proxy.json")
+local_proxy_schema=$(plutil -extract version raw "$contents_dir/Resources/local-proxy.json")
 network_access_mode=$(plutil -extract networkAccessMode raw "$contents_dir/Resources/local-proxy.json")
 [[ "$listen_address" == "127.0.0.1" ]] \
     || fail "bundled local proxy must listen on the IPv4 loopback address"
-[[ "$network_access_mode" == "localProxy" ]] \
-    || fail "bundled local proxy must default to local-only access"
+[[ "$local_proxy_schema" == "1" ]] \
+    || fail "bundled local proxy must use schema version 1"
+[[ "$network_access_mode" == "virtualInterface" ]] \
+    || fail "bundled local proxy must default to virtual-interface access"
 
 for removed_resource in \
     server.json \

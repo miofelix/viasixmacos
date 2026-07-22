@@ -57,8 +57,6 @@ private struct ConfigurationSources: Sendable {
 }
 
 public actor AppBootstrapper {
-    private static let legacyConfigurationMaximumBytes = 8 * 1_024 * 1_024
-
     public let paths: AppPaths
     private let configurationFileWriter: ConfigurationFileWriter
 
@@ -81,9 +79,7 @@ public actor AppBootstrapper {
         try paths.prepare()
         try recoverPendingConfigurationTransaction()
         try prepareControllerSecret()
-        try migrateLegacyLocalConfigurationIfNeeded()
         try DefaultResourceInstaller.install(into: paths)
-        try migrateLegacyProfileIfNeeded()
         try removeStaleSpeedTestResults()
     }
 
@@ -133,100 +129,6 @@ public actor AppBootstrapper {
             throw AppBootstrapperError.invalidControllerSecret
         }
         return value
-    }
-
-    /// Migrates only when no native profile exists. The legacy server split is
-    /// authoritative when present; template.json is consulted only when
-    /// server.json is absent. Both legacy files remain untouched for recovery
-    /// and manual inspection.
-    private func migrateLegacyProfileIfNeeded() throws {
-        let fileManager = FileManager.default
-        if try Self.regularFileDataIfPresent(
-            at: paths.profileConfig,
-            using: fileManager
-        ) != nil {
-            // File trust is checked here, while schema validation belongs to
-            // synchronizeConfiguration. Keeping preparation recoverable lets
-            // the app reach Settings and repair a malformed user profile.
-            return
-        }
-
-        let legacyServer = try Self.legacyConfigurationDataIfPresent(
-            at: paths.legacyServerConfig,
-            using: fileManager
-        )
-        let migrationInput: Data?
-        if let legacyServer {
-            migrationInput = legacyServer
-        } else {
-            migrationInput = try Self.legacyConfigurationDataIfPresent(
-                at: paths.legacyTemplateConfig,
-                using: fileManager
-            )
-        }
-        guard let migrationInput else { return }
-
-        let local = try loadLocalProxyConfiguration()
-        let profile: MihomoServerConfiguration
-        do {
-            profile = try LegacyXrayConfigurationMigrator.serverConfiguration(from: migrationInput)
-        } catch {
-            // Previously shipped examples intentionally contain this exact
-            // sentinel. They are onboarding hints, not usable server profiles.
-            guard Self.isLegacyPlaceholder(migrationInput) || Self.usesDirectRuntime(local) else {
-                throw error
-            }
-            return
-        }
-
-        let generated = try runtimeConfiguration(
-            profile: profile,
-            local: local,
-            selectedIP: nil
-        )
-        try commitConfiguration(
-            profile: profile.data,
-            generated: generated,
-            local: JSONEncoder.pretty.encode(local),
-            expectedProfileData: nil
-        )
-    }
-
-    /// Very old releases had no local-proxy.json. Preserve their loopback
-    /// listener and routing choices before installing current defaults.
-    private func migrateLegacyLocalConfigurationIfNeeded() throws {
-        let fileManager = FileManager.default
-        guard
-            try Self.regularFileDataIfPresent(at: paths.localProxyConfig, using: fileManager) == nil,
-            let legacy = try Self.legacyConfigurationDataIfPresent(
-                at: paths.legacyTemplateConfig,
-                using: fileManager
-            ),
-            let local = LegacyXrayLocalConfigurationMigrator.configuration(from: legacy)
-        else { return }
-
-        try Self.writeRestrictedConfigurationFile(
-            JSONEncoder.pretty.encode(local),
-            to: paths.localProxyConfig
-        )
-    }
-
-    private static func isLegacyPlaceholder(_ data: Data) -> Bool {
-        guard let text = String(data: data, encoding: .utf8) else { return false }
-        return text.contains(MihomoServerConfiguration.placeholderCredential)
-    }
-
-    /// Reads one byte beyond the accepted parser limit so legacy migrators can
-    /// reject oversized input without first loading an unbounded file.
-    private static func legacyConfigurationDataIfPresent(
-        at url: URL,
-        using fileManager: FileManager
-    ) throws -> Data? {
-        try regularFileDataIfPresent(
-            at: url,
-            using: fileManager,
-            maximumBytes: legacyConfigurationMaximumBytes + 1
-        )
     }
 
     /// Removes only temporary result files created by an interrupted speed
@@ -331,10 +233,7 @@ public actor AppBootstrapper {
         selectedIP: String? = nil
     ) throws -> Data {
         let sources = try loadConfigurationSources()
-        guard
-            sources.local.ipv6TransportPolicy == .required
-                || sources.local.networkAccessMode == .virtualInterface
-        else {
+        guard sources.local.networkAccessMode == .virtualInterface else {
             throw AppBootstrapperError.virtualInterfaceRequiresPrivilegedService
         }
         return try runtimeConfiguration(
@@ -353,10 +252,7 @@ public actor AppBootstrapper {
         selectedIP: String? = nil
     ) throws -> Data {
         let sources = try loadConfigurationSources()
-        guard
-            sources.local.ipv6TransportPolicy == .required
-                || sources.local.networkAccessMode == .virtualInterface
-        else {
+        guard sources.local.networkAccessMode == .virtualInterface else {
             throw AppBootstrapperError.virtualInterfaceRequiresPrivilegedService
         }
         let local = try sources.local.validated()
@@ -427,24 +323,8 @@ public actor AppBootstrapper {
         importing options: MihomoViaSixProfileOptions?,
         over current: LocalProxyConfiguration
     ) throws -> LocalProxyConfiguration {
-        guard let options else { return current }
-        var imported = current
-        if let routingMode = options.routingMode {
-            imported.routingMode = ProxyRoutingMode(rawValue: routingMode.rawValue) ?? .rule
-        }
-        if let udpEnabled = options.udpEnabled {
-            imported.udpEnabled = udpEnabled
-        }
-        if let logLevel = options.logLevel {
-            imported.logLevel = ProxyLogLevel(rawValue: logLevel.rawValue) ?? .warning
-        }
-        if let sniffingEnabled = options.sniffingEnabled {
-            imported.sniffingEnabled = sniffingEnabled
-        }
-        if let bypassPrivateNetworks = options.bypassPrivateNetworks {
-            imported.bypassPrivateNetworks = bypassPrivateNetworks
-        }
-        return try imported.validated()
+        _ = options
+        return try current.validated()
     }
 
     @discardableResult
@@ -521,7 +401,6 @@ public actor AppBootstrapper {
     }
 
     public func synchronizeConfiguration(selectedIP: String?) throws -> BootstrapConfiguration {
-        try migrateLegacyProfileIfNeeded()
         let local = try loadLocalProxyConfiguration()
         let profileData = try regularFileDataIfPresent(at: paths.profileConfig)
         let profile =
@@ -555,9 +434,8 @@ public actor AppBootstrapper {
                 selectedIP: effectiveIP
             )
         } catch let issue as MihomoConfigurationError
-            where local.ipv6TransportPolicy == .required
-            && (issue == .selectedNodeMustBeIPv6
-                || issue == .ipv6ManagedProfileRequired)
+            where issue == .selectedNodeMustBeIPv6
+            || issue == .ipv6ManagedProfileRequired
         {
             try Self.removeRegularFileIfPresent(paths.generatedConfig, using: .default)
             return BootstrapConfiguration(
@@ -586,7 +464,7 @@ public actor AppBootstrapper {
     }
 
     private static func usesDirectRuntime(_ local: LocalProxyConfiguration) -> Bool {
-        local.ipv6TransportPolicy == .compatibility && local.routingMode == .direct
+        local.routingMode == .direct
     }
 
     private func loadConfigurationSources() throws -> ConfigurationSources {
@@ -653,10 +531,7 @@ public actor AppBootstrapper {
                     strictRoute: local.tunStrictRoute,
                     mtu: local.tunMTU
                 )
-                : nil,
-            runtimePolicy: local.ipv6TransportPolicy == .required
-                ? .ipv6Required
-                : .compatibility
+                : nil
         )
     }
 

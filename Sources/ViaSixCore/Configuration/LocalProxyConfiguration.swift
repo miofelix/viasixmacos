@@ -2,10 +2,6 @@ import Darwin
 import Foundation
 
 /// Log verbosity shared by the application's proxy-core integrations.
-///
-/// Older releases persisted Xray's `none` spelling. Mihomo calls the same
-/// level `silent`, so decoding accepts the old value while encoding always
-/// writes the neutral, current spelling.
 public enum ProxyLogLevel: String, Codable, CaseIterable, Sendable {
     case silent
     case error
@@ -23,24 +19,6 @@ public enum ProxyLogLevel: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let value = try container.decode(String.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        switch value {
-        case "none", "off", "silent": self = .silent
-        case "error": self = .error
-        case "warning", "warn": self = .warning
-        case "info": self = .info
-        case "debug": self = .debug
-        default:
-            throw DecodingError.dataCorruptedError(
-                in: container,
-                debugDescription: "Unsupported proxy log level: \(value)"
-            )
-        }
-    }
 }
 
 /// Determines how traffic entering the local mixed proxy is routed.
@@ -57,41 +35,6 @@ public enum ProxyRoutingMode: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    /// Accept common human-authored aliases while keeping the persisted value
-    /// canonical (`rule`, `global`, or `direct`).
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let value = try container.decode(String.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        switch value {
-        case "rule", "rules", "rule-based", "规则":
-            self = .rule
-        case "global", "全局":
-            self = .global
-        case "direct", "直连":
-            self = .direct
-        default:
-            throw DecodingError.dataCorruptedError(
-                in: container,
-                debugDescription: "Unsupported proxy routing mode: \(value)"
-            )
-        }
-    }
-}
-
-/// Determines whether ViaSix enforces an IPv6 proxy transport or preserves
-/// the broader, user-authored Mihomo routing behavior.
-public enum IPv6TransportPolicy: String, Codable, CaseIterable, Sendable {
-    case required
-    case compatibility
-
-    public var displayName: String {
-        switch self {
-        case .required: "IPv6 模式"
-        case .compatibility: "兼容模式"
-        }
-    }
 }
 
 public enum LocalProxyConfigurationError: LocalizedError, Equatable, Sendable {
@@ -118,6 +61,9 @@ public enum LocalProxyConfigurationError: LocalizedError, Equatable, Sendable {
 }
 
 public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
+    public static let schemaVersion = 1
+
+    public let version: Int
     public var listenAddress: String
     public var port: Int
     public var controllerPort: Int
@@ -131,7 +77,6 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
     public var tunStack: VirtualInterfaceStack
     public var tunMTU: Int
     public var tunStrictRoute: Bool
-    public var ipv6TransportPolicy: IPv6TransportPolicy
 
     public init(
         listenAddress: String = AppMetadata.proxyHost,
@@ -142,13 +87,13 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         bypassPrivateNetworks: Bool = true,
         logLevel: ProxyLogLevel = .warning,
         routingMode: ProxyRoutingMode = .rule,
-        networkAccessMode: NetworkAccessMode = .localProxy,
+        networkAccessMode: NetworkAccessMode = .virtualInterface,
         systemProxyEnabled: Bool = false,
         tunStack: VirtualInterfaceStack = .mixed,
         tunMTU: Int = 1_500,
-        tunStrictRoute: Bool = false,
-        ipv6TransportPolicy: IPv6TransportPolicy = .compatibility
+        tunStrictRoute: Bool = false
     ) {
+        version = Self.schemaVersion
         self.listenAddress = listenAddress
         self.port = port
         self.controllerPort = controllerPort
@@ -157,22 +102,17 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         self.bypassPrivateNetworks = bypassPrivateNetworks
         self.logLevel = logLevel
         self.routingMode = routingMode
-        if networkAccessMode == .systemProxy {
-            self.networkAccessMode = .localProxy
-            self.systemProxyEnabled = true
-        } else {
-            self.networkAccessMode = networkAccessMode
-            self.systemProxyEnabled = systemProxyEnabled
-        }
+        self.networkAccessMode = networkAccessMode
+        self.systemProxyEnabled = systemProxyEnabled
         self.tunStack = tunStack
         self.tunMTU = tunMTU
         self.tunStrictRoute = tunStrictRoute
-        self.ipv6TransportPolicy = ipv6TransportPolicy
     }
 
     public static let `default` = Self()
 
     private enum CodingKeys: String, CodingKey {
+        case version
         case listenAddress
         case port
         case controllerPort
@@ -186,67 +126,36 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         case tunStack
         case tunMTU
         case tunStrictRoute
-        case ipv6TransportPolicy
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        listenAddress =
-            try container.decodeIfPresent(String.self, forKey: .listenAddress)
-            ?? AppMetadata.proxyHost
-        port =
-            try container.decodeIfPresent(Int.self, forKey: .port)
-            ?? AppMetadata.proxyPort
-        controllerPort =
-            try container.decodeIfPresent(Int.self, forKey: .controllerPort)
-            ?? AppMetadata.controllerPort
-        udpEnabled =
-            try container.decodeIfPresent(Bool.self, forKey: .udpEnabled)
-            ?? true
-        sniffingEnabled =
-            try container.decodeIfPresent(Bool.self, forKey: .sniffingEnabled)
-            ?? true
-        bypassPrivateNetworks =
-            try container.decodeIfPresent(Bool.self, forKey: .bypassPrivateNetworks)
-            ?? true
-        logLevel =
-            try container.decodeIfPresent(ProxyLogLevel.self, forKey: .logLevel)
-            ?? .warning
-        routingMode =
-            try container.decodeIfPresent(ProxyRoutingMode.self, forKey: .routingMode)
-            ?? .rule
-        let decodedMode =
-            try container.decodeIfPresent(
-                NetworkAccessMode.self,
-                forKey: .networkAccessMode
-            ) ?? .localProxy
-        let decodedSystemProxy = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .systemProxyEnabled
-        )
-        if decodedMode == .systemProxy {
-            networkAccessMode = .localProxy
-            systemProxyEnabled = true
-        } else {
-            networkAccessMode = decodedMode
-            systemProxyEnabled = decodedSystemProxy ?? false
+        version = try container.decode(Int.self, forKey: .version)
+        guard version == Self.schemaVersion else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .version,
+                in: container,
+                debugDescription: "Unsupported local proxy configuration version: \(version)"
+            )
         }
-        tunStack =
-            try container.decodeIfPresent(VirtualInterfaceStack.self, forKey: .tunStack)
-            ?? .mixed
-        tunMTU = try container.decodeIfPresent(Int.self, forKey: .tunMTU) ?? 1_500
-        tunStrictRoute =
-            try container.decodeIfPresent(Bool.self, forKey: .tunStrictRoute)
-            ?? false
-        ipv6TransportPolicy =
-            try container.decodeIfPresent(
-                IPv6TransportPolicy.self,
-                forKey: .ipv6TransportPolicy
-            ) ?? .compatibility
+        listenAddress = try container.decode(String.self, forKey: .listenAddress)
+        port = try container.decode(Int.self, forKey: .port)
+        controllerPort = try container.decode(Int.self, forKey: .controllerPort)
+        udpEnabled = try container.decode(Bool.self, forKey: .udpEnabled)
+        sniffingEnabled = try container.decode(Bool.self, forKey: .sniffingEnabled)
+        bypassPrivateNetworks = try container.decode(Bool.self, forKey: .bypassPrivateNetworks)
+        logLevel = try container.decode(ProxyLogLevel.self, forKey: .logLevel)
+        routingMode = try container.decode(ProxyRoutingMode.self, forKey: .routingMode)
+        networkAccessMode = try container.decode(NetworkAccessMode.self, forKey: .networkAccessMode)
+        systemProxyEnabled = try container.decode(Bool.self, forKey: .systemProxyEnabled)
+        tunStack = try container.decode(VirtualInterfaceStack.self, forKey: .tunStack)
+        tunMTU = try container.decode(Int.self, forKey: .tunMTU)
+        tunStrictRoute = try container.decode(Bool.self, forKey: .tunStrictRoute)
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
         try container.encode(listenAddress, forKey: .listenAddress)
         try container.encode(port, forKey: .port)
         try container.encode(controllerPort, forKey: .controllerPort)
@@ -260,7 +169,6 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         try container.encode(tunStack, forKey: .tunStack)
         try container.encode(tunMTU, forKey: .tunMTU)
         try container.encode(tunStrictRoute, forKey: .tunStrictRoute)
-        try container.encode(ipv6TransportPolicy, forKey: .ipv6TransportPolicy)
     }
 
     public func validated() throws -> LocalProxyConfiguration {
@@ -281,10 +189,6 @@ public struct LocalProxyConfiguration: Codable, Equatable, Sendable {
         }
         guard (1_280...9_000).contains(copy.tunMTU) else {
             throw LocalProxyConfigurationError.invalidTunMTU
-        }
-        if copy.networkAccessMode == .systemProxy {
-            copy.networkAccessMode = .localProxy
-            copy.systemProxyEnabled = true
         }
         return copy
     }

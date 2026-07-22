@@ -117,14 +117,12 @@ fi
     || fail "Pages Clash endpoint is not configured for TLS"
 /usr/bin/grep -Fq 'primary-server: selected-ip' "$work_directory/clash.yaml" \
     || fail "Pages endpoint does not request ViaSix selected-IP injection"
-/usr/bin/grep -Fq 'routing-mode: rule' "$work_directory/clash.yaml" \
-    || fail "Pages endpoint does not import ViaSix rule routing"
-/usr/bin/grep -Fq 'udp-enabled: false' "$work_directory/clash.yaml" \
-    || fail "Pages endpoint does not disable UDP through x-viasix"
 /usr/bin/grep -Fq 'udp: false' "$work_directory/clash.yaml" \
     || fail "Pages endpoint does not disable UDP on the proxy"
-/usr/bin/grep -Fq 'log-level: info' "$work_directory/clash.yaml" \
-    || fail "Pages endpoint does not import the expected log level"
+if /usr/bin/grep -Eq '^[[:space:]]+(routing-mode|udp-enabled|log-level|sniffing-enabled|bypass-private-networks):' \
+    "$work_directory/clash.yaml"; then
+    fail "Pages endpoint contains removed legacy x-viasix settings"
+fi
 if /usr/bin/grep -Eq '^[[:space:]]+server:[[:space:]]' "$work_directory/clash.yaml"; then
     fail "Pages endpoint must not publish a proxy server address"
 fi

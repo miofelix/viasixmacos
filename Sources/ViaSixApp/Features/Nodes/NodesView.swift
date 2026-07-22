@@ -36,10 +36,6 @@ struct NodesView: View {
         .onChange(of: model.state.preferences.selectedIP) {
             syncCandidateSelection()
         }
-        .onChange(of: model.state.localProxyConfiguration.ipv6TransportPolicy) {
-            normalizeSourceForTransportPolicy()
-            syncCandidateSelection()
-        }
         .sheet(isPresented: $showsParameters) {
             parametersSheet
         }
@@ -62,7 +58,7 @@ struct NodesView: View {
     }
 
     private func normalizeSourceForTransportPolicy() {
-        if model.usesIPv6RequiredTransport, model.ipSourceMode == .ipv4 {
+        if model.ipSourceMode == .ipv4 {
             model.selectIPSource(.ipv6)
         }
     }

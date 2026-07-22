@@ -4,23 +4,18 @@ import XCTest
 @testable import ViaSixCore
 
 final class LocalProxyConfigurationTests: XCTestCase {
-    func testLegacyLocalProxyConfigurationDefaultsToRuleMode() throws {
+    func testLegacyConfigurationWithoutSchemaVersionIsRejected() throws {
         let legacy = Data(
-            #"{"listenAddress":"127.0.0.2","port":18080,"udpEnabled":false,"sniffingEnabled":false,"bypassPrivateNetworks":false,"logLevel":"info"}"#
+            #"{"listenAddress":"127.0.0.2","port":18080,"udpEnabled":false,"sniffingEnabled":false,"bypassPrivateNetworks":false,"logLevel":"info","routingMode":"global","networkAccessMode":"localProxy","ipv6TransportPolicy":"compatibility"}"#
                 .utf8
         )
 
-        let local = try JSONDecoder().decode(LocalProxyConfiguration.self, from: legacy)
-
-        XCTAssertEqual(local.routingMode, .rule)
-        XCTAssertEqual(local.ipv6TransportPolicy, .compatibility)
-        XCTAssertEqual(local.networkAccessMode, .localProxy)
-        XCTAssertEqual(local.controllerPort, AppMetadata.controllerPort)
-        XCTAssertEqual(local.endpoint, ProxyEndpoint(host: "127.0.0.2", port: 18_080))
-        XCTAssertFalse(local.udpEnabled)
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(LocalProxyConfiguration.self, from: legacy)
+        )
     }
 
-    func testNewInstallationUsesIPv6RequiredTransportPolicy() throws {
+    func testNewInstallationDoesNotPersistRemovedTransportPolicy() throws {
         let paths = AppPaths(
             root: FileManager.default.temporaryDirectory.appendingPathComponent(
                 "LocalProxyConfigurationTests-\(UUID().uuidString)",
@@ -30,12 +25,11 @@ final class LocalProxyConfigurationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: paths.root) }
 
         try DefaultResourceInstaller.install(into: paths)
-        let local = try JSONDecoder().decode(
-            LocalProxyConfiguration.self,
-            from: Data(contentsOf: paths.localProxyConfig)
-        )
+        let data = try Data(contentsOf: paths.localProxyConfig)
+        let local = try JSONDecoder().decode(LocalProxyConfiguration.self, from: data)
 
-        XCTAssertEqual(local.ipv6TransportPolicy, .required)
+        XCTAssertEqual(local.networkAccessMode, .virtualInterface)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("ipv6TransportPolicy"))
     }
 
     func testControllerPortMustBeValidAndDistinctFromProxyPort() throws {
@@ -52,15 +46,7 @@ final class LocalProxyConfigurationTests: XCTestCase {
         }
     }
 
-    func testTunFieldsRoundTripAndDefaultForOlderPayloads() throws {
-        let legacy = try XCTUnwrap(
-            #"{"networkAccessMode":"virtualInterface"}"#.data(using: .utf8)
-        )
-        let decoded = try JSONDecoder().decode(LocalProxyConfiguration.self, from: legacy)
-        XCTAssertEqual(decoded.tunStack, .mixed)
-        XCTAssertEqual(decoded.tunMTU, 1_500)
-        XCTAssertFalse(decoded.tunStrictRoute)
-
+    func testTunFieldsRoundTrip() throws {
         let configured = LocalProxyConfiguration(
             networkAccessMode: .virtualInterface,
             tunStack: .gvisor,
@@ -99,23 +85,19 @@ final class LocalProxyConfigurationTests: XCTestCase {
         )
     }
 
-    func testLegacyLocalProxyFieldsMigrateToNeutralValues() throws {
-        let legacy = Data(
-            #"{"logLevel":"none","systemProxyEnabled":true}"#.utf8
-        )
-
-        let local = try JSONDecoder().decode(LocalProxyConfiguration.self, from: legacy)
-
-        XCTAssertEqual(local.logLevel, .silent)
-        XCTAssertEqual(local.networkAccessMode, .localProxy)
-        XCTAssertTrue(local.systemProxyEnabled)
-        let encoded = try JSONEncoder().encode(local)
-        let object = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
-        )
-        XCTAssertEqual(object["logLevel"] as? String, "silent")
-        XCTAssertEqual(object["networkAccessMode"] as? String, "localProxy")
-        XCTAssertEqual(object["systemProxyEnabled"] as? Bool, true)
+    func testLegacyEnumAliasesAndMissingFieldsAreRejected() throws {
+        for payload in [
+            #"{"version":1,"logLevel":"none"}"#,
+            #"{"version":1,"routingMode":"rule-based"}"#,
+            #"{"version":1,"networkAccessMode":"tun"}"#,
+        ] {
+            XCTAssertThrowsError(
+                try JSONDecoder().decode(
+                    LocalProxyConfiguration.self,
+                    from: Data(payload.utf8)
+                )
+            )
+        }
     }
 
     func testSystemProxyAndTunPreferencesRoundTripIndependently() throws {
@@ -133,132 +115,4 @@ final class LocalProxyConfigurationTests: XCTestCase {
         XCTAssertTrue(roundTrip.systemProxyEnabled)
     }
 
-    func testLegacyXrayLocalMigratorPreservesListenerAndRulePreferences() throws {
-        let data = try legacyDocument(
-            listenAddress: "127.0.0.2",
-            port: 18_081,
-            udpEnabled: false,
-            sniffingEnabled: true,
-            logLevel: "none",
-            rules: [
-                [
-                    "type": "field",
-                    "ip": ["geoip:private"],
-                    "outboundTag": "direct",
-                ]
-            ]
-        )
-
-        let local = try XCTUnwrap(
-            LegacyXrayLocalConfigurationMigrator.configuration(from: data)
-        )
-
-        XCTAssertEqual(local.endpoint, ProxyEndpoint(host: "127.0.0.2", port: 18_081))
-        XCTAssertFalse(local.udpEnabled)
-        XCTAssertTrue(local.sniffingEnabled)
-        XCTAssertTrue(local.bypassPrivateNetworks)
-        XCTAssertEqual(local.logLevel, .silent)
-        XCTAssertEqual(local.routingMode, .rule)
-        XCTAssertEqual(local.networkAccessMode, .localProxy)
-    }
-
-    func testLegacyXrayLocalMigratorInfersGlobalAndDirectModes() throws {
-        let global = try legacyDocument(
-            rules: [catchAllRule(outboundTag: "proxy")]
-        )
-        XCTAssertEqual(
-            LegacyXrayLocalConfigurationMigrator.configuration(from: global)?.routingMode,
-            .global
-        )
-
-        let direct = try legacyDocument(
-            rules: [catchAllRule(outboundTag: "direct")]
-        )
-        XCTAssertEqual(
-            LegacyXrayLocalConfigurationMigrator.configuration(from: direct)?.routingMode,
-            .direct
-        )
-
-        var constrainedRule = catchAllRule(outboundTag: "direct")
-        constrainedRule["domain"] = ["example.com"]
-        let constrained = try legacyDocument(rules: [constrainedRule])
-        XCTAssertEqual(
-            LegacyXrayLocalConfigurationMigrator.configuration(from: constrained)?.routingMode,
-            .rule
-        )
-
-        let directOnly = try legacyDocument(
-            rules: [],
-            includeProxyOutbound: false
-        )
-        XCTAssertEqual(
-            LegacyXrayLocalConfigurationMigrator.configuration(from: directOnly)?.routingMode,
-            .direct
-        )
-    }
-
-    func testLegacyXrayLocalMigratorFailsClosedForUntrustedDocuments() throws {
-        XCTAssertNil(
-            LegacyXrayLocalConfigurationMigrator.configuration(
-                from: Data("not-json".utf8)
-            )
-        )
-        XCTAssertNil(
-            LegacyXrayLocalConfigurationMigrator.configuration(
-                from: Data(repeating: 0x20, count: 8 * 1_024 * 1_024 + 1)
-            )
-        )
-
-        let exposed = try legacyDocument(listenAddress: "0.0.0.0")
-        XCTAssertNil(LegacyXrayLocalConfigurationMigrator.configuration(from: exposed))
-
-        let invalidPort = try legacyDocument(port: 65_536)
-        XCTAssertNil(LegacyXrayLocalConfigurationMigrator.configuration(from: invalidPort))
-
-        let missingMixedInbound = try JSONSerialization.data(withJSONObject: [
-            "inbounds": [["protocol": "socks", "listen": "127.0.0.1", "port": 10_080]]
-        ])
-        XCTAssertNil(
-            LegacyXrayLocalConfigurationMigrator.configuration(from: missingMixedInbound)
-        )
-    }
-
-    private func legacyDocument(
-        listenAddress: String = "127.0.0.1",
-        port: Int = 11_451,
-        udpEnabled: Bool = true,
-        sniffingEnabled: Bool = false,
-        logLevel: String = "warning",
-        rules: [[String: Any]] = [],
-        includeProxyOutbound: Bool = true
-    ) throws -> Data {
-        var outbounds: [[String: Any]] = []
-        if includeProxyOutbound {
-            outbounds.append(["tag": "proxy", "protocol": "vless"])
-        }
-        outbounds.append(["tag": "direct", "protocol": "freedom"])
-
-        return try JSONSerialization.data(withJSONObject: [
-            "log": ["loglevel": logLevel],
-            "inbounds": [
-                [
-                    "protocol": "mixed",
-                    "listen": listenAddress,
-                    "port": port,
-                    "settings": ["udp": udpEnabled],
-                    "sniffing": ["enabled": sniffingEnabled],
-                ]
-            ],
-            "outbounds": outbounds,
-            "routing": ["rules": rules],
-        ])
-    }
-
-    private func catchAllRule(outboundTag: String) -> [String: Any] {
-        [
-            "type": "field",
-            "network": "tcp,udp",
-            "outboundTag": outboundTag,
-        ]
-    }
 }

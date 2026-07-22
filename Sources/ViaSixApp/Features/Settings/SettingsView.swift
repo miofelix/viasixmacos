@@ -372,15 +372,12 @@ struct SettingsView: View {
             VStack(spacing: 0) {
                 SettingRow(
                     "传输策略",
-                    detail: model.usesIPv6RequiredTransport
-                        ? "公网流量通过 TUN 进入所选 IPv6 代理节点"
-                        : "保留传统 Mihomo 路由和本地代理能力",
-                    systemImage: model.usesIPv6RequiredTransport
-                        ? "6.circle.fill" : "exclamationmark.triangle"
+                    detail: "规则与全局模式只使用所选 IPv6 代理入口",
+                    systemImage: "6.circle.fill"
                 ) {
                     StatusBadge(
-                        model.state.localProxyConfiguration.ipv6TransportPolicy.displayName,
-                        tone: model.usesIPv6RequiredTransport ? .positive : .warning
+                        "IPv6",
+                        tone: .positive
                     )
                 }
 
@@ -389,16 +386,13 @@ struct SettingsView: View {
 
                 SettingRow(
                     "网络接入",
-                    detail: model.usesIPv6RequiredTransport
-                        ? "IPv6 模式固定使用虚拟网卡，不修改 macOS 系统代理"
-                        : networkAccessConfigurationDetail,
+                    detail: networkAccessConfigurationDetail,
                     systemImage: "network"
                 ) {
                     StatusBadge(
-                        model.usesIPv6RequiredTransport ? "TUN（必需）" : networkAccessTitle,
-                        tone: model.usesIPv6RequiredTransport ? .positive : networkAccessTone,
-                        systemImage: model.usesIPv6RequiredTransport
-                            ? "checkmark.shield.fill" : networkAccessSystemImage
+                        networkAccessTitle,
+                        tone: networkAccessTone,
+                        systemImage: networkAccessSystemImage
                     )
                 }
 

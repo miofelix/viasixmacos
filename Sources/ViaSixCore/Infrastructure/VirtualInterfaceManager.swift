@@ -1,45 +1,19 @@
 import Foundation
 
 /// The runtime used to expose ViaSix locally or through a TUN interface.
-///
-/// `systemProxy` remains as a legacy decoding value. Current configuration
-/// stores the macOS system-proxy preference independently, matching Clash's
-/// ability to enable system proxy and TUN at the same time.
 public enum NetworkAccessMode: String, Codable, CaseIterable, Sendable {
     case localProxy
-    case systemProxy
     case virtualInterface
 
     public var displayName: String {
         switch self {
         case .localProxy: "本地代理"
-        case .systemProxy: "系统代理"
         case .virtualInterface: "虚拟网卡"
         }
     }
 
-    public var usesSystemProxy: Bool { self == .systemProxy }
     public var usesVirtualInterface: Bool { self == .virtualInterface }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let value = try container.decode(String.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "")
-            .replacingOccurrences(of: "_", with: "")
-
-        switch value {
-        case "localproxy", "local": self = .localProxy
-        case "systemproxy", "system": self = .systemProxy
-        case "virtualinterface", "virtualnetworkinterface", "tun": self = .virtualInterface
-        default:
-            throw DecodingError.dataCorruptedError(
-                in: container,
-                debugDescription: "Unsupported network access mode: \(value)"
-            )
-        }
-    }
 }
 
 /// Packet-processing stack used by Mihomo's TUN listener.

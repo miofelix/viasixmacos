@@ -17,7 +17,7 @@ struct LocalProxySettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AppPageHeader("本机代理", subtitle: "代理模式、macOS 接入与本地监听") {
+            AppPageHeader("本机代理", subtitle: "本地监听、TUN 参数与连接行为") {
                 Button {
                     requestDismiss()
                 } label: {
@@ -54,33 +54,8 @@ struct LocalProxySettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: VisualStyle.spacing16) {
                 transportPolicySection
-
-                if configuration.ipv6TransportPolicy == .required {
-                    requiredTransportSection
-                } else {
-                    LazyVGrid(
-                        columns: [
-                            GridItem(
-                                .flexible(),
-                                spacing: VisualStyle.spacing16,
-                                alignment: .top
-                            ),
-                            GridItem(.flexible(), alignment: .top),
-                        ],
-                        alignment: .leading,
-                        spacing: VisualStyle.spacing16
-                    ) {
-                        routingModeSection
-                        networkAccessSection
-                    }
-                }
-
                 listenerSection
-                if configuration.ipv6TransportPolicy == .required
-                    || configuration.networkAccessMode == .virtualInterface
-                {
-                    tunSection
-                }
+                tunSection
                 behaviorSection
 
                 if let errorMessage {
@@ -98,100 +73,15 @@ struct LocalProxySettingsView: View {
     }
 
     private var transportPolicySection: some View {
-        ConfigurationSection("传输策略", systemImage: "6.circle") {
-            Picker("传输策略", selection: $configuration.ipv6TransportPolicy) {
-                ForEach(IPv6TransportPolicy.allCases, id: \.self) { policy in
-                    Text(policy.displayName).tag(policy)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .disabled(isSaving)
-            .onChange(of: configuration.ipv6TransportPolicy) { _, policy in
-                guard policy == .required else { return }
-                configuration.routingMode = .rule
-                configuration.networkAccessMode = .virtualInterface
-                configuration.systemProxyEnabled = false
-                configuration.bypassPrivateNetworks = true
-            }
-
-            Text(
-                configuration.ipv6TransportPolicy == .required
-                    ? "推荐。客户端到远程代理入口必须使用 IPv6；网站最终出口仍可能是 IPv4。"
-                    : "用于旧配置或特殊应用，可使用 IPv4、系统代理、Provider 与自定义规则。"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var requiredTransportSection: some View {
-        ConfigurationSection("IPv6 接入", systemImage: "checkmark.shield.fill") {
-            Label("TUN 为必需项", systemImage: "checkmark.circle.fill")
+        ConfigurationSection("IPv6 代理入口", systemImage: "6.circle") {
+            Label("远程代理地址仅允许 IPv6", systemImage: "checkmark.circle.fill")
                 .font(.callout.weight(.semibold))
                 .foregroundStyle(.green)
 
-            Text("私有、回环和链路本地地址保持直连，其余被接管的流量统一通过当前 IPv6 节点。代理模式、系统代理和本地代理接入选项在此模式下不生效。")
+            Text("规则模式和全局模式使用当前 IPv6 节点；直连模式不加载远程代理。代理模式、系统代理和虚拟网卡开关位于首页。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-
-            if !model.canUseTunMode {
-                Label(tunAvailabilityDescription, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private var routingModeSection: some View {
-        ConfigurationSection("代理模式", systemImage: configuration.routingMode.appSystemImage) {
-            ProxyRoutingModePicker(
-                selection: $configuration.routingMode,
-                isDisabled: isSaving,
-                showsDescription: false
-            )
-            Text(configuration.routingMode.appDescription)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var networkAccessSection: some View {
-        ConfigurationSection("网络接入", systemImage: "network") {
-            behaviorRow(
-                "系统代理",
-                detail: "配置 macOS HTTP、HTTPS 与 SOCKS 代理，可与 TUN 同时启用",
-                isOn: $configuration.systemProxyEnabled
-            )
-
-            Divider()
-
-            behaviorRow(
-                "TUN 模式",
-                detail: "通过虚拟网卡接管不遵循系统代理的应用流量",
-                isOn: tunModeSelection
-            )
-
-            Text(networkAccessDescription)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(systemProxyCurrentStateDescription)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if !model.canUseTunMode {
-                Label(tunAvailabilityDescription, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 
@@ -228,20 +118,6 @@ struct LocalProxySettingsView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    private var tunModeSelection: Binding<Bool> {
-        Binding(
-            get: { configuration.networkAccessMode == .virtualInterface },
-            set: { enabled in
-                guard !enabled || model.canUseTunMode else {
-                    errorMessage = tunAvailabilityDescription
-                    return
-                }
-                errorMessage = nil
-                configuration.networkAccessMode = enabled ? .virtualInterface : .localProxy
-            }
-        )
     }
 
     private var listenerSection: some View {
@@ -281,12 +157,6 @@ struct LocalProxySettingsView: View {
                 "协议嗅探",
                 detail: "识别连接中的域名以改善路由判断",
                 isOn: $configuration.sniffingEnabled
-            )
-            Divider()
-            behaviorRow(
-                "私有地址直连",
-                detail: "局域网与本机地址不经过代理服务器",
-                isOn: $configuration.bypassPrivateNetworks
             )
             Divider()
             SettingRow("日志级别", detail: "代理内核运行日志") {
@@ -368,31 +238,6 @@ struct LocalProxySettingsView: View {
             || portText != String(originalConfiguration.port)
             || controllerPortText != String(originalConfiguration.controllerPort)
             || tunMTUText != String(originalConfiguration.tunMTU)
-    }
-
-    private var systemProxyCurrentStateDescription: String {
-        let presentation = SystemProxyStatusPresentation(
-            phase: model.state.systemProxyPhase,
-            isRequested: model.state.localProxyConfiguration.systemProxyEnabled
-        )
-        if case .failed(let message) = model.state.systemProxyPhase {
-            return "当前状态：\(presentation.text)。\(message)"
-        }
-        return "当前状态：\(presentation.text)。"
-    }
-
-    private var networkAccessDescription: String {
-        let tunEnabled = configuration.networkAccessMode == .virtualInterface
-        return switch (configuration.systemProxyEnabled, tunEnabled) {
-        case (true, true):
-            "系统代理与 TUN 均启用；两者独立生效并共享本地 Mihomo 配置。"
-        case (true, false):
-            "本地代理运行后自动配置 macOS 系统代理。"
-        case (false, true):
-            "TUN 接管系统流量；不会修改 macOS 系统代理设置。"
-        case (false, false):
-            "仅提供本机 mixed 代理端口，不修改 macOS 网络设置。"
-        }
     }
 
     private var tunAvailabilityDescription: String {

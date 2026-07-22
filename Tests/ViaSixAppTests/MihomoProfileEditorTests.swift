@@ -52,15 +52,13 @@ final class MihomoProfileEditorTests: XCTestCase {
             x-viasix:
               version: 1
               primary-server: selected-ip
-              routing-mode: rule
-              udp-enabled: false
-              log-level: info
             proxies:
               - name: edge
                 type: vless
                 port: 443
                 uuid: 11111111-1111-4111-8111-111111111111
                 encryption: none
+                udp: false
                 tls: true
                 servername: edge.example.com
                 client-fingerprint: chrome
@@ -88,7 +86,6 @@ final class MihomoProfileEditorTests: XCTestCase {
         XCTAssertTrue(saved.requiresSelectedPrimaryServer)
         XCTAssertEqual(saved.summary.primaryProxyName, "edited edge")
         XCTAssertNil(MihomoServerConfiguration.proxyServerAddress(in: saved.data))
-        XCTAssertEqual(saved.viaSixOptions?.udpEnabled, false)
     }
 
     func testGuidedEditorCanOpenSelectedIPTemplateBeforeSelectingNode() throws {
@@ -97,7 +94,6 @@ final class MihomoProfileEditorTests: XCTestCase {
             x-viasix:
               version: 1
               primary-server: selected-ip
-              udp-enabled: false
             proxies:
               - name: edge
                 type: vless
@@ -130,7 +126,6 @@ final class MihomoProfileEditorTests: XCTestCase {
         XCTAssertEqual(analysis.inlineServer, "origin.example.com")
         XCTAssertTrue(analysis.isValid)
         XCTAssertTrue(analysis.canFormat)
-        XCTAssertFalse(analysis.canMigrate)
         XCTAssertNil(analysis.issue)
     }
 
@@ -140,9 +135,6 @@ final class MihomoProfileEditorTests: XCTestCase {
             x-viasix:
               version: 1
               primary-server: selected-ip
-              routing-mode: rule
-              udp-enabled: false
-              log-level: info
             proxies:
               - name: edge
                 type: vless
@@ -159,7 +151,7 @@ final class MihomoProfileEditorTests: XCTestCase {
         XCTAssertNil(analysis.issue)
     }
 
-    func testDraftAnalysisRecognizesProviderOnlyConfiguration() {
+    func testDraftAnalysisRejectsProviderOnlyConfiguration() {
         let analysis = MihomoProfileDraftAnalysis.inspect(
             """
             proxy-providers:
@@ -177,9 +169,12 @@ final class MihomoProfileEditorTests: XCTestCase {
             """
         )
 
-        XCTAssertEqual(analysis.status, .providerOnly)
-        XCTAssertTrue(analysis.isValid)
-        XCTAssertTrue(analysis.canFormat)
+        XCTAssertEqual(
+            analysis.status,
+            .invalidConfiguration("ViaSix 需要包含可注入 IPv6 地址的内联代理")
+        )
+        XCTAssertFalse(analysis.isValid)
+        XCTAssertFalse(analysis.canFormat)
         XCTAssertNil(analysis.inlineServer)
     }
 
@@ -199,33 +194,16 @@ final class MihomoProfileEditorTests: XCTestCase {
         XCTAssertFalse(invalidConfiguration.isValid)
     }
 
-    func testDraftAnalysisRecognizesMigratableLegacyXrayJSON() throws {
+    func testDraftAnalysisRejectsLegacyXrayJSON() throws {
         let legacy = try legacyXrayJSON()
         let analysis = MihomoProfileDraftAnalysis.inspect(legacy)
 
-        XCTAssertEqual(analysis.status, .legacyXrayMigratable("origin.example.com"))
-        XCTAssertFalse(analysis.isValid)
-        XCTAssertTrue(analysis.canMigrate)
-        XCTAssertEqual(analysis.inlineServer, "origin.example.com")
-
-        let migrated = try MihomoProfileDraftAnalysis.migratedYAML(legacy)
         XCTAssertEqual(
-            MihomoProfileDraftAnalysis.inspect(migrated).status,
-            .inlineProxy("origin.example.com")
+            analysis.status,
+            .invalidConfiguration("不再支持旧版 Xray JSON，请使用 Mihomo YAML")
         )
-        XCTAssertFalse(migrated.contains("outbounds"))
-    }
-
-    func testDraftAnalysisReportsLegacyMigrationFailure() throws {
-        let legacy = try legacyXrayJSON(realitySpiderX: "/")
-        let analysis = MihomoProfileDraftAnalysis.inspect(legacy)
-
-        guard case .legacyXrayMigrationFailed(let message) = analysis.status else {
-            return XCTFail("Expected migration failure, got \(analysis.status)")
-        }
-        XCTAssertTrue(message.contains("spiderX"))
         XCTAssertFalse(analysis.isValid)
-        XCTAssertFalse(analysis.canMigrate)
+        XCTAssertNil(analysis.inlineServer)
     }
 
     func testFormattingProducesCanonicalServerOnlyYAML() throws {

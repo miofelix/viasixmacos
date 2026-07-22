@@ -155,7 +155,7 @@ struct ProfilesView: View {
                     Text("由 ViaSix 管理本机运行字段")
                         .font(.callout.weight(.semibold))
                     Text(
-                        "导入配置可通过 x-viasix 统一设置路由模式、UDP、日志、嗅探与私网绕过；监听地址、端口、系统代理、TUN、DNS 与 Controller 仍由 ViaSix 保护，不会被 YAML 静默覆盖。"
+                        "x-viasix 只用于声明由 ViaSix 注入当前 IPv6 节点；代理模式、系统代理、TUN、监听端口与其他本机设置不会被 YAML 覆盖。"
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)

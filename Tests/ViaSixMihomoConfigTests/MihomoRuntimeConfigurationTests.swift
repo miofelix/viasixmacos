@@ -4,10 +4,10 @@ import XCTest
 @testable import ViaSixMihomoConfig
 
 final class MihomoRuntimeConfigurationTests: XCTestCase {
-    func testIPv6RequiredRejectsIPv4SelectionAndProviderOnlyProfile() throws {
+    func testIPv6RuntimeRejectsIPv4SelectionAndProviderOnlyProfile() throws {
         XCTAssertThrowsError(
             try sampleServer().runtimeConfiguration(
-                options: MihomoRuntimeOptions(runtimePolicy: .ipv6Required),
+                options: MihomoRuntimeOptions(),
                 replacingPrimaryServerWith: "203.0.113.8"
             )
         ) { error in
@@ -33,7 +33,7 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         )
         XCTAssertThrowsError(
             try providerOnly.runtimeConfiguration(
-                options: MihomoRuntimeOptions(runtimePolicy: .ipv6Required),
+                options: MihomoRuntimeOptions(),
                 replacingPrimaryServerWith: "2606:4700::8"
             )
         ) { error in
@@ -41,7 +41,7 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         }
     }
 
-    func testIPv6RequiredKeepsOnlyPrimaryProxyAndManagedRules() throws {
+    func testIPv6RuntimeKeepsOnlyPrimaryProxyAndManagedRules() throws {
         let server = try MihomoServerConfiguration(
             data: Data(
                 """
@@ -89,8 +89,7 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         let root = try MihomoYAML.mapping(
             from: server.runtimeConfiguration(
                 options: MihomoRuntimeOptions(
-                    routingMode: .global,
-                    runtimePolicy: .ipv6Required
+                    routingMode: .global
                 ),
                 replacingPrimaryServerWith: "2606:4700::8"
             )
@@ -100,22 +99,18 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         XCTAssertEqual(proxies.count, 1)
         XCTAssertEqual(proxies.first?.string("name"), "primary-edge")
         XCTAssertEqual(proxies.first?.string("server"), "2606:4700::8")
-        XCTAssertEqual(root.string("mode"), "rule")
+        XCTAssertEqual(root.string("mode"), "global")
         XCTAssertNil(root["proxy-providers"])
         XCTAssertNil(root["proxy-groups"])
         XCTAssertNil(root["rule-providers"])
         XCTAssertNil(root["sub-rules"])
-        let rules = try XCTUnwrap(root["rules"] as? [String])
-        XCTAssertTrue(rules.contains("IP-CIDR6,fc00::/7,DIRECT,no-resolve"))
-        XCTAssertFalse(rules.contains(where: { $0.contains("example.com") }))
-        XCTAssertEqual(rules.last, "MATCH,primary-edge")
+        XCTAssertNil(root["rules"])
     }
 
-    func testIPv6RequiredPrivilegedEnvelopeRoundTripsPolicyAndProjection() throws {
+    func testIPv6PrivilegedEnvelopeRoundTripsProjection() throws {
         let options = MihomoRuntimeOptions(
             routingMode: .direct,
-            tun: MihomoTunConfiguration(),
-            runtimePolicy: .ipv6Required
+            tun: MihomoTunConfiguration()
         )
         let envelope = try MihomoPrivilegedEnvelope.encode(
             server: supportedProtocolsServer(),
@@ -126,11 +121,9 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         let plan = try MihomoPrivilegedEnvelope.decodeRuntimePlan(from: envelope)
         let root = try MihomoYAML.mapping(from: plan.configuration)
 
-        XCTAssertEqual(plan.options.runtimePolicy, .ipv6Required)
-        XCTAssertEqual(root.string("mode"), "rule")
-        XCTAssertEqual(root.mappings("proxies")?.count, 1)
-        XCTAssertEqual(root.mappings("proxies")?.first?.string("server"), "2606:4700::9")
-        XCTAssertEqual((root["rules"] as? [String])?.last, "MATCH,vless-edge")
+        XCTAssertEqual(root.string("mode"), "direct")
+        XCTAssertNil(root["proxies"])
+        XCTAssertEqual(root["rules"] as? [String], ["MATCH,DIRECT"])
         XCTAssertEqual(root.mapping("tun")?.bool("enable"), true)
     }
 
@@ -138,7 +131,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         let controller = MihomoExternalControllerConfiguration(port: 9_090, secret: "local-secret")
         let user = try MihomoYAML.mapping(
             from: sampleServer().runtimeConfiguration(
-                options: MihomoRuntimeOptions(externalController: controller)
+                options: MihomoRuntimeOptions(externalController: controller),
+                replacingPrimaryServerWith: "2606:4700::20"
             )
         )
         XCTAssertEqual(user.string("external-controller"), "127.0.0.1:9090")
@@ -150,7 +144,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
                     externalController: controller,
                     tun: MihomoTunConfiguration()
                 ),
-                projection: .privilegedTun
+                projection: .privilegedTun,
+                replacingPrimaryServerWith: "2606:4700::20"
             )
         )
         XCTAssertEqual(privileged.string("external-controller"), "127.0.0.1:9090")
@@ -169,7 +164,7 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
                 sniffingEnabled: true,
                 bypassPrivateNetworks: true
             ),
-            replacingPrimaryServerWith: "1.1.1.1"
+            replacingPrimaryServerWith: "2606:4700::21"
         )
         let root = try MihomoYAML.mapping(from: output)
 
@@ -178,12 +173,12 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         XCTAssertEqual(root.string("mode"), "rule")
         XCTAssertEqual(root.string("log-level"), "info")
         XCTAssertEqual(root.bool("allow-lan"), false)
-        XCTAssertEqual(root.mappings("proxies")?.first?.string("server"), "1.1.1.1")
+        XCTAssertEqual(root.mappings("proxies")?.first?.string("server"), "2606:4700::21")
         XCTAssertEqual(root.mappings("proxies")?.first?.bool("udp"), true)
-        XCTAssertEqual(root.mappings("proxy-groups")?.first?.string("name"), "ViaSix")
+        XCTAssertNil(root["proxy-groups"])
         let rules = try XCTUnwrap(root["rules"] as? [String])
         XCTAssertTrue(rules.contains("IP-CIDR,192.168.0.0/16,DIRECT,no-resolve"))
-        XCTAssertEqual(rules.last, "MATCH,ViaSix")
+        XCTAssertEqual(rules.last, "MATCH,edge")
         XCTAssertEqual(root.mapping("tun")?.bool("enable"), false)
         XCTAssertEqual(root.mapping("sniffer")?.bool("enable"), true)
     }
@@ -192,7 +187,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         let server = try sampleServer()
         let global = try MihomoYAML.mapping(
             from: server.runtimeConfiguration(
-                options: MihomoRuntimeOptions(routingMode: .global)
+                options: MihomoRuntimeOptions(routingMode: .global),
+                replacingPrimaryServerWith: "2606:4700::22"
             )
         )
         XCTAssertEqual(global.string("mode"), "global")
@@ -218,7 +214,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
                     mtu: 1,
                     routeExcludeAddresses: ["not-a-cidr"]
                 )
-            )
+            ),
+            replacingPrimaryServerWith: "2606:4700::23"
         )
         let root = try MihomoYAML.mapping(from: output)
 
@@ -238,7 +235,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
                     routeExcludeAddresses: ["1.1.1.1/32"]
                 )
             ),
-            projection: .privilegedTun
+            projection: .privilegedTun,
+            replacingPrimaryServerWith: "2606:4700::24"
         )
         let root = try MihomoYAML.mapping(from: output)
         let tun: [String: Any] = try XCTUnwrap(root.mapping("tun"))
@@ -281,24 +279,25 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         }
     }
 
-    func testPrivilegedProjectionSupportsFourInlineProtocolsWithGroupsAndRules() throws {
+    func testPrivilegedProjectionKeepsOnlySelectedInlineProxy() throws {
         let output = try supportedProtocolsServer().runtimeConfiguration(
             options: privilegedOptions(),
-            projection: .privilegedTun
+            projection: .privilegedTun,
+            replacingPrimaryServerWith: "2606:4700::25"
         )
         let root = try MihomoYAML.mapping(from: output)
 
         XCTAssertEqual(
             root.mappings("proxies")?.compactMap { $0.string("type") },
-            ["vless", "vmess", "trojan", "ss"]
+            ["vless"]
         )
-        XCTAssertEqual(root.mappings("proxy-groups")?.first?.string("name"), "PROXY")
-        XCTAssertEqual((root["rules"] as? [String])?.last, "MATCH,PROXY")
+        XCTAssertNil(root["proxy-groups"])
+        XCTAssertEqual((root["rules"] as? [String])?.last, "MATCH,vless-edge")
         XCTAssertEqual(root.mapping("tun")?.bool("enable"), true)
         XCTAssertNotNil(root["dns"])
     }
 
-    func testHTTPProvidersRemainCompatibleForUserProjectionButAreRejectedForPrivilege() throws {
+    func testProviderOnlyProfilesAreRejectedForEveryRuntimeProjection() throws {
         let server = try MihomoServerConfiguration(
             data: Data(
                 """
@@ -318,29 +317,26 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
             )
         )
 
-        let userRoot = try MihomoYAML.mapping(
-            from: server.runtimeConfiguration(options: MihomoRuntimeOptions())
-        )
-        XCTAssertEqual(
-            userRoot.mapping("proxy-providers")?.mapping("remote")?.string("type"),
-            "http"
-        )
-        XCTAssertEqual(userRoot.mapping("tun")?.bool("enable"), false)
-
-        XCTAssertThrowsError(
-            try server.runtimeConfiguration(
-                options: privilegedOptions(),
-                projection: .privilegedTun
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? MihomoConfigurationError,
-                .unsupportedProviderType(name: "remote", type: "http")
-            )
+        for (options, projection) in [
+            (MihomoRuntimeOptions(), MihomoRuntimeProjection.user),
+            (privilegedOptions(), MihomoRuntimeProjection.privilegedTun),
+        ] {
+            XCTAssertThrowsError(
+                try server.runtimeConfiguration(
+                    options: options,
+                    projection: projection,
+                    replacingPrimaryServerWith: "2606:4700::30"
+                )
+            ) { error in
+                XCTAssertEqual(
+                    error as? MihomoConfigurationError,
+                    .ipv6ManagedProfileRequired
+                )
+            }
         }
     }
 
-    func testInlineProxyAndRuleProvidersAreRebuiltFromSafeFields() throws {
+    func testInlineProviderOnlyProfileIsRejected() throws {
         let server = try MihomoServerConfiguration(
             data: Data(
                 """
@@ -371,23 +367,15 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
             )
         )
 
-        let root = try MihomoYAML.mapping(
-            from: server.runtimeConfiguration(
+        XCTAssertThrowsError(
+            try server.runtimeConfiguration(
                 options: privilegedOptions(),
-                projection: .privilegedTun
+                projection: .privilegedTun,
+                replacingPrimaryServerWith: "2606:4700::31"
             )
-        )
-        let provider = try XCTUnwrap(root.mapping("proxy-providers")?.mapping("embedded"))
-        let payload = try XCTUnwrap(provider.mappings("payload"))
-        XCTAssertEqual(provider.string("type"), "inline")
-        XCTAssertEqual(payload.first?.string("type"), "ss")
-        XCTAssertNil(payload.first?["path"])
-        let ruleProvider = try XCTUnwrap(
-            root.mapping("rule-providers")?.mapping("local-domains")
-        )
-        XCTAssertEqual(ruleProvider.string("type"), "inline")
-        XCTAssertEqual(ruleProvider.string("behavior"), "domain")
-        XCTAssertEqual(ruleProvider["payload"] as? [String], ["example.com"])
+        ) { error in
+            XCTAssertEqual(error as? MihomoConfigurationError, .ipv6ManagedProfileRequired)
+        }
     }
 
     func testPrivilegedProjectionRejectsUnknownProtocolsAndDangerousProxyFields() throws {
@@ -441,14 +429,15 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
             XCTAssertThrowsError(
                 try server.runtimeConfiguration(
                     options: privilegedOptions(),
-                    projection: .privilegedTun
+                    projection: .privilegedTun,
+                    replacingPrimaryServerWith: "2606:4700::40"
                 ),
                 profile
             )
         }
     }
 
-    func testPrivilegedProjectionRejectsRemoteRuleProvidersAndGeodataRules() throws {
+    func testManagedProjectionDropsImportedRuleProvidersAndGeodataRules() throws {
         let remoteProvider = try MihomoServerConfiguration(
             data: Data(
                 """
@@ -471,13 +460,6 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
                 """.utf8
             )
         )
-        XCTAssertThrowsError(
-            try remoteProvider.runtimeConfiguration(
-                options: privilegedOptions(),
-                projection: .privilegedTun
-            )
-        )
-
         let geodata = try MihomoServerConfiguration(
             data: Data(
                 """
@@ -494,35 +476,24 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
                 """.utf8
             )
         )
-        XCTAssertThrowsError(
-            try geodata.runtimeConfiguration(
-                options: privilegedOptions(),
-                projection: .privilegedTun
+        for server in [remoteProvider, geodata] {
+            let root = try MihomoYAML.mapping(
+                from: server.runtimeConfiguration(
+                    options: privilegedOptions(),
+                    projection: .privilegedTun,
+                    replacingPrimaryServerWith: "2606:4700::41"
+                )
             )
-        )
+            XCTAssertNil(root["rule-providers"])
+            let rules = try XCTUnwrap(root["rules"] as? [String])
+            XCTAssertEqual(rules.count, 10)
+            XCTAssertEqual(rules.last, "MATCH,edge")
+            XCTAssertFalse(rules.contains { $0.contains("GEOIP") || $0.contains("RULE-SET") })
+        }
     }
 
-    func testPrivilegedProjectionRejectsUnsafeNamesNegativeAlterIDAndDuplicateGroups() throws {
-        let profiles = [
-            """
-            proxy-providers:
-              " provider ":
-                type: inline
-                payload:
-                  - name: edge
-                    type: ss
-                    server: origin.example
-                    port: 8388
-                    cipher: aes-128-gcm
-                    password: secret
-            proxy-groups:
-              - name: PROXY
-                type: select
-                use: [" provider "]
-            rules:
-              - MATCH,PROXY
-            """,
-            """
+    func testPrivilegedProjectionRejectsInvalidPrimaryProxyFields() throws {
+        let profile = """
             proxies:
               - name: vmess-edge
                 type: vmess
@@ -531,40 +502,18 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
                 uuid: 22222222-2222-4222-8222-222222222222
                 alterId: -1
                 cipher: auto
-            """,
             """
-            proxies:
-              - name: edge
-                type: ss
-                server: origin.example
-                port: 8388
-                cipher: aes-128-gcm
-                password: secret
-            proxy-groups:
-              - name: DUPLICATE
-                type: select
-                proxies: [edge]
-              - name: DUPLICATE
-                type: select
-                proxies: [edge]
-            rules:
-              - MATCH,DUPLICATE
-            """,
-        ]
-
-        for profile in profiles {
-            let server = try MihomoServerConfiguration(data: Data(profile.utf8))
-            XCTAssertThrowsError(
-                try server.runtimeConfiguration(
-                    options: privilegedOptions(),
-                    projection: .privilegedTun
-                ),
-                profile
+        let server = try MihomoServerConfiguration(data: Data(profile.utf8))
+        XCTAssertThrowsError(
+            try server.runtimeConfiguration(
+                options: privilegedOptions(),
+                projection: .privilegedTun,
+                replacingPrimaryServerWith: "2606:4700::42"
             )
-        }
+        )
     }
 
-    func testPrivilegedRuleLimitIsIndependentFromOrdinaryListLimit() throws {
+    func testImportedRulesAreReplacedByManagedRuleSet() throws {
         let rules =
             (0..<1_025).map { "DOMAIN-SUFFIX,host-\($0).example,edge" }
             + ["MATCH,edge"]
@@ -584,10 +533,11 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         let root = try MihomoYAML.mapping(
             from: server.runtimeConfiguration(
                 options: privilegedOptions(),
-                projection: .privilegedTun
+                projection: .privilegedTun,
+                replacingPrimaryServerWith: "2606:4700::43"
             )
         )
-        XCTAssertEqual((root["rules"] as? [String])?.count, rules.count + 9)
+        XCTAssertEqual((root["rules"] as? [String])?.count, 10)
     }
 
     func testPrivilegedTunValidatesMTUAndRouteExclusions() throws {
@@ -595,7 +545,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
             XCTAssertThrowsError(
                 try sampleServer().runtimeConfiguration(
                     options: privilegedOptions(tun: MihomoTunConfiguration(mtu: mtu)),
-                    projection: .privilegedTun
+                    projection: .privilegedTun,
+                    replacingPrimaryServerWith: "2606:4700::50"
                 )
             ) { error in
                 XCTAssertEqual(error as? MihomoConfigurationError, .invalidTunMTU)
@@ -611,7 +562,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
                             routeExcludeAddresses: ["1.1.1.1/32", "2001:db8::/32"]
                         )
                     ),
-                    projection: .privilegedTun
+                    projection: .privilegedTun,
+                    replacingPrimaryServerWith: "2606:4700::50"
                 )
             )
         }
@@ -629,7 +581,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
                     options: privilegedOptions(
                         tun: MihomoTunConfiguration(routeExcludeAddresses: [route])
                     ),
-                    projection: .privilegedTun
+                    projection: .privilegedTun,
+                    replacingPrimaryServerWith: "2606:4700::50"
                 ),
                 route
             ) { error in
@@ -647,7 +600,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
                         routeExcludeAddresses: (0..<33).map { "203.0.113.\($0)/32" }
                     )
                 ),
-                projection: .privilegedTun
+                projection: .privilegedTun,
+                replacingPrimaryServerWith: "2606:4700::50"
             )
         ) { error in
             XCTAssertEqual(error as? MihomoConfigurationError, .tooManyTunRouteExclusions)
@@ -665,7 +619,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
 
         let udpDisabled = try MihomoYAML.mapping(
             from: sampleServer().runtimeConfiguration(
-                options: MihomoRuntimeOptions(udpEnabled: false)
+                options: MihomoRuntimeOptions(udpEnabled: false),
+                replacingPrimaryServerWith: "2606:4700::51"
             )
         )
         XCTAssertEqual(udpDisabled.mappings("proxies")?.first?.bool("udp"), false)
@@ -689,7 +644,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         try supportedProtocolsServer().runtimeConfiguration(
             options: privilegedOptions(),
-            projection: .privilegedTun
+            projection: .privilegedTun,
+            replacingPrimaryServerWith: "2606:4700::52"
         ).write(to: config)
 
         let process = Process()
@@ -712,12 +668,14 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
         let options = privilegedOptions()
         let expected = try server.runtimeConfiguration(
             options: options,
-            projection: .privilegedTun
+            projection: .privilegedTun,
+            replacingPrimaryServerWith: "2606:4700::53"
         )
 
         let envelope = try MihomoPrivilegedEnvelope.encode(
             server: server,
-            options: options
+            options: options,
+            replacingPrimaryServerWith: "2606:4700::53"
         )
         let decoded = try MihomoPrivilegedEnvelope.decodeRuntimeConfiguration(
             from: envelope
@@ -733,13 +691,13 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
             from: MihomoPrivilegedEnvelope.encode(
                 server: server,
                 options: options,
-                replacingPrimaryServerWith: "203.0.113.21"
+                replacingPrimaryServerWith: "2606:4700::54"
             )
         )
         XCTAssertEqual(
             try MihomoYAML.mapping(from: replaced).mappings("proxies")?.first?
                 .string("server"),
-            "203.0.113.21"
+            "2606:4700::54"
         )
     }
 
@@ -748,7 +706,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
             try MihomoPrivilegedEnvelope.decodeRuntimeConfiguration(
                 from: try supportedProtocolsServer().runtimeConfiguration(
                     options: privilegedOptions(),
-                    projection: .privilegedTun
+                    projection: .privilegedTun,
+                    replacingPrimaryServerWith: "2606:4700::55"
                 )
             )
         ) { error in
@@ -757,7 +716,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
 
         let envelope = try MihomoPrivilegedEnvelope.encode(
             server: try supportedProtocolsServer(),
-            options: privilegedOptions()
+            options: privilegedOptions(),
+            replacingPrimaryServerWith: "2606:4700::55"
         )
         var root = try XCTUnwrap(
             PropertyListSerialization.propertyList(from: envelope, format: nil)
@@ -892,7 +852,8 @@ final class MihomoRuntimeConfigurationTests: XCTestCase {
     func testPrivilegedEnvelopeRejectsDeepOrOverlyComplexPlistBeforeTypedDecode() throws {
         let envelope = try MihomoPrivilegedEnvelope.encode(
             server: try supportedProtocolsServer(),
-            options: privilegedOptions()
+            options: privilegedOptions(),
+            replacingPrimaryServerWith: "2606:4700::56"
         )
         let canonicalRoot = try XCTUnwrap(
             PropertyListSerialization.propertyList(from: envelope, format: nil)

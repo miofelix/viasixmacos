@@ -82,11 +82,12 @@ public enum MihomoPrivilegedEnvelope {
             remainingNodes: &remainingNodes
         )
         let server: MihomoServerConfiguration?
-        if (wire.options.runtimePolicy == .compatibility
-            && wire.options.routingMode == .direct) || serverMapping.isEmpty
-        {
+        if wire.options.routingMode == .direct, serverMapping.isEmpty {
             server = nil
         } else {
+            guard !serverMapping.isEmpty else {
+                throw MihomoConfigurationError.ipv6ManagedProfileRequired
+            }
             server = try MihomoServerConfiguration(
                 data: MihomoYAML.data(from: serverMapping)
             )
@@ -178,9 +179,11 @@ public enum MihomoPrivilegedEnvelope {
     ) throws -> WireEnvelope {
         let root = try MihomoYAML.mapping(from: runtime)
         var server: [String: WireValue] = [:]
-        for key in retainedServerKeys {
-            if let value = root[key] {
-                server[key] = try WireValue(foundationValue: value)
+        if options.routingMode != .direct {
+            for key in retainedServerKeys {
+                if let value = root[key] {
+                    server[key] = try WireValue(foundationValue: value)
+                }
             }
         }
         return WireEnvelope(

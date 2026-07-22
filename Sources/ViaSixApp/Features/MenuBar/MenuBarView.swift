@@ -85,11 +85,15 @@ struct MenuBarView: View {
     }
 
     private var transportTitle: String {
-        model.usesIPv6RequiredTransport ? "IPv6 模式 · TUN" : "兼容模式"
+        let route = model.state.localProxyConfiguration.routingMode.displayName
+        let access =
+            model.state.localProxyConfiguration.networkAccessMode == .virtualInterface
+            ? "TUN" : "本地代理"
+        return "\(route) · \(access)"
     }
 
     private var transportIcon: String {
-        model.usesIPv6RequiredTransport ? "6.circle.fill" : "exclamationmark.triangle.fill"
+        "6.circle.fill"
     }
 
     private var selectedNode: String {

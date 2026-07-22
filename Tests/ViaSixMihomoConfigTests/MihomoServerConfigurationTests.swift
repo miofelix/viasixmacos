@@ -76,11 +76,6 @@ final class MihomoServerConfigurationTests: XCTestCase {
                 x-viasix:
                   version: 1
                   primary-server: selected-ip
-                  routing-mode: rule
-                  udp-enabled: false
-                  log-level: info
-                  sniffing-enabled: true
-                  bypass-private-networks: true
                 proxies:
                   - name: edge
                     type: vless
@@ -94,9 +89,7 @@ final class MihomoServerConfigurationTests: XCTestCase {
 
         XCTAssertTrue(configuration.hasReplaceablePrimaryServer)
         XCTAssertTrue(configuration.requiresSelectedPrimaryServer)
-        XCTAssertEqual(configuration.viaSixOptions?.routingMode, .rule)
-        XCTAssertEqual(configuration.viaSixOptions?.udpEnabled, false)
-        XCTAssertEqual(configuration.viaSixOptions?.logLevel, .info)
+        XCTAssertEqual(configuration.viaSixOptions?.primaryServer, .selectedIP)
 
         let stored = try MihomoYAML.mapping(from: configuration.data)
         XCTAssertNil(stored.mappings("proxies")?.first?.string("server"))
@@ -105,7 +98,7 @@ final class MihomoServerConfigurationTests: XCTestCase {
         XCTAssertThrowsError(
             try configuration.runtimeConfiguration(options: MihomoRuntimeOptions())
         ) { error in
-            XCTAssertEqual(error as? MihomoConfigurationError, .missingSelectedNodeAddress)
+            XCTAssertEqual(error as? MihomoConfigurationError, .selectedNodeMustBeIPv6)
         }
 
         let directRuntime = try MihomoYAML.mapping(

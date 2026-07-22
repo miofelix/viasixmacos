@@ -3,14 +3,20 @@ import XCTest
 @testable import ViaSixCore
 
 final class VirtualInterfaceManagerTests: XCTestCase {
-    func testNetworkAccessModeIsSingleAndDecodesCommonAliases() throws {
+    func testNetworkAccessModeOnlySelectsLocalOrTunRuntime() throws {
         XCTAssertEqual(NetworkAccessMode.localProxy.displayName, "本地代理")
-        XCTAssertTrue(NetworkAccessMode.systemProxy.usesSystemProxy)
         XCTAssertTrue(NetworkAccessMode.virtualInterface.usesVirtualInterface)
 
         let decoder = JSONDecoder()
-        XCTAssertEqual(try decoder.decode(NetworkAccessMode.self, from: Data(#""tun""#.utf8)), .virtualInterface)
-        XCTAssertEqual(try decoder.decode(NetworkAccessMode.self, from: Data(#""system-proxy""#.utf8)), .systemProxy)
+        XCTAssertEqual(
+            try decoder.decode(
+                NetworkAccessMode.self,
+                from: Data(#""virtualInterface""#.utf8)
+            ),
+            .virtualInterface
+        )
+        XCTAssertThrowsError(try decoder.decode(NetworkAccessMode.self, from: Data(#""tun""#.utf8)))
+        XCTAssertThrowsError(try decoder.decode(NetworkAccessMode.self, from: Data(#""system-proxy""#.utf8)))
         XCTAssertThrowsError(try decoder.decode(NetworkAccessMode.self, from: Data(#""both""#.utf8)))
     }
 
