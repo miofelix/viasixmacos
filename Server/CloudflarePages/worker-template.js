@@ -36,12 +36,10 @@ function handleHTTP(request, userID) {
   }
 
   if (url.pathname === `/${userID}`) {
-    const link = vlessLink(host, userID);
     const body = [
       "ViaSix Cloudflare Pages",
       "",
       `Mihomo: https://${host}/${userID}/pcl`,
-      `VLESS: ${link}`,
       "",
       "Transport: VLESS + WebSocket + TLS",
       "WebSocket path: /?ed=2560",
@@ -313,19 +311,6 @@ function isValidUUID(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-function vlessLink(host, userID) {
-  const query = new URLSearchParams({
-    encryption: "none",
-    security: "tls",
-    sni: host,
-    fp: "chrome",
-    type: "ws",
-    host,
-    path: "/?ed=2560",
-  });
-  return `vless://${userID}@${host}:443?${query.toString()}#ViaSix%20Cloudflare%20Pages`;
-}
-
 function mihomoConfiguration(host, userID) {
   return [
     "x-viasix:",
@@ -342,6 +327,7 @@ function mihomoConfiguration(host, userID) {
     "    port: 443",
     `    uuid: ${userID}`,
     "    encryption: none",
+    "    udp: false",
     "    tls: true",
     `    servername: ${host}`,
     "    client-fingerprint: chrome",

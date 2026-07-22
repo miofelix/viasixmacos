@@ -107,7 +107,7 @@ make clean
 
 ```text
 Sources/
-  ViaSixMihomoConfig/       Mihomo YAML、Profile、分享链接与旧配置迁移
+  ViaSixMihomoConfig/       Mihomo YAML、Profile 与旧配置迁移
   ViaSixCore/
     Configuration/          本机代理设置和兼容配置逻辑
     Infrastructure/         路径、默认资源、启动、系统代理与接入能力

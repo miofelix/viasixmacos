@@ -40,7 +40,7 @@ ViaSixPrivilegedProtocol ──► ViaSixTunHelper
 - `ViaSixApp`：窗口、菜单栏、用户交互和工作流编排。
 - `AppModel`：主线程上的唯一应用状态协调者，持有并取消长任务。
 - `ViaSixCore`：持久化、组件安装、测速、进程控制和 macOS 网络接入管理。
-- `ViaSixMihomoConfig`：Mihomo YAML 解析、服务器表单、分享链接、Provider 约束、运行配置生成和旧 Xray JSON 迁移。
+- `ViaSixMihomoConfig`：Mihomo YAML 解析、服务器表单、Provider 约束、运行配置生成和旧 Xray JSON 迁移。
 - `ViaSixPrivilegedProtocol`：app/helper 共用的协议版本、Mach service 常量、代码签名身份与固定 XPC 接口。
 - `ViaSixTunHelper`：最小权限 LaunchDaemon；只运行固定签名 Mihomo，负责 TUN 会话、路由/DNS 生命周期、进程监督和崩溃恢复。
 - `CfstRunner` / `MihomoController`：actor 隔离的自有进程生命周期。

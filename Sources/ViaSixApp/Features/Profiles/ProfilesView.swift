@@ -46,7 +46,7 @@ struct ProfilesView: View {
         }
         .fileImporter(
             isPresented: $showsImporter,
-            allowedContentTypes: [.plainText, .data],
+            allowedContentTypes: Self.yamlContentTypes,
             allowsMultipleSelection: false
         ) { result in
             if case .success(let urls) = result, let url = urls.first {
@@ -57,7 +57,7 @@ struct ProfilesView: View {
             MihomoProfileEditorView().environment(model)
         }
         .sheet(isPresented: $showsManualEditor) {
-            ServerConfigurationEditorView(initialInputMode: .manual).environment(model)
+            ServerConfigurationEditorView().environment(model)
         }
     }
 
@@ -183,6 +183,11 @@ struct ProfilesView: View {
     private var configurationEditingDisabled: Bool {
         model.state.isProxyRunning || model.isTemplateOperationBusy || model.state.runtimeOperation != nil
     }
+
+    private static let yamlContentTypes = [
+        UTType(filenameExtension: "yaml"),
+        UTType(filenameExtension: "yml"),
+    ].compactMap { $0 }
 
     private var profileStatus: String {
         if model.isTemplateOperationBusy { return "处理中" }

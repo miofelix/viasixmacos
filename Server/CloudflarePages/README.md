@@ -1,6 +1,6 @@
 # 为 ViaSix 部署 Cloudflare Pages VLESS 服务
 
-本目录提供一套可直接生成、部署和验证的 Cloudflare Pages 服务端资源。ViaSix 用户可导入专用 YAML；其他 VLESS 客户端可使用生成的分享链接并自行确认兼容性。
+本目录提供一套可直接生成、部署和验证的 Cloudflare Pages 服务端资源，并生成可直接导入 ViaSix 的专用 Mihomo YAML。
 
 部署协议固定为：
 
@@ -21,7 +21,7 @@ VLESS + WebSocket + TLS + TCP/443
 - VLESS TCP over WebSocket；
 - TLS 443 和自定义域名；
 - UUID 鉴权；
-- ViaSix 专用 YAML 和 VLESS 分享链接；
+- ViaSix 专用 Mihomo YAML；
 - Cloudflare IPv4/IPv6 优选地址；
 - Wrangler 命令行和 Dashboard ZIP 上传。
 
@@ -40,7 +40,7 @@ Cloudflare TCP Sockets 不允许连接 Cloudflare 自身 IP 段或形成 TCP loo
 - `worker-template.js`：ViaSix 维护的精简 VLESS/TCP Worker 模板。
 - `scripts/prepare-deploy.sh`：写入 UUID，生成上传目录和 ZIP。
 - `scripts/deploy-pages.sh`：通过 Wrangler 创建并部署 Pages 项目。
-- `scripts/generate-client-config.sh`：生成 Mihomo YAML 和分享链接。
+- `scripts/generate-client-config.sh`：生成 ViaSix 专用 Mihomo YAML。
 - `scripts/verify-deployment.sh`：检查域名、证书和配置端点。
 - `mihomo-vless.example.yaml`：ViaSix YAML 示例。
 
@@ -107,7 +107,7 @@ npx wrangler@4 login
   --branch "pages-test"
 ```
 
-部署脚本只允许上传目录中存在一个 `_worker.js`，避免把客户端配置和 UUID 分享文件作为静态资源发布。
+部署脚本只允许上传目录中存在一个 `_worker.js`，避免把包含 UUID 的客户端配置作为静态资源发布。
 
 ## 5. 使用 Dashboard 上传
 
@@ -163,13 +163,10 @@ viasix.example.com
 
 ```text
 dist/client/
-├── viasix-mihomo.yaml
-└── viasix-vless-link.txt
+└── viasix-mihomo.yaml
 ```
 
 推荐在 ViaSix 中导入 `dist/client/viasix-mihomo.yaml`。该 YAML 故意不包含节点 `server` 地址；ViaSix 会在导入时使用当前选中的优选 IP。导入前请先完成测速并选择一个当前节点。
-
-分享链接文件只包含一行 `vless://` 链接，供其他兼容客户端使用；它以 Pages 域名作为初始服务器地址。
 
 ## 9. YAML 自动应用的 ViaSix 设置
 
@@ -268,7 +265,6 @@ https://viasix.example.com/<UUID>
 dist/pages-upload/_worker.js
 dist/viasix-cloudflare-pages.zip
 dist/client/viasix-mihomo.yaml
-dist/client/viasix-vless-link.txt
 ```
 
 如果 UUID 泄露，请生成新 UUID、重新生成 Worker、重新部署，并在客户端重新导入配置。

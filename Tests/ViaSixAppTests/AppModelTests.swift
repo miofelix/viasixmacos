@@ -1937,6 +1937,19 @@ final class AppModelTests: XCTestCase {
         await model.shutdown()
     }
 
+    func testProfileImportRejectsNonYAMLFiles() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let model = makeModel(paths: paths)
+        let importURL = paths.root.appendingPathComponent("profile.txt")
+
+        model.importProxyProfile(from: importURL)
+
+        XCTAssertEqual(model.state.templateOperationPhase, .idle)
+        XCTAssertEqual(model.state.templateOperationError, "仅支持导入 .yaml 或 .yml 配置文件")
+        await model.shutdown()
+    }
+
     func testProfileOperationsAreRejectedWhileApplyingSelection() async throws {
         let paths = makePaths()
         defer { try? FileManager.default.removeItem(at: paths.root) }

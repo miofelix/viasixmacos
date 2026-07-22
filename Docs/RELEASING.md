@@ -188,7 +188,7 @@ make verify-app
 2. 首次启动没有异常 Gatekeeper 提示。
 3. 可以安装当前架构的上游组件。
 4. 默认本机配置只监听回环地址，首次运行不包含服务器凭据或订阅。
-5. 使用手动表单、分享链接、原生 Mihomo YAML 和 Provider-only YAML 分别验证配置；旧 Xray JSON 只走显式迁移路径。
+5. 使用单节点 Mihomo YAML、`x-viasix` selected-IP YAML 和 Provider-only YAML 分别验证导入；确认受支持的单节点 YAML 可在可视化表单中查看、修改并保存，且 selected-IP 模板不会写回节点地址。
 6. 内联配置无当前节点时保留原服务器地址，有当前节点时只覆盖第一个内联节点；Provider-only 配置无需节点即可启动。
 7. “直连”运行配置不包含代理、Provider、代理组或远端规则。
 8. HTTP 与 SOCKS5 均可通过配置中显示的回环端点使用。

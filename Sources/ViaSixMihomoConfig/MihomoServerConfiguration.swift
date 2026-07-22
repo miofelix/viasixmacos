@@ -88,6 +88,64 @@ public struct MihomoServerConfiguration: Equatable, Sendable {
         return try MihomoProxyProfile(mapping: proxy).validated()
     }
 
+    /// Returns the primary profile for guided editing. A ViaSix selected-IP
+    /// template does not persist a server address, so the current selection is
+    /// injected only into the in-memory editor model.
+    public func primaryProfile(replacingSelectedServerWith address: String) throws
+        -> MihomoProxyProfile
+    {
+        guard requiresSelectedPrimaryServer else { return try primaryProfile() }
+
+        let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            throw MihomoConfigurationError.missingSelectedNodeAddress
+        }
+        let root = rawMapping()
+        guard var proxies = root.mappings("proxies"),
+            let index = Self.primaryServerIndex(in: root)
+        else {
+            throw MihomoConfigurationError.missingInlineProxy
+        }
+        proxies[index]["server"] = normalized
+        if proxies[index]["udp"] == nil {
+            proxies[index]["udp"] = viaSixOptions?.udpEnabled ?? true
+        }
+        return try MihomoProxyProfile(mapping: proxies[index]).validated()
+    }
+
+    /// Rebuilds the server-only YAML represented by the guided editor while
+    /// preserving ViaSix import options. Selected-IP templates intentionally
+    /// discard the editor's temporary server address before persistence.
+    public func guidedConfiguration(replacingPrimaryProfile profile: MihomoProxyProfile) throws
+        -> Self
+    {
+        var proxy = try profile.mapping()
+        if requiresSelectedPrimaryServer {
+            proxy.removeValue(forKey: "server")
+        }
+        var root: [String: Any] = ["proxies": [proxy]]
+        if let options = viaSixOptions {
+            root["x-viasix"] = options.canonicalMapping
+        }
+        return try Self(data: MihomoYAML.data(from: root))
+    }
+
+    /// Checks whether guided editing can round-trip the complete stored
+    /// configuration. Older selected-IP templates omitted `udp`; treat that as
+    /// the value declared by x-viasix (or Mihomo's default) during comparison.
+    public func isRepresentedByGuidedConfiguration(_ guided: Self) -> Bool {
+        var sourceRoot = rawMapping()
+        if requiresSelectedPrimaryServer,
+            var proxies = sourceRoot.mappings("proxies"),
+            let index = Self.primaryServerIndex(in: sourceRoot),
+            proxies[index]["udp"] == nil
+        {
+            proxies[index]["udp"] = viaSixOptions?.udpEnabled ?? true
+            sourceRoot["proxies"] = proxies
+        }
+        return NSDictionary(dictionary: sourceRoot).isEqual(to: guided.rawMapping())
+    }
+
     public func replacingPrimaryServer(with address: String) throws -> Self {
         let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {

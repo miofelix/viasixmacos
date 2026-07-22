@@ -7,7 +7,7 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var showsTemplateEditor = false
     @State private var showsLocalProxyEditor = false
-    @State private var presentedServerEditorMode: ServerConfigurationInputMode?
+    @State private var showsServerEditor = false
     @State private var exitIPEndpointDraft = ""
     @State private var exitIPEndpointError: String?
 
@@ -315,26 +315,19 @@ struct SettingsView: View {
                     detail: "VLESS、VMess、Trojan、Shadowsocks",
                     systemImage: "point.3.connected.trianglepath.dotted"
                 ) {
-                    HStack(spacing: VisualStyle.spacing8) {
-                        Button("分享链接", systemImage: "link") {
-                            presentedServerEditorMode = .shareLink
-                        }
-                        .disabled(serverEditorDisabled)
-
-                        Button("手动配置", systemImage: "slider.horizontal.3") {
-                            presentedServerEditorMode = .manual
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(serverEditorDisabled)
+                    Button("查看与修改", systemImage: "slider.horizontal.3") {
+                        showsServerEditor = true
                     }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(serverEditorDisabled)
                 }
 
                 Divider()
                     .padding(.leading, 52)
 
                 SettingRow(
-                    "高级配置",
-                    detail: "直接编辑或导入 Mihomo YAML",
+                    "YAML 配置",
+                    detail: "导入或直接编辑 Mihomo YAML",
                     systemImage: "curlybraces.square"
                 ) {
                     Menu {
@@ -361,8 +354,8 @@ struct SettingsView: View {
             MihomoProfileEditorView()
                 .environment(model)
         }
-        .sheet(item: $presentedServerEditorMode) { mode in
-            ServerConfigurationEditorView(initialInputMode: mode)
+        .sheet(isPresented: $showsServerEditor) {
+            ServerConfigurationEditorView()
                 .environment(model)
         }
     }
@@ -1043,8 +1036,8 @@ struct SettingsView: View {
 
     private func importProxyProfile() {
         let panel = NSOpenPanel()
-        panel.title = "导入代理配置"
-        panel.message = "选择 Mihomo YAML、分享配置，或可迁移的旧版 JSON。"
+        panel.title = "导入 Mihomo YAML"
+        panel.message = "选择 .yaml 或 .yml 配置文件。"
         panel.prompt = "导入"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -1052,7 +1045,6 @@ struct SettingsView: View {
         panel.allowedContentTypes = [
             UTType(filenameExtension: "yaml"),
             UTType(filenameExtension: "yml"),
-            .json,
         ].compactMap { $0 }
         if panel.runModal() == .OK, let url = panel.url {
             model.importProxyProfile(from: url)

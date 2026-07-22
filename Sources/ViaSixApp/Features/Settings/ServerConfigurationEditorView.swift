@@ -2,20 +2,6 @@ import SwiftUI
 import ViaSixCore
 import ViaSixMihomoConfig
 
-enum ServerConfigurationInputMode: String, CaseIterable, Identifiable {
-    case manual
-    case shareLink
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .manual: "手动配置"
-        case .shareLink: "分享链接"
-        }
-    }
-}
-
 struct ServerConfigurationEditorView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -23,19 +9,14 @@ struct ServerConfigurationEditorView: View {
     @State private var profile = MihomoProxyProfile()
     @State private var originalProfile: MihomoProxyProfile?
     @State private var originalData: Data?
-    @State private var inputMode: ServerConfigurationInputMode
+    @State private var guidedDraft: MihomoGuidedProfileDraft?
+    @State private var usesSelectedPrimaryServer = false
     @State private var serverPortText = "443"
-    @State private var shareLink = ""
-    @State private var shareLinkError: String?
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var loadError: String?
     @State private var saveError: String?
     @State private var showsDiscardConfirmation = false
-
-    init(initialInputMode: ServerConfigurationInputMode = .manual) {
-        _inputMode = State(initialValue: initialInputMode)
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,9 +30,8 @@ struct ServerConfigurationEditorView: View {
                 form
             }
         }
-        .frame(minWidth: 700, minHeight: editorMinimumHeight)
+        .frame(minWidth: 700, minHeight: 640)
         .background(VisualStyle.pageBackground)
-        .animation(VisualStyle.standardAnimation, value: editorMinimumHeight)
         .task { await load() }
         .onChange(of: profile.protocolName) { _, protocolName in
             applyProtocolDefaults(for: protocolName)
@@ -84,29 +64,7 @@ struct ServerConfigurationEditorView: View {
     private var form: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: VisualStyle.spacing16) {
-                ConfigurationSection("配置方式", systemImage: "square.and.pencil") {
-                    Picker("配置方式", selection: $inputMode) {
-                        ForEach(ServerConfigurationInputMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(maxWidth: 360)
-                    .disabled(isSaving)
-
-                    if inputMode == .shareLink {
-                        shareLinkForm
-                    } else {
-                        Text("填写服务器提供的连接参数；保存前会检查必填字段。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if inputMode == .manual {
-                    manualConfigurationForm
-                }
+                manualConfigurationForm
 
                 editorFeedback
                 editorFooter
@@ -114,38 +72,6 @@ struct ServerConfigurationEditorView: View {
             .padding(VisualStyle.spacing20)
         }
         .scrollbarSafeContent()
-    }
-
-    private var shareLinkForm: some View {
-        VStack(alignment: .leading, spacing: VisualStyle.spacing8) {
-            HStack(spacing: VisualStyle.spacing8) {
-                TextField("vless://、vmess://、trojan:// 或 ss://", text: $shareLink)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
-                    .onSubmit(parseShareLink)
-
-                Button("读取并继续", systemImage: "arrow.right") {
-                    parseShareLink()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(
-                    isSaving
-                        || shareLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                )
-            }
-
-            if let shareLinkError {
-                Label(shareLinkError, systemImage: "exclamationmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("支持 VLESS、VMess、Trojan 和 Shadowsocks 分享链接。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.top, VisualStyle.spacing4)
     }
 
     @ViewBuilder
@@ -181,8 +107,16 @@ struct ServerConfigurationEditorView: View {
                 .textFieldStyle(.roundedBorder)
         }
         fieldRow("服务器地址") {
-            TextField("域名或 IP", text: $profile.serverAddress)
-                .textFieldStyle(.roundedBorder)
+            VStack(alignment: .leading, spacing: 4) {
+                TextField("域名或 IP", text: $profile.serverAddress)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(usesSelectedPrimaryServer)
+                if usesSelectedPrimaryServer {
+                    Text("该地址来自当前优选节点，仅在运行时注入，不会写入 YAML。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         fieldRow("服务器端口") {
             TextField("443", text: $serverPortText)
@@ -323,19 +257,13 @@ struct ServerConfigurationEditorView: View {
 
     private var editorFooter: some View {
         HStack(spacing: VisualStyle.spacing12) {
-            if inputMode == .manual {
-                Label(
-                    "\(profile.protocolName.displayName) · \(serverAddressSummary)",
-                    systemImage: "server.rack"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            } else {
-                Text("读取链接后可以检查并修改所有字段")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Label(
+                "\(profile.protocolName.displayName) · \(serverAddressSummary)",
+                systemImage: "server.rack"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
 
             Spacer()
 
@@ -356,7 +284,7 @@ struct ServerConfigurationEditorView: View {
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut("s", modifiers: .command)
-            .disabled(isSaving || inputMode != .manual)
+            .disabled(isSaving)
         }
         .padding(.top, VisualStyle.spacing4)
     }
@@ -387,19 +315,7 @@ struct ServerConfigurationEditorView: View {
         return address.isEmpty ? "未填写地址" : "\(address):\(serverPortText)"
     }
 
-    private var editorMinimumHeight: CGFloat {
-        if !isLoading, loadError == nil, inputMode == .shareLink {
-            return 420
-        }
-        return 640
-    }
-
     private var hasUnsavedChanges: Bool {
-        if inputMode == .shareLink,
-            !shareLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            return true
-        }
         guard let originalProfile else { return false }
         guard let port = Int(serverPortText.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             return true
@@ -418,14 +334,10 @@ struct ServerConfigurationEditorView: View {
             )
 
             HStack(spacing: VisualStyle.spacing8) {
-                Button("使用分享链接重新配置", systemImage: "link") {
-                    beginReplacement(using: .shareLink)
+                Button("手动重新配置", systemImage: "slider.horizontal.3") {
+                    beginReplacement()
                 }
                 .buttonStyle(.borderedProminent)
-
-                Button("手动重新配置", systemImage: "slider.horizontal.3") {
-                    beginReplacement(using: .manual)
-                }
 
                 Button("关闭") {
                     dismiss()
@@ -453,6 +365,8 @@ struct ServerConfigurationEditorView: View {
             serverPortText = String(profile.serverPort)
             originalProfile = profile
             originalData = nil
+            guidedDraft = nil
+            usesSelectedPrimaryServer = false
             loadError = nil
             isLoading = false
             return
@@ -461,7 +375,13 @@ struct ServerConfigurationEditorView: View {
         do {
             let data = try await model.loadProfileConfiguration()
             originalData = data
-            profile = try MihomoGuidedProfileDraft.editableProfile(from: data)
+            let draft = try MihomoGuidedProfileDraft.editable(
+                from: data,
+                selectedServer: model.state.preferences.selectedIP
+            )
+            guidedDraft = draft
+            usesSelectedPrimaryServer = draft.usesSelectedPrimaryServer
+            profile = draft.profile
             applyProtocolDefaults(for: profile.protocolName)
             serverPortText = String(profile.serverPort)
             originalProfile = profile
@@ -473,30 +393,14 @@ struct ServerConfigurationEditorView: View {
         isLoading = false
     }
 
-    private func beginReplacement(using mode: ServerConfigurationInputMode) {
+    private func beginReplacement() {
         profile = MihomoProxyProfile()
         serverPortText = String(profile.serverPort)
         originalProfile = profile
-        shareLink = ""
-        shareLinkError = nil
+        guidedDraft = nil
+        usesSelectedPrimaryServer = false
         saveError = nil
         loadError = nil
-        inputMode = mode
-    }
-
-    private func parseShareLink() {
-        shareLinkError = nil
-        do {
-            profile = try MihomoShareLinkParser.profile(from: shareLink)
-            applyProtocolDefaults(for: profile.protocolName)
-            serverPortText = String(profile.serverPort)
-            saveError = nil
-            withAnimation(VisualStyle.standardAnimation) {
-                inputMode = .manual
-            }
-        } catch {
-            shareLinkError = error.localizedDescription
-        }
     }
 
     private func applyProtocolDefaults(for protocolName: MihomoProxyProtocol) {
@@ -529,7 +433,9 @@ struct ServerConfigurationEditorView: View {
                 saveError = "请输入 Shadowsocks 加密算法。"
                 return
             }
-            let data = try profile.serverConfiguration().formattedData()
+            let data =
+                try guidedDraft?.data(replacing: profile)
+                ?? profile.serverConfiguration().formattedData()
             isSaving = true
             Task { @MainActor in
                 do {
@@ -573,14 +479,34 @@ enum MihomoGuidedProfileDraftError: LocalizedError, Equatable {
 }
 
 struct MihomoGuidedProfileDraft {
-    static func editableProfile(from data: Data) throws -> MihomoProxyProfile {
+    let profile: MihomoProxyProfile
+    let source: MihomoServerConfiguration
+    let usesSelectedPrimaryServer: Bool
+
+    static func editable(from data: Data, selectedServer: String) throws -> Self {
         let configuration = try MihomoServerConfiguration(data: data)
-        let profile = try configuration.primaryProfile()
-        let canonicalData = try configuration.formattedData()
-        let guidedData = try profile.serverConfiguration().formattedData()
-        guard canonicalData == guidedData else {
+        let usesSelectedPrimaryServer = configuration.requiresSelectedPrimaryServer
+        let normalizedServer = selectedServer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let profile =
+            try usesSelectedPrimaryServer
+            ? configuration.primaryProfile(
+                replacingSelectedServerWith: normalizedServer.isEmpty
+                    ? "当前未选择优选节点"
+                    : normalizedServer
+            )
+            : configuration.primaryProfile()
+        let guided = try configuration.guidedConfiguration(replacingPrimaryProfile: profile)
+        guard configuration.isRepresentedByGuidedConfiguration(guided) else {
             throw MihomoGuidedProfileDraftError.requiresAdvancedEditor
         }
-        return profile
+        return Self(
+            profile: profile,
+            source: configuration,
+            usesSelectedPrimaryServer: usesSelectedPrimaryServer
+        )
+    }
+
+    func data(replacing profile: MihomoProxyProfile) throws -> Data {
+        try source.guidedConfiguration(replacingPrimaryProfile: profile).formattedData()
     }
 }

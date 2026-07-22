@@ -20,7 +20,10 @@ final class MihomoProfileEditorTests: XCTestCase {
         )
         let data = try profile.serverConfiguration().formattedData()
 
-        XCTAssertEqual(try MihomoGuidedProfileDraft.editableProfile(from: data), profile)
+        XCTAssertEqual(
+            try MihomoGuidedProfileDraft.editable(from: data, selectedServer: "").profile,
+            profile
+        )
     }
 
     func testGuidedEditorRejectsConfigurationThatWouldLoseAdditionalFields() throws {
@@ -36,9 +39,88 @@ final class MihomoProfileEditorTests: XCTestCase {
             """.utf8
         )
 
-        XCTAssertThrowsError(try MihomoGuidedProfileDraft.editableProfile(from: data)) { error in
+        XCTAssertThrowsError(
+            try MihomoGuidedProfileDraft.editable(from: data, selectedServer: "")
+        ) { error in
             XCTAssertEqual(error as? MihomoGuidedProfileDraftError, .requiresAdvancedEditor)
         }
+    }
+
+    func testGuidedEditorEditsSelectedIPTemplateWithoutPersistingServer() throws {
+        let data = Data(
+            """
+            x-viasix:
+              version: 1
+              primary-server: selected-ip
+              routing-mode: rule
+              udp-enabled: false
+              log-level: info
+            proxies:
+              - name: edge
+                type: vless
+                port: 443
+                uuid: 11111111-1111-4111-8111-111111111111
+                encryption: none
+                tls: true
+                servername: edge.example.com
+                client-fingerprint: chrome
+                skip-cert-verify: false
+                network: ws
+                ws-opts:
+                  path: /ws
+                  headers:
+                    Host: edge.example.com
+            """.utf8
+        )
+
+        let draft = try MihomoGuidedProfileDraft.editable(
+            from: data,
+            selectedServer: "2606:4700::1"
+        )
+        XCTAssertTrue(draft.usesSelectedPrimaryServer)
+        XCTAssertEqual(draft.profile.serverAddress, "2606:4700::1")
+        XCTAssertFalse(draft.profile.udpEnabled)
+
+        var changed = draft.profile
+        changed.name = "edited edge"
+        let saved = try MihomoServerConfiguration(data: draft.data(replacing: changed))
+
+        XCTAssertTrue(saved.requiresSelectedPrimaryServer)
+        XCTAssertEqual(saved.summary.primaryProxyName, "edited edge")
+        XCTAssertNil(MihomoServerConfiguration.proxyServerAddress(in: saved.data))
+        XCTAssertEqual(saved.viaSixOptions?.udpEnabled, false)
+    }
+
+    func testGuidedEditorCanOpenSelectedIPTemplateBeforeSelectingNode() throws {
+        let data = Data(
+            """
+            x-viasix:
+              version: 1
+              primary-server: selected-ip
+              udp-enabled: false
+            proxies:
+              - name: edge
+                type: vless
+                port: 443
+                uuid: 11111111-1111-4111-8111-111111111111
+                encryption: none
+                udp: false
+                tls: true
+                servername: edge.example.com
+                client-fingerprint: chrome
+                skip-cert-verify: false
+                network: ws
+                ws-opts:
+                  path: /ws
+                  headers:
+                    Host: edge.example.com
+            """.utf8
+        )
+
+        let draft = try MihomoGuidedProfileDraft.editable(from: data, selectedServer: "")
+
+        XCTAssertTrue(draft.usesSelectedPrimaryServer)
+        XCTAssertEqual(draft.profile.serverAddress, "当前未选择优选节点")
     }
 
     func testDraftAnalysisRecognizesInlineProxyConfiguration() {

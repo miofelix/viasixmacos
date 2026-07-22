@@ -103,23 +103,22 @@ fi
     || fail "output directory is missing or is a symlink"
 
 yaml_path="$output_dir/viasix-mihomo.yaml"
-link_path="$output_dir/viasix-vless-link.txt"
-for destination in "$yaml_path" "$link_path"; do
-    if [[ -e "$destination" && ( ! -f "$destination" || -L "$destination" ) ]]; then
-        fail "output exists and is not a regular file: $destination"
-    fi
-done
+obsolete_link_path="$output_dir/viasix-vless-link.txt"
+if [[ -e "$yaml_path" && ( ! -f "$yaml_path" || -L "$yaml_path" ) ]]; then
+    fail "output exists and is not a regular file: $yaml_path"
+fi
+if [[ -e "$obsolete_link_path" ]]; then
+    [[ -f "$obsolete_link_path" && ! -L "$obsolete_link_path" ]] \
+        || fail "obsolete share-link output is not a regular file: $obsolete_link_path"
+    /bin/rm -f -- "$obsolete_link_path"
+fi
 
 yaml_temporary=$(mktemp "$output_dir/.mihomo-config.XXXXXX") \
     || fail "cannot create a temporary YAML file"
-link_temporary=$(mktemp "$output_dir/.vless-link.XXXXXX") \
-    || fail "cannot create a temporary link file"
 
 cleanup() {
     [[ -f "$yaml_temporary" && ! -L "$yaml_temporary" ]] \
         && /bin/rm -f -- "$yaml_temporary"
-    [[ -f "$link_temporary" && ! -L "$link_temporary" ]] \
-        && /bin/rm -f -- "$link_temporary"
 }
 trap cleanup EXIT
 
@@ -138,6 +137,7 @@ proxies:
     port: $port
     uuid: "$uuid"
     encryption: none
+    udp: false
     tls: true
     servername: "$host"
     client-fingerprint: chrome
@@ -149,15 +149,9 @@ proxies:
         Host: "$host"
 EOF
 
-print -r -- "vless://${uuid}@${host}:${port}?encryption=none&security=tls&sni=${host}&fp=chrome&type=ws&host=${host}&path=%2F%3Fed%3D2560#ViaSix%20Cloudflare%20Pages" \
-    > "$link_temporary"
-
-/bin/chmod 600 "$yaml_temporary" "$link_temporary"
+/bin/chmod 600 "$yaml_temporary"
 /bin/mv -f "$yaml_temporary" "$yaml_path"
 yaml_temporary=""
-/bin/mv -f "$link_temporary" "$link_path"
-link_temporary=""
 
 print "Prepared ViaSix Mihomo YAML: $yaml_path"
-print "Prepared ViaSix share link: $link_path"
 print -u2 "The YAML intentionally omits server; select a current node in ViaSix before importing it."

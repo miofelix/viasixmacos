@@ -763,6 +763,12 @@ final class AppModel {
             showNotice("应用仍在准备，请稍后再试", style: .error)
             return
         }
+        guard ["yaml", "yml"].contains(url.pathExtension.lowercased()) else {
+            let message = "仅支持导入 .yaml 或 .yml 配置文件"
+            state.templateOperationError = message
+            showNotice(message, style: .error)
+            return
+        }
         guard
             templateImportTask == nil,
             templateSaveTask == nil,

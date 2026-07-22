@@ -97,6 +97,10 @@ clash_url="https://${host}/${uuid}/pcl"
 
 /usr/bin/grep -Fq "$uuid" "$work_directory/config.html" \
     || fail "configuration page does not contain the expected UUID"
+if /usr/bin/grep -Fq 'vless://' "$work_directory/config.html" \
+    || /usr/bin/grep -Fq 'VLESS:' "$work_directory/config.html"; then
+    fail "configuration page must publish only the Mihomo YAML endpoint"
+fi
 if /usr/bin/grep -Fqi 'error code: 1101' "$work_directory/config.html"; then
     fail "Cloudflare returned error 1101"
 fi
@@ -117,6 +121,8 @@ fi
     || fail "Pages endpoint does not import ViaSix rule routing"
 /usr/bin/grep -Fq 'udp-enabled: false' "$work_directory/clash.yaml" \
     || fail "Pages endpoint does not disable UDP through x-viasix"
+/usr/bin/grep -Fq 'udp: false' "$work_directory/clash.yaml" \
+    || fail "Pages endpoint does not disable UDP on the proxy"
 /usr/bin/grep -Fq 'log-level: info' "$work_directory/clash.yaml" \
     || fail "Pages endpoint does not import the expected log level"
 if /usr/bin/grep -Eq '^[[:space:]]+server:[[:space:]]' "$work_directory/clash.yaml"; then
