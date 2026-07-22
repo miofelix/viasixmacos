@@ -44,6 +44,7 @@ make android-skeleton
 | 系统代理 | 不适用 |
 | 完整 UDP / 成熟 TCP 状态机 / IPv6 转发 | 简化实现，后续可换 hev/native |
 | 会话偏好持久化 | ✓ SharedPreferences |
+| Controller 健康 + 累计流量展示 | ✓ |
 | mihomo 资产拉取脚本 | ✓ `scripts/fetch-mihomo.mjs` |
 
 ## 契约

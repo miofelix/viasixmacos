@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import dev.viasix.app.MainActivity
+import dev.viasix.app.mihomo.ControllerClient
 import dev.viasix.app.mihomo.MihomoInstaller
 import dev.viasix.app.mihomo.MihomoProcess
 import dev.viasix.app.tun.Tun2SocksEngine
@@ -92,6 +93,18 @@ class ViaSixVpnService : VpnService() {
         process.start(yaml)
         mihomo = process
 
+        // Give controller a moment, then verify and persist runtime status for the UI.
+        ControllerClient.sleepQuietly(400)
+        val health = ControllerClient.probe("127.0.0.1", CONTROLLER_PORT, secret)
+        writeRuntimeStatus(
+            running = process.isRunning,
+            healthMessage = health.message,
+            secret = secret,
+        )
+        if (!health.ok) {
+            Log.w(TAG, "controller not healthy yet: ${health.message}")
+        }
+
         // Exclude our UID so mihomo outbound sockets use the underlying network
         // instead of looping into this VPN interface.
         val builder =
@@ -140,11 +153,23 @@ class ViaSixVpnService : VpnService() {
                 )
             engine.start()
             tunEngine = engine
-            updateNotification("Full tunnel · mihomo mixed :$MIXED_PORT")
+            updateNotification(
+                if (health.ok) {
+                    "Full tunnel · mixed :$MIXED_PORT · ${health.version ?: "ok"}"
+                } else {
+                    "Full tunnel · mixed :$MIXED_PORT · controller warming"
+                },
+            )
         } else {
-            updateNotification("Proxy VPN · mihomo mixed :$MIXED_PORT")
+            updateNotification(
+                if (health.ok) {
+                    "Proxy VPN · mixed :$MIXED_PORT · ${health.version ?: "ok"}"
+                } else {
+                    "Proxy VPN · mixed :$MIXED_PORT · controller warming"
+                },
+            )
         }
-        Log.i(TAG, "stack ready fullTunnel=$fullTunnel")
+        Log.i(TAG, "stack ready fullTunnel=$fullTunnel health=${health.message}")
     }
 
     override fun onDestroy() {
@@ -171,8 +196,20 @@ class ViaSixVpnService : VpnService() {
         } catch (_: Exception) {
         }
         tunnel = null
+        writeRuntimeStatus(running = false, healthMessage = "stopped", secret = "")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun writeRuntimeStatus(running: Boolean, healthMessage: String, secret: String) {
+        getSharedPreferences(RUNTIME_PREFS, MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_RUNNING, running)
+            .putString(KEY_HEALTH, healthMessage)
+            .putString(KEY_SECRET, secret)
+            .putInt(KEY_CONTROLLER_PORT, CONTROLLER_PORT)
+            .putInt(KEY_MIXED_PORT, MIXED_PORT)
+            .apply()
     }
 
     private fun updateNotification(content: String) {
@@ -222,6 +259,12 @@ class ViaSixVpnService : VpnService() {
         const val EXTRA_FULL_TUNNEL = "full_tunnel"
         const val MIXED_PORT = 11451
         const val CONTROLLER_PORT = 9090
+        const val RUNTIME_PREFS = "viasix_runtime"
+        const val KEY_RUNNING = "running"
+        const val KEY_HEALTH = "health"
+        const val KEY_SECRET = "secret"
+        const val KEY_CONTROLLER_PORT = "controllerPort"
+        const val KEY_MIXED_PORT = "mixedPort"
 
         private const val CHANNEL_ID = "viasix_vpn"
         private const val NOTIFICATION_ID = 42

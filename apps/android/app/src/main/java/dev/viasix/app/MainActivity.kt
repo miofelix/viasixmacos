@@ -33,9 +33,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.viasix.app.mihomo.ControllerClient
 import dev.viasix.app.prefs.SessionPrefs
 import dev.viasix.app.prefs.SessionPrefsStore
 import dev.viasix.app.vpn.ViaSixVpnService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import dev.viasix.core.projection.MihomoProjection
 import dev.viasix.core.projection.ProjectError
 import dev.viasix.core.projection.ProjectOptions
@@ -91,6 +94,7 @@ class MainActivity : ComponentActivity() {
                     var status by remember {
                         mutableStateOf("Android · 投影 + mihomo + 全量隧道(TCP/DNS)")
                     }
+                    var runtimeLine by remember { mutableStateOf("运行时：—") }
 
                     fun persist() {
                         prefsStore.save(
@@ -105,6 +109,45 @@ class MainActivity : ComponentActivity() {
 
                     LaunchedEffect(profile, selectedIp, mode, fullTunnel) {
                         persist()
+                    }
+
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            val runtime =
+                                getSharedPreferences(
+                                    ViaSixVpnService.RUNTIME_PREFS,
+                                    MODE_PRIVATE,
+                                )
+                            val running = runtime.getBoolean(ViaSixVpnService.KEY_RUNNING, false)
+                            val health =
+                                runtime.getString(ViaSixVpnService.KEY_HEALTH, "—") ?: "—"
+                            if (!running) {
+                                runtimeLine = "运行时：已停止"
+                            } else {
+                                val port =
+                                    runtime.getInt(
+                                        ViaSixVpnService.KEY_CONTROLLER_PORT,
+                                        ViaSixVpnService.CONTROLLER_PORT,
+                                    )
+                                val secret =
+                                    runtime.getString(ViaSixVpnService.KEY_SECRET, "") ?: ""
+                                val traffic =
+                                    withContext(Dispatchers.IO) {
+                                        ControllerClient.connectionsTotals(
+                                            "127.0.0.1",
+                                            port,
+                                            secret,
+                                        )
+                                    }
+                                runtimeLine =
+                                    if (traffic.live) {
+                                        "运行时：$health · ${traffic.message}"
+                                    } else {
+                                        "运行时：$health · ${traffic.message}"
+                                    }
+                            }
+                            kotlinx.coroutines.delay(1500)
+                        }
                     }
 
                     fun buildStartIntent(): Intent =
@@ -246,6 +289,7 @@ class MainActivity : ComponentActivity() {
                             Text("停止")
                         }
                         Text(status, style = MaterialTheme.typography.bodySmall)
+                        Text(runtimeLine, style = MaterialTheme.typography.bodySmall)
                         Text(
                             "全量隧道：默认路由 + 用户态转发（TCP via mihomo SOCKS，DNS protect 出站）。" +
                                 "本应用 UID 排除在 VPN 外以防环路。需 arm64 + fetch-mihomo.mjs。",
