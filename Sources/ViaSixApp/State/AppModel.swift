@@ -2406,6 +2406,11 @@ final class AppModel {
         parameters.lossRateUpperBound = 1
         parameters.speedLowerBound = 0
         parameters.colo = ""
+        // CFST does not create a CSV when a single node is unreachable. Keep
+        // its diagnostic reason in the app log so that the resulting
+        // no-results message is actionable instead of looking like a file
+        // system failure.
+        parameters.debug = true
         return try parameters.validated()
     }
 

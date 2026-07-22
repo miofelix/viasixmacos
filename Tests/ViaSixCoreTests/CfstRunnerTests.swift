@@ -351,6 +351,28 @@ final class CfstRunnerTests: XCTestCase {
         XCTAssertTrue(fixture.temporaryResultURLs.isEmpty)
     }
 
+    func testUpstreamNoResultsOutputWithoutCSVMapsToNoResults() async throws {
+        let fixture = try CfstRunnerFixture(
+            script: #"""
+                #!/bin/sh
+                printf '[信息] 延迟测速结果 IP 数量为 0，跳过下载测速。\n'
+                exit 0
+                """#)
+        defer { fixture.remove() }
+
+        try fixture.writeCanonicalResult(ip: "old-ip")
+
+        let runner = CfstRunner(executableURL: fixture.executableURL)
+        do {
+            _ = try await runner.run(parameters: .init(ipRange: "2606:4700::/32"))
+            XCTFail("Expected no-results error")
+        } catch let error as CfstRunnerError {
+            XCTAssertEqual(error, .noResults)
+        }
+        XCTAssertEqual(try fixture.canonicalResultIPs(), ["old-ip"])
+        XCTAssertTrue(fixture.temporaryResultURLs.isEmpty)
+    }
+
     func testHeaderOnlyCSVPreservesLastSuccessfulResult() async throws {
         let fixture = try CfstRunnerFixture(
             script: #"""

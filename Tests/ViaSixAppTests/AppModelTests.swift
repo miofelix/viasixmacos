@@ -2089,6 +2089,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.state.configurationTest.parameters?.lossRateUpperBound, 1)
         XCTAssertEqual(model.state.configurationTest.parameters?.speedLowerBound, 0)
         XCTAssertEqual(model.state.configurationTest.parameters?.colo, "")
+        XCTAssertTrue(model.state.configurationTest.parameters?.debug == true)
         XCTAssertNotNil(model.state.configurationTest.completedAt)
 
         model.selectIP("2606::8")
@@ -2096,6 +2097,35 @@ final class AppModelTests: XCTestCase {
             model.switchingIP == nil && model.state.preferences.selectedIP == "2606::8"
         }
         XCTAssertNil(model.state.configurationTest.result)
+        await model.shutdown()
+    }
+
+    func testCurrentConfigurationNoResultsDoesNotReportInternalCSVPath() async throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let model = try await makeSpeedTestModel(
+            paths: paths,
+            selectedIP: "2606::16",
+            script: #"""
+                #!/bin/sh
+                printf '[信息] 延迟测速结果 IP 数量为 0，跳过下载测速。\n'
+                exit 0
+                """#
+        )
+
+        model.startCurrentConfigurationTest()
+        try await waitUntil {
+            if case .failed = model.state.configurationTest.phase { return true }
+            return false
+        }
+
+        XCTAssertEqual(model.state.notice?.message, "当前节点测速失败：没有任何 IP 通过测速")
+        XCTAssertFalse(model.state.notice?.message.contains(".current-test-") == true)
+        XCTAssertTrue(
+            model.state.logs.contains {
+                $0.message.contains("延迟测速结果 IP 数量为 0")
+            }
+        )
         await model.shutdown()
     }
 

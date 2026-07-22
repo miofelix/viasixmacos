@@ -210,7 +210,10 @@ public actor CfstRunner {
                 )
             }
 
-            let results = try loadNewResults(from: temporaryResultURL)
+            let results = try loadNewResults(
+                from: temporaryResultURL,
+                processOutput: output
+            )
             guard activeRun?.userCancelled != true, !Task.isCancelled else {
                 throw CfstRunnerError.userCancelled
             }
@@ -294,9 +297,15 @@ public actor CfstRunner {
         )
     }
 
-    private func loadNewResults(from temporaryResultURL: URL) throws -> [SpeedTestResult] {
+    private func loadNewResults(
+        from temporaryResultURL: URL,
+        processOutput: String
+    ) throws -> [SpeedTestResult] {
         let path = resultURL.path
         guard FileManager.default.fileExists(atPath: temporaryResultURL.path) else {
+            if Self.outputIndicatesNoResults(processOutput) {
+                throw CfstRunnerError.noResults
+            }
             throw CfstRunnerError.resultFileMissing(path)
         }
 
@@ -315,6 +324,11 @@ public actor CfstRunner {
         }
         guard !results.isEmpty else { throw CfstRunnerError.noResults }
         return results
+    }
+
+    private nonisolated static func outputIndicatesNoResults(_ output: String) -> Bool {
+        output.contains("延迟测速结果 IP 数量为 0")
+            || output.contains("完整测速结果 IP 数量为 0")
     }
 
     private func promoteResult(from temporaryResultURL: URL) throws {
