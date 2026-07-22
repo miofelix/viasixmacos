@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 public enum DefaultResourceInstaller {
@@ -44,7 +45,7 @@ public enum DefaultResourceInstaller {
         removingDerivedFiles: [URL] = [],
         using fileManager: FileManager
     ) throws {
-        guard fileManager.fileExists(atPath: destination.path) else {
+        guard try regularFileExists(at: destination) else {
             try copyIfMissing(resource: resource, extension: `extension`, to: destination, using: fileManager)
             return
         }
@@ -68,6 +69,7 @@ public enum DefaultResourceInstaller {
         removingDerivedFiles: [URL] = [],
         using fileManager: FileManager = .default
     ) throws -> Bool {
+        guard try regularFileExists(at: destination) else { return false }
         let installedData = try Data(contentsOf: destination)
         guard sha256(installedData) == expectedSHA256.lowercased() else { return false }
 
@@ -87,12 +89,30 @@ public enum DefaultResourceInstaller {
         to destination: URL,
         using fileManager: FileManager
     ) throws {
-        guard !fileManager.fileExists(atPath: destination.path) else { return }
+        if try regularFileExists(at: destination) { return }
         guard let source = resourceURL(named: resource, extension: `extension`) else {
             throw ResourceError.missing(resource + "." + `extension`)
         }
         try fileManager.copyItem(at: source, to: destination)
         try FilePermissions.restrictFile(destination, using: fileManager)
+    }
+
+    /// Returns whether `url` is a present regular file.
+    /// Missing paths return false; symbolic links and other types fail closed.
+    private static func regularFileExists(at url: URL) throws -> Bool {
+        var metadata = stat()
+        guard lstat(url.path, &metadata) == 0 else {
+            if errno == ENOENT { return false }
+            throw ResourceError.unsafeDestination(url, reason: String(cString: strerror(errno)))
+        }
+        let fileType = metadata.st_mode & S_IFMT
+        guard fileType != S_IFLNK else {
+            throw ResourceError.unsafeDestination(url, reason: "不能是符号链接")
+        }
+        guard fileType == S_IFREG else {
+            throw ResourceError.unsafeDestination(url, reason: "必须是普通文件")
+        }
+        return true
     }
 
     private static func resourceURL(named resource: String, extension: String) -> URL? {
@@ -114,10 +134,13 @@ public enum DefaultResourceInstaller {
 
 public enum ResourceError: LocalizedError, Equatable, Sendable {
     case missing(String)
+    case unsafeDestination(URL, reason: String)
 
     public var errorDescription: String? {
         switch self {
         case .missing(let name): "缺少内置资源：\(name)"
+        case .unsafeDestination(let url, let reason):
+            "内置资源目标路径不安全（\(reason)）：\(url.path)"
         }
     }
 }

@@ -123,6 +123,30 @@ final class DefaultResourceInstallerTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: paths.generatedConfig), generated)
     }
 
+    func testInstallRejectsSymbolicLinkResourceDestinationsWithoutFollowingTarget() throws {
+        let paths = makePaths()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        try paths.prepare()
+
+        let outside = paths.data.appendingPathComponent("outside-ip.txt")
+        let planted = Data("attacker-controlled-list\n".utf8)
+        try planted.write(to: outside)
+        try FileManager.default.createSymbolicLink(at: paths.ipv4List, withDestinationURL: outside)
+
+        do {
+            try DefaultResourceInstaller.install(into: paths)
+            XCTFail("Expected symbolic-link resource destination to be rejected")
+        } catch let error as ResourceError {
+            guard case .unsafeDestination(let url, let reason) = error else {
+                return XCTFail("Unexpected ResourceError: \(error)")
+            }
+            XCTAssertEqual(url, paths.ipv4List)
+            XCTAssertTrue(reason.contains("符号链接"))
+        }
+
+        XCTAssertEqual(try Data(contentsOf: outside), planted)
+    }
+
     private func makePaths() -> AppPaths {
         AppPaths(
             root: FileManager.default.temporaryDirectory.appendingPathComponent(
