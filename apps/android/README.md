@@ -43,6 +43,7 @@ make android-skeleton
 | HTTP 代理 VPN 模式（可选，无默认路由） | ✓ |
 | 系统代理 | 不适用 |
 | 完整 UDP / 成熟 TCP 状态机 / IPv6 转发 | 简化实现，后续可换 hev/native |
+| 会话偏好持久化 | ✓ SharedPreferences |
 | mihomo 资产拉取脚本 | ✓ `scripts/fetch-mihomo.mjs` |
 
 ## 契约

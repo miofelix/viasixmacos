@@ -19,6 +19,8 @@
 - 共享：`packages/mihomo-config` 契约校验脚本；`make contracts-check` 集成；tag draft Release 工作流。
 - Android：全量隧道转发加固（会话上限、写出队列、TCP 重传去重）。
 - Windows：会话偏好持久化（profile / IPv6 / 模式 / 系统代理 / 测速参数）与版本号展示。
+- Windows：版本对齐检查脚本（package.json / Cargo.toml / tauri.conf）。
+- Android：会话偏好持久化（profile / IPv6 / 模式 / 全量隧道开关）。
 - 首页新增实时流量统计：上下行速率、近 10 分钟流量曲线、会话累计上传/下载与 Mihomo 内存占用。
 - 连接运行中菜单栏显示两行上下行速率；菜单内同步展示速率摘要。
 - 通过 Mihomo external-controller 的 `/traffic`、`/memory` 与 `/connections`（仅 totals）WebSocket 订阅采集数据，断线自动重连。

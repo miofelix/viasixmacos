@@ -26,12 +26,15 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.Alignment
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import dev.viasix.app.prefs.SessionPrefs
+import dev.viasix.app.prefs.SessionPrefsStore
 import dev.viasix.app.vpn.ViaSixVpnService
 import dev.viasix.core.projection.MihomoProjection
 import dev.viasix.core.projection.ProjectError
@@ -40,6 +43,7 @@ import dev.viasix.core.projection.RoutingMode
 
 class MainActivity : ComponentActivity() {
     private var pendingStart: Intent? = null
+    private lateinit var prefsStore: SessionPrefsStore
 
     private val vpnPermission =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -52,31 +56,55 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        prefsStore = SessionPrefsStore(this)
+        val initial = prefsStore.load()
+        val defaultProfile =
+            """
+            proxies:
+              - name: My VLESS
+                type: vless
+                server: origin.example.com
+                port: 443
+                uuid: 11111111-1111-4111-1111-111111111111
+            x-viasix:
+              version: 1
+              primary-server: selected-ip
+            """.trimIndent()
+
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     var profile by remember {
                         mutableStateOf(
-                            """
-                            proxies:
-                              - name: My VLESS
-                                type: vless
-                                server: origin.example.com
-                                port: 443
-                                uuid: 11111111-1111-4111-1111-111111111111
-                            x-viasix:
-                              version: 1
-                              primary-server: selected-ip
-                            """.trimIndent(),
+                            initial.profileYaml.ifBlank { defaultProfile },
                         )
                     }
-                    var selectedIp by remember { mutableStateOf("2001:db8::1") }
-                    var mode by remember { mutableStateOf(RoutingMode.RULE) }
+                    var selectedIp by remember {
+                        mutableStateOf(initial.selectedAddress.ifBlank { "2001:db8::1" })
+                    }
+                    var mode by remember {
+                        mutableStateOf(RoutingMode.parse(initial.routingMode) ?: RoutingMode.RULE)
+                    }
                     var modeExpanded by remember { mutableStateOf(false) }
-                    var fullTunnel by remember { mutableStateOf(true) }
+                    var fullTunnel by remember { mutableStateOf(initial.fullTunnel) }
                     var preview by remember { mutableStateOf("# 点击生成运行配置") }
                     var status by remember {
                         mutableStateOf("Android · 投影 + mihomo + 全量隧道(TCP/DNS)")
+                    }
+
+                    fun persist() {
+                        prefsStore.save(
+                            SessionPrefs(
+                                profileYaml = profile,
+                                selectedAddress = selectedIp,
+                                routingMode = mode.wire,
+                                fullTunnel = fullTunnel,
+                            ),
+                        )
+                    }
+
+                    LaunchedEffect(profile, selectedIp, mode, fullTunnel) {
+                        persist()
                     }
 
                     fun buildStartIntent(): Intent =
@@ -101,14 +129,18 @@ class MainActivity : ComponentActivity() {
                         )
                         OutlinedTextField(
                             value = profile,
-                            onValueChange = { profile = it },
+                            onValueChange = {
+                                profile = it
+                            },
                             modifier = Modifier.fillMaxWidth(),
                             label = { Text("Profile YAML") },
                             minLines = 8,
                         )
                         OutlinedTextField(
                             value = selectedIp,
-                            onValueChange = { selectedIp = it },
+                            onValueChange = {
+                                selectedIp = it
+                            },
                             modifier = Modifier.fillMaxWidth(),
                             label = { Text("选中 IPv6") },
                             singleLine = true,

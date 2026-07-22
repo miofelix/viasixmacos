@@ -63,6 +63,10 @@ jobs:
         working-directory: apps/windows
         run: pnpm install --frozen-lockfile=false
 
+      - name: Check version alignment
+        working-directory: apps/windows
+        run: pnpm check:version
+
       - name: Download mihomo and CFST sidecars
         working-directory: apps/windows
         run: |

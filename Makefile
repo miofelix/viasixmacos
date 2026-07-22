@@ -90,6 +90,7 @@ windows-test:
 windows-build-docs:
 	@test -f "$(WINDOWS_DIR)/Docs/RELEASING.md"
 	@test -f ".github/workflows/windows-build.yml"
+	@node "$(WINDOWS_DIR)/scripts/check-version-align.mjs"
 	@echo "windows build docs OK"
 
 android-skeleton:

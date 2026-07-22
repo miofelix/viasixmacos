@@ -13,7 +13,8 @@
     "prebuild:cfst": "node scripts/fetch-cfst.mjs",
     "app:dev": "tauri dev",
     "app:build": "pnpm prebuild && tauri build",
-    "app:build:ci": "tauri build"
+    "app:build:ci": "tauri build",
+    "check:version": "node scripts/check-version-align.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.5.0",
