@@ -18,7 +18,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -55,7 +54,7 @@ class Tun2SocksEngine(
     private val udpRelays = ConcurrentHashMap<String, UdpClientRelay>()
     private var readerThread: Thread? = null
     private var writerThread: Thread? = null
-    private val outboundPackets = LinkedBlockingQueue<ByteArray>(512)
+    private val outboundPackets = OutboundPacketQueue(capacity = 512)
     private val executor: ExecutorService =
         Executors.newCachedThreadPool { r ->
             Thread(r, "viasix-tun-worker").apply { isDaemon = true }
@@ -73,11 +72,7 @@ class Tun2SocksEngine(
                 {
                     while (running.get()) {
                         val packet =
-                            try {
-                                outboundPackets.poll(200, TimeUnit.MILLISECONDS)
-                            } catch (_: InterruptedException) {
-                                break
-                            } ?: continue
+                            outboundPackets.poll(timeoutMs = 200L) ?: continue
                         try {
                             outStream.write(packet)
                             outStream.flush()
@@ -317,15 +312,21 @@ class Tun2SocksEngine(
             session.serverSeq = Random.nextInt().toLong() and 0xffffffffL
             session.clientNextSeq = TcpSequence.advance(session.clientIsn, syn = true)
 
-            enqueuePacket(
-                buildTcpPacket(
-                    session = session,
-                    seq = session.serverSeq,
-                    ack = session.clientNextSeq,
-                    flags = Packet.SYN or Packet.ACK,
-                    payload = ByteArray(0),
-                ),
-            )
+            val synAckQueued =
+                enqueuePacket(
+                    buildTcpPacket(
+                        session = session,
+                        seq = session.serverSeq,
+                        ack = session.clientNextSeq,
+                        flags = Packet.SYN or Packet.ACK,
+                        payload = ByteArray(0),
+                    ),
+                    lossless = true,
+                )
+            if (!synAckQueued) {
+                removeSession(key, session)
+                return
+            }
             session.serverSeq = TcpSequence.advance(session.serverSeq, syn = true)
             session.handshakeComplete = true
 
@@ -338,15 +339,18 @@ class Tun2SocksEngine(
                         if (n < 0) break
                         if (n == 0) continue
                         val chunk = buf.copyOf(n)
-                        enqueuePacket(
-                            buildTcpPacket(
-                                session = session,
-                                seq = session.serverSeq,
-                                ack = session.clientNextSeq,
-                                flags = Packet.PSH or Packet.ACK,
-                                payload = chunk,
-                            ),
-                        )
+                        val queued =
+                            enqueuePacket(
+                                buildTcpPacket(
+                                    session = session,
+                                    seq = session.serverSeq,
+                                    ack = session.clientNextSeq,
+                                    flags = Packet.PSH or Packet.ACK,
+                                    payload = chunk,
+                                ),
+                                lossless = true,
+                            )
+                        if (!queued) break
                         session.serverSeq =
                             TcpSequence.advance(session.serverSeq, payloadLength = n)
                     }
@@ -354,16 +358,20 @@ class Tun2SocksEngine(
                 } finally {
                     if (running.get() && sessions[key] === session && !session.serverFinSent) {
                         session.serverFinSent = true
-                        enqueuePacket(
-                            buildTcpPacket(
-                                session = session,
-                                seq = session.serverSeq,
-                                ack = session.clientNextSeq,
-                                flags = Packet.FIN or Packet.ACK,
-                                payload = ByteArray(0),
-                            ),
-                        )
-                        session.serverSeq = TcpSequence.advance(session.serverSeq, fin = true)
+                        if (
+                            enqueuePacket(
+                                buildTcpPacket(
+                                    session = session,
+                                    seq = session.serverSeq,
+                                    ack = session.clientNextSeq,
+                                    flags = Packet.FIN or Packet.ACK,
+                                    payload = ByteArray(0),
+                                ),
+                                lossless = true,
+                            )
+                        ) {
+                            session.serverSeq = TcpSequence.advance(session.serverSeq, fin = true)
+                        }
                     }
                     removeSession(key, session)
                 }
@@ -382,6 +390,7 @@ class Tun2SocksEngine(
                     flags = Packet.RST or Packet.ACK,
                     payload = ByteArray(0),
                 ),
+                lossless = true,
             )
             removeSession(key, session)
         }
@@ -687,13 +696,16 @@ class Tun2SocksEngine(
         )
     }
 
-    private fun enqueuePacket(packet: ByteArray) {
-        if (!running.get()) return
-        if (!outboundPackets.offer(packet)) {
-            outboundPackets.poll()
-            outboundPackets.offer(packet)
-        }
-    }
+    private fun enqueuePacket(
+        packet: ByteArray,
+        lossless: Boolean = false,
+    ): Boolean =
+        running.get() &&
+            outboundPackets.offer(
+                packet = packet,
+                lossless = lossless,
+                timeoutMs = if (lossless) LOSSLESS_ENQUEUE_TIMEOUT_MS else 0L,
+            )
 
     private fun removeSession(key: String, session: TcpSession) {
         if (sessions.remove(key, session)) {
@@ -767,5 +779,6 @@ class Tun2SocksEngine(
     companion object {
         private const val TAG = "Tun2SocksEngine"
         private const val PENDING_CAP = 8
+        private const val LOSSLESS_ENQUEUE_TIMEOUT_MS = 1_000L
     }
 }

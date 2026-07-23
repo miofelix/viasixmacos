@@ -58,7 +58,7 @@ make android-assemble
 | 分区导航 UI（对齐 macOS 信息架构） | ✓ |
 | VpnService 权限与前台会话 / 重启重连 | ✓（设置页授权与系统“始终开启 VPN”入口；系统 VPN“配置”动作回流设置分区；Sticky/Always-on 恢复；启动中可安全取消；整栈就绪后才发布运行态；异常退出自动收敛） |
 | mihomo 用户态启动（assets → filesDir） | ✓ |
-| 全量隧道 IPv4/IPv6 TCP→SOCKS | ✓（阻塞 TUN fd；回绕安全的序列处理、重传去重、乱序拒绝与 FIN 半关闭） |
+| 全量隧道 IPv4/IPv6 TCP→SOCKS | ✓（阻塞 TUN fd；回绕安全序列/FIN；TCP 无损有界队列与远端读取背压） |
 | 全量隧道通用 UDP→SOCKS5 UDP ASSOCIATE | ✓（每本地源端口一条 ASSOCIATE；DNS 默认复用此路径） |
 | DNS 路由 | ✓（TCP/UDP 默认经 mihomo/SOCKS，支持显式 protect 直连与自定义数字 IPv4/IPv6 服务器） |
 | VPN MTU | ✓（默认 1500；可在 macOS 同款安全范围 1280–9000 内调整） |
