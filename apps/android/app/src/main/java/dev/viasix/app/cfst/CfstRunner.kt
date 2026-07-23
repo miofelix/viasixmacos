@@ -17,24 +17,19 @@ import java.util.concurrent.atomic.AtomicReference
 class CfstRunner {
     private val processRef = AtomicReference<Process?>(null)
     private val cancelRequested = AtomicBoolean(false)
-    private val running = AtomicBoolean(false)
 
     val isRunning: Boolean
-        get() = running.get()
+        get() = activeRunner.get() != null
 
     /**
      * Request cancel. Returns true if a run was in flight.
      */
     fun requestCancel(): Boolean {
-        if (!running.get()) return false
-        cancelRequested.set(true)
-        val process = processRef.get()
-        if (process != null) {
+        val owner = activeRunner.get() ?: return false
+        owner.cancelRequested.set(true)
+        owner.processRef.get()?.let { process ->
             try {
                 process.destroy()
-                if (!process.waitFor(2, TimeUnit.SECONDS)) {
-                    process.destroyForcibly()
-                }
             } catch (_: Exception) {
             }
         }
@@ -46,7 +41,7 @@ class CfstRunner {
         workDir: File,
         parameters: SpeedTestParameters,
     ): CfstRunOutcome {
-        if (!running.compareAndSet(false, true)) {
+        if (!activeRunner.compareAndSet(null, this)) {
             return CfstRunOutcome.Failed("已有测速任务正在运行")
         }
         cancelRequested.set(false)
@@ -54,7 +49,7 @@ class CfstRunner {
             runInner(binary, workDir, parameters)
         } finally {
             processRef.set(null)
-            running.set(false)
+            activeRunner.compareAndSet(this, null)
             cancelRequested.set(false)
         }
     }
@@ -98,7 +93,7 @@ class CfstRunner {
             }
 
         val command = listOf(binary.absolutePath) + args
-        Log.i(TAG, "spawn CFST: ${command.joinToString(" ")}")
+        logInfo("spawn CFST: ${command.joinToString(" ")}")
 
         val process =
             try {
@@ -118,7 +113,7 @@ class CfstRunner {
                     try {
                         process.inputStream.bufferedReader().useLines { lines ->
                             lines.forEach { line ->
-                                if (line.isNotBlank()) Log.i(TAG, line)
+                                if (line.isNotBlank()) logInfo(line)
                             }
                         }
                     } catch (_: Exception) {
@@ -131,11 +126,7 @@ class CfstRunner {
 
         while (true) {
             if (cancelRequested.get()) {
-                try {
-                    process.destroy()
-                    process.waitFor(3, TimeUnit.SECONDS)
-                } catch (_: Exception) {
-                }
+                terminateProcess(process)
                 return CfstRunOutcome.Cancelled
             }
             try {
@@ -180,8 +171,32 @@ class CfstRunner {
         )
     }
 
+    private fun terminateProcess(process: Process) {
+        try {
+            process.destroy()
+            if (!process.waitFor(2, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                process.waitFor(1, TimeUnit.SECONDS)
+            }
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            process.destroyForcibly()
+        } catch (_: Exception) {
+            process.destroyForcibly()
+        }
+    }
+
+    private fun logInfo(message: String) {
+        try {
+            Log.i(TAG, message)
+        } catch (_: RuntimeException) {
+            // android.util.Log is unavailable in local JVM unit tests.
+        }
+    }
+
     companion object {
         private const val TAG = "CfstRunner"
+        private val activeRunner = AtomicReference<CfstRunner?>(null)
     }
 }
 

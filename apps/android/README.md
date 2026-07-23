@@ -79,7 +79,7 @@ make android-assemble
 | 日志过滤（来源·级别·搜索）+ VPN 事件 | ✓（环形事件使用持久化严格递增 ID，同毫秒写入和设备校时回拨不会漏项） |
 | 会话偏好与恢复 | ✓ SharedPreferences（含当前分区、候选/出口设置）；进程重建立即恢复 VPN 运行态与授权中的启动动作 |
 | mihomo 资产拉取脚本 | ✓ `scripts/fetch-mihomo.mjs` |
-| CloudflareSpeedTest 测速 | ✓（arm64；对齐 macOS：参数校验 / 参数面板 / IP 源 / 排序 / 首页测试节点 / 应用重连；`fetch-cfst.mjs`） |
+| CloudflareSpeedTest 测速 | ✓（arm64；对齐 macOS：参数校验 / 参数面板 / IP 源 / 排序 / 首页测试节点 / 应用重连；runner 进程级单实例，停止不阻塞主线程且 Activity 销毁会收敛子进程；`fetch-cfst.mjs`） |
 | 快捷设置磁贴启停 | ✓（Clash/NekoBox 风格；共用 SessionStartGate） |
 | Android 14+ 磁贴跳转兼容 | ✓（API 34+ 使用 `PendingIntent`，API 26–33 保留兼容路径） |
 | 首页连接主控 + 通知实时速率/断开 | ✓（低打扰持续通知，可直接结束会话） |

@@ -1699,6 +1699,11 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    override fun onDestroy() {
+        cfstRunner.requestCancel()
+        super.onDestroy()
+    }
+
     private fun currentNotificationPermissionState(
         wasRequested: Boolean,
     ): NotificationPermissionState {
