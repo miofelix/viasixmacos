@@ -56,6 +56,7 @@
 
 ### 修复
 
+- 修复 Android 在 VPN 运行或切换阶段仍可重置会话偏好、导致当前连接与后续 Sticky/Always-on 恢复配置分叉的问题。
 - 修复 Android Always-on VPN 通过无 ViaSix 参数的系统 Intent 启动时误用空配置的问题；系统启动现恢复最后保存的有效会话参数。
 - 修复 Android 日志时钟在应用运行期间切换系统区域设置后仍沿用旧 Locale 的问题。
 - 修复 Android 14+ 快捷设置磁贴从折叠面板打开应用的兼容路径，并避免 API 26–28 访问 API 29 字幕接口；应用主题现覆盖 `minSdk 26`。

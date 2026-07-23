@@ -35,6 +35,10 @@ class SettingsResidualCopyTest {
             text.contains("电池优化") && text.contains("长期连接"),
         )
         assertTrue(
+            "Settings should disable destructive preference reset during a VPN session",
+            text.contains("enabled = !resetLocked") && text.contains("请先断开 VPN 后再重置"),
+        )
+        assertTrue(
             "Version should come from BuildConfig, not a hard-coded string",
             text.contains("BuildConfig.VERSION_NAME"),
         )

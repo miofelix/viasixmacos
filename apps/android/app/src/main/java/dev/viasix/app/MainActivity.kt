@@ -1295,25 +1295,41 @@ class MainActivity : ComponentActivity() {
                 },
                 onDismissNotice = { state = state.copy(notice = null) },
                 onClearSessionData = {
-                    prefsStore.clear()
-                    val resetPrefs = prefsStore.load()
-                    val currentRuntime = runtimeStore.load()
-                    selectedSection = AppSection.OVERVIEW
-                    state =
-                        SessionUiState.fromPrefs(resetPrefs)
-                            .copy(
-                                notificationPermission =
-                                    currentNotificationPermissionState(
-                                        wasRequested = resetPrefs.notificationPermissionRequested,
-                                    ),
-                                vpnPermission = currentVpnPermissionState(),
-                                batteryOptimization = currentBatteryOptimizationState(),
-                                runtimeComponents = state.runtimeComponents,
-                                runtime = currentRuntime.toUiSnapshot(),
-                                connectionPhase =
-                                    ConnectionPhase.restore(currentRuntime.running),
+                    if (state.connectionPhase.isActiveOrTransitioning) {
+                        update {
+                            it.appendLog(
+                                "运行中无法重置会话偏好，请先断开 VPN",
+                                LogLevel.Warning,
+                                LogSource.System,
+                                asNotice = true,
                             )
-                            .appendLog("已重置会话偏好", LogLevel.Warning, LogSource.System)
+                        }
+                    } else {
+                        prefsStore.clear()
+                        val resetPrefs = prefsStore.load()
+                        val currentRuntime = runtimeStore.load()
+                        selectedSection = AppSection.OVERVIEW
+                        state =
+                            SessionUiState.fromPrefs(resetPrefs)
+                                .copy(
+                                    notificationPermission =
+                                        currentNotificationPermissionState(
+                                            wasRequested =
+                                                resetPrefs.notificationPermissionRequested,
+                                        ),
+                                    vpnPermission = currentVpnPermissionState(),
+                                    batteryOptimization = currentBatteryOptimizationState(),
+                                    runtimeComponents = state.runtimeComponents,
+                                    runtime = currentRuntime.toUiSnapshot(),
+                                    connectionPhase =
+                                        ConnectionPhase.restore(currentRuntime.running),
+                                )
+                                .appendLog(
+                                    "已重置会话偏好",
+                                    LogLevel.Warning,
+                                    LogSource.System,
+                                )
+                    }
                 },
             )
         }

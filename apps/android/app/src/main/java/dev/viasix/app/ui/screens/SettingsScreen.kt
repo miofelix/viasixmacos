@@ -468,17 +468,20 @@ fun SettingsScreen(
             }
 
             SurfaceCard {
+                val resetLocked = state.connectionPhase.isActiveOrTransitioning
                 CardHeader(title = "数据", icon = Icons.Outlined.DeleteForever, tone = AppTone.Warning)
                 HorizontalDivider(color = colors.surfaceBorder)
                 Column(modifier = Modifier.padding(VisualStyle.spacing16)) {
                     Text(
                         "清除本机会话偏好（配置 YAML、节点候选、出口检测设置）。" +
-                            "不会卸载 mihomo 二进制或撤销 VPN 权限。",
+                            "不会卸载 mihomo 二进制或撤销 VPN 权限。" +
+                            if (resetLocked) " 请先断开 VPN 后再重置。" else "",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Button(
                         onClick = onClearSessionData,
+                        enabled = !resetLocked,
                         colors =
                             ButtonDefaults.buttonColors(
                                 containerColor = colors.warning,

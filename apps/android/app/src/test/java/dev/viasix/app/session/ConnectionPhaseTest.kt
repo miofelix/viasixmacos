@@ -72,7 +72,9 @@ class ConnectionPhaseTest {
         assertTrue(ConnectionPhase.STARTING.isBusy)
         assertTrue(ConnectionPhase.STOPPING.isBusy)
         assertFalse(ConnectionPhase.RUNNING.isBusy)
+        assertTrue(ConnectionPhase.STARTING.isActiveOrTransitioning)
         assertTrue(ConnectionPhase.RUNNING.isActiveOrTransitioning)
+        assertTrue(ConnectionPhase.STOPPING.isActiveOrTransitioning)
         assertFalse(ConnectionPhase.STOPPED.isActiveOrTransitioning)
     }
 }
