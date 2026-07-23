@@ -74,7 +74,7 @@ make android-assemble
 | CloudflareSpeedTest 测速 | ✓（arm64；对齐 macOS：参数校验 / 参数面板 / IP 源 / 排序 / 首页测试节点 / 应用重连；`fetch-cfst.mjs`） |
 | 快捷设置磁贴启停 | ✓（Clash/NekoBox 风格；共用 SessionStartGate） |
 | Android 14+ 磁贴跳转兼容 | ✓（API 34+ 使用 `PendingIntent`，API 26–33 保留兼容路径） |
-| 首页连接主控 + 通知实时速率 | ✓ |
+| 首页连接主控 + 通知实时速率/断开 | ✓（低打扰持续通知，可直接结束会话） |
 | 配置剪贴板 YAML 导入 | ✓（不自动拉取订阅 URL） |
 | 自适应导航壳 | ✓（底部栏 / 导航轨 / 上下文侧栏，按窗口宽度切换） |
 | 品牌图标 | ✓（复用 macOS IPv6 标记；自适应 / 圆形 / Android 13 主题图标 + 磁贴 / 通知图标） |

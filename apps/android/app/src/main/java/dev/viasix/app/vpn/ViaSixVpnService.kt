@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -366,36 +367,48 @@ class ViaSixVpnService : VpnService() {
 
     private fun buildNotification(content: String): Notification {
         val manager = getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel =
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "ViaSix VPN",
-                    NotificationManager.IMPORTANCE_LOW,
-                )
-            manager.createNotificationChannel(channel)
-        }
+        val channel =
+            NotificationChannel(
+                CHANNEL_ID,
+                "ViaSix VPN",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "ViaSix 连接状态、实时速率与会话控制"
+                setShowBadge(false)
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            }
+        manager.createNotificationChannel(channel)
         val launch =
             PendingIntent.getActivity(
                 this,
-                0,
+                REQUEST_OPEN_APP,
                 Intent(this, MainActivity::class.java),
                 PendingIntent.FLAG_IMMUTABLE,
             )
-        val builder =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Notification.Builder(this, CHANNEL_ID)
-            } else {
-                @Suppress("DEPRECATION")
-                Notification.Builder(this)
-            }
-        return builder
+        val disconnect =
+            PendingIntent.getService(
+                this,
+                REQUEST_DISCONNECT,
+                Intent(this, ViaSixVpnService::class.java).setAction(ACTION_STOP),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        val disconnectAction =
+            Notification.Action.Builder(
+                Icon.createWithResource(this, R.drawable.ic_viasix_notification),
+                "断开",
+                disconnect,
+            ).build()
+        return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("ViaSix")
             .setContentText(content)
             .setSmallIcon(R.drawable.ic_viasix_notification)
             .setColor(0xFF007AFF.toInt())
             .setContentIntent(launch)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
+            .addAction(disconnectAction)
             .build()
     }
 
@@ -421,6 +434,8 @@ class ViaSixVpnService : VpnService() {
         private val TIME_FORMAT = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
         private const val CHANNEL_ID = "viasix_vpn"
         private const val NOTIFICATION_ID = 42
+        private const val REQUEST_OPEN_APP = 43
+        private const val REQUEST_DISCONNECT = 44
         private const val TRAFFIC_POLL_MS = 1_500L
         private const val TAG = "ViaSixVpnService"
     }

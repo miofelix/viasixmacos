@@ -59,7 +59,7 @@ Android 功能对齐以 **macOS** 为准。Windows 端仍在完善中，**不得
 | 首页大连接控制 | Overview 顶部连接/断开 + 实时速率条（类似 Clash 电源按钮） |
 | 快捷设置磁贴 | `ViaSixTileService` 一键启停；与应用共用 `SessionStartGate` |
 | 配置粘贴导入 | Profiles「粘贴剪贴板」识别 mihomo/Clash YAML（不自动拉订阅 URL） |
-| 通知实时流量 | 前台 VPN 通知展示 ↑/↓ 紧凑速率与连接数 |
+| 通知实时流量与控制 | 前台 VPN 通知展示 ↑/↓ 紧凑速率与连接数，并提供“断开”动作；更新不重复提醒 |
 | 自适应应用壳 | `<600dp` 底部栏、`600–839dp` 导航轨、`≥840dp` 带连接状态和当前 IPv6 的侧栏 |
 | 跨端品牌图标 | 启动器复用 macOS IPv6 地址标记，支持 Adaptive Icon、圆形蒙版和 Android 13 主题图标；磁贴/通知使用高对比紧凑标记 |
 
