@@ -51,9 +51,18 @@ internal class BoundedWorkerPool(
 
     override fun close() {
         executor.shutdownNow()
+        try {
+            if (!executor.awaitTermination(CLOSE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                executor.shutdownNow()
+            }
+        } catch (_: InterruptedException) {
+            executor.shutdownNow()
+            Thread.currentThread().interrupt()
+        }
     }
 
     private companion object {
         const val IDLE_TIMEOUT_SECONDS = 30L
+        const val CLOSE_TIMEOUT_MS = 2_000L
     }
 }

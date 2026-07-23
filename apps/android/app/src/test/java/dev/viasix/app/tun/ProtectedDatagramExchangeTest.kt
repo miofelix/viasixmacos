@@ -88,4 +88,21 @@ class ProtectedDatagramExchangeTest {
         assertTrue(rejectedSocket?.isClosed == true)
         assertFalse(rejectedSocket?.isConnected == true)
     }
+
+    @Test
+    fun validationFailureClosesSuppliedSocket() {
+        val socket = DatagramSocket()
+
+        assertThrows(IllegalArgumentException::class.java) {
+            ProtectedDatagramExchange.exchangeWithSocket(
+                socket = socket,
+                target = loopback,
+                targetPort = 0,
+                request = byteArrayOf(1),
+                protect = { true },
+            )
+        }
+
+        assertTrue(socket.isClosed)
+    }
 }

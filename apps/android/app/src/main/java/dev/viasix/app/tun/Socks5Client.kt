@@ -18,15 +18,29 @@ internal object Socks5Client {
         connectTimeoutMs: Int = 10_000,
         handshakeTimeoutMs: Int = 10_000,
     ): Socket {
-        require(targetHost.address.size == 4 || targetHost.address.size == 16) {
-            "SOCKS5 target must be IPv4 or IPv6"
-        }
-        require(targetPort in 1..0xffff) { "SOCKS5 target port must be 1..65535" }
-        require(connectTimeoutMs >= 0 && handshakeTimeoutMs >= 0) {
-            "SOCKS5 timeouts must not be negative"
-        }
-        val socket = Socket()
+        validate(targetHost, targetPort, connectTimeoutMs, handshakeTimeoutMs)
+        return connectWithSocket(
+            socket = Socket(),
+            proxyHost = proxyHost,
+            proxyPort = proxyPort,
+            targetHost = targetHost,
+            targetPort = targetPort,
+            connectTimeoutMs = connectTimeoutMs,
+            handshakeTimeoutMs = handshakeTimeoutMs,
+        )
+    }
+
+    fun connectWithSocket(
+        socket: Socket,
+        proxyHost: String,
+        proxyPort: Int,
+        targetHost: InetAddress,
+        targetPort: Int,
+        connectTimeoutMs: Int = 10_000,
+        handshakeTimeoutMs: Int = 10_000,
+    ): Socket {
         try {
+            validate(targetHost, targetPort, connectTimeoutMs, handshakeTimeoutMs)
             socket.tcpNoDelay = true
             socket.soTimeout = handshakeTimeoutMs
             socket.connect(InetSocketAddress(proxyHost, proxyPort), connectTimeoutMs)
@@ -83,6 +97,21 @@ internal object Socks5Client {
             } catch (_: Exception) {
             }
             throw error
+        }
+    }
+
+    private fun validate(
+        targetHost: InetAddress,
+        targetPort: Int,
+        connectTimeoutMs: Int,
+        handshakeTimeoutMs: Int,
+    ) {
+        require(targetHost.address.size == 4 || targetHost.address.size == 16) {
+            "SOCKS5 target must be IPv4 or IPv6"
+        }
+        require(targetPort in 1..0xffff) { "SOCKS5 target port must be 1..65535" }
+        require(connectTimeoutMs >= 0 && handshakeTimeoutMs >= 0) {
+            "SOCKS5 timeouts must not be negative"
         }
     }
 

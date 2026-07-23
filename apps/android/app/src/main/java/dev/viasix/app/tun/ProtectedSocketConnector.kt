@@ -12,9 +12,23 @@ internal object ProtectedSocketConnector {
         targetPort: Int,
         protect: (Socket) -> Boolean,
         connectTimeoutMs: Int = 10_000,
-    ): Socket {
-        val socket = Socket()
-        return try {
+    ): Socket =
+        connectWithSocket(
+            socket = Socket(),
+            targetHost = targetHost,
+            targetPort = targetPort,
+            protect = protect,
+            connectTimeoutMs = connectTimeoutMs,
+        )
+
+    fun connectWithSocket(
+        socket: Socket,
+        targetHost: InetAddress,
+        targetPort: Int,
+        protect: (Socket) -> Boolean,
+        connectTimeoutMs: Int = 10_000,
+    ): Socket =
+        try {
             socket.tcpNoDelay = true
             if (!protect(socket)) {
                 throw IOException("VpnService.protect(socket) failed")
@@ -28,5 +42,4 @@ internal object ProtectedSocketConnector {
             }
             throw error
         }
-    }
 }

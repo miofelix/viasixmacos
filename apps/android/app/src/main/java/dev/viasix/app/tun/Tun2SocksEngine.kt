@@ -57,6 +57,7 @@ class Tun2SocksEngine(
     private val udpClients = UdpClientEndpointTable(maxEntries = maxUdpClients)
     private val udpRelays = ConcurrentHashMap<String, UdpClientRelay>()
     private val directDnsGate = BoundedConcurrencyGate(maxDirectDnsQueries)
+    private val inFlightIo = InFlightCloseableRegistry()
     private var readerThread: Thread? = null
     private var writerThread: Thread? = null
     private val outboundPackets = OutboundPacketQueue(capacity = 512)
@@ -70,12 +71,18 @@ class Tun2SocksEngine(
     private val udpRelayReactor = UdpRelayReactor()
     private var inChannel: FileChannel? = null
     private var outStream: FileOutputStream? = null
+    private var started = false
+    private var stopped = false
 
     init {
         TcpSegmentSizer.maxPayloadBytes(mtu, ipv6 = true)
     }
 
+    @Synchronized
     fun start() {
+        check(!stopped) { "Tun2SocksEngine cannot restart after stop" }
+        if (started) return
+        started = true
         if (!running.compareAndSet(false, true)) return
         try {
             val input = FileInputStream(tun.fileDescriptor).channel
@@ -169,18 +176,23 @@ class Tun2SocksEngine(
         }
     }
 
+    @Synchronized
     fun stop() {
+        if (stopped) return
+        stopped = true
         running.set(false)
+        val reader = readerThread
+        val writer = writerThread
         try {
-            readerThread?.interrupt()
+            reader?.interrupt()
         } catch (_: Exception) {
         }
         try {
-            writerThread?.interrupt()
+            writer?.interrupt()
         } catch (_: Exception) {
         }
-        readerThread = null
-        writerThread = null
+        maintenanceExecutor.shutdownNow()
+        inFlightIo.close()
         sessions.values.forEach { it.close() }
         sessions.clear()
         activeSessionCount.set(0)
@@ -188,9 +200,6 @@ class Tun2SocksEngine(
         udpRelayReactor.close()
         udpClients.clear()
         outboundPackets.clear()
-        maintenanceExecutor.shutdownNow()
-        connectionWorkers.close()
-        ioWorkers.close()
         try {
             inChannel?.close()
         } catch (_: Exception) {
@@ -201,7 +210,34 @@ class Tun2SocksEngine(
         } catch (_: Exception) {
         }
         outStream = null
+        connectionWorkers.close()
+        ioWorkers.close()
+        joinTunThread(reader, "reader")
+        joinTunThread(writer, "writer")
+        awaitMaintenanceTermination()
+        readerThread = null
+        writerThread = null
         Log.i(TAG, "Tun2SocksEngine stopped")
+    }
+
+    private fun joinTunThread(thread: Thread?, label: String) {
+        if (thread == null || thread === Thread.currentThread()) return
+        try {
+            thread.join(STOP_TIMEOUT_MS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+        if (thread.isAlive) Log.w(TAG, "TUN $label thread did not stop within timeout")
+    }
+
+    private fun awaitMaintenanceTermination() {
+        try {
+            if (!maintenanceExecutor.awaitTermination(STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "TUN maintenance executor did not stop within timeout")
+            }
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
     }
 
     private fun handlePacket(buffer: ByteBuffer) {
@@ -406,20 +442,27 @@ class Tun2SocksEngine(
                 mode = dnsRoutingMode,
             )
         val outboundHost = if (useProtectedDirect) dnsUpstream else session.remoteIp
+        val connectingSocket = Socket()
+        if (!inFlightIo.register(connectingSocket)) {
+            removeSession(key, session)
+            return
+        }
         try {
             val socket =
                 if (useProtectedDirect) {
-                    ProtectedSocketConnector.connect(
+                    ProtectedSocketConnector.connectWithSocket(
+                        socket = connectingSocket,
                         targetHost = dnsUpstream,
                         targetPort = session.remotePort,
                         protect = { socket -> vpnService.protect(socket) },
                     )
                 } else {
-                    Socks5Client.connect(
-                        socksHost,
-                        socksPort,
-                        session.remoteIp,
-                        session.remotePort,
+                    Socks5Client.connectWithSocket(
+                        socket = connectingSocket,
+                        proxyHost = socksHost,
+                        proxyPort = socksPort,
+                        targetHost = session.remoteIp,
+                        targetPort = session.remotePort,
                     )
                 }
             if (!running.get()) {
@@ -428,6 +471,7 @@ class Tun2SocksEngine(
                 return
             }
             session.socket = socket
+            inFlightIo.unregister(socket)
             session.serverIsn = Random.nextInt().toLong() and 0xffffffffL
             session.serverSeq = TcpSequence.advance(session.serverIsn, syn = true)
             session.clientNextSeq = TcpSequence.advance(session.clientIsn, syn = true)
@@ -440,21 +484,25 @@ class Tun2SocksEngine(
             session.handshakeDeadlineMs = monotonicTimeMs() + HANDSHAKE_TIMEOUT_MS
         } catch (error: Exception) {
             val route = if (useProtectedDirect) "protected direct" else "SOCKS"
-            Log.w(
-                TAG,
-                "$route connect ${outboundHost.hostAddress}:${session.remotePort}: ${error.message}",
-            )
-            enqueuePacket(
-                buildTcpPacket(
-                    session = session,
-                    seq = 0,
-                    ack = TcpSequence.advance(session.clientIsn, syn = true),
-                    flags = Packet.RST or Packet.ACK,
-                    payload = ByteArray(0),
-                ),
-                lossless = true,
-            )
+            if (running.get()) {
+                Log.w(
+                    TAG,
+                    "$route connect ${outboundHost.hostAddress}:${session.remotePort}: ${error.message}",
+                )
+                enqueuePacket(
+                    buildTcpPacket(
+                        session = session,
+                        seq = 0,
+                        ack = TcpSequence.advance(session.clientIsn, syn = true),
+                        flags = Packet.RST or Packet.ACK,
+                        payload = ByteArray(0),
+                    ),
+                    lossless = true,
+                )
+            }
             removeSession(key, session)
+        } finally {
+            inFlightIo.unregister(connectingSocket)
         }
     }
 
@@ -877,9 +925,16 @@ class Tun2SocksEngine(
             return
         }
         var installed = false
+        val controlSocket = Socket()
+        if (!inFlightIo.register(controlSocket)) {
+            closeUdpRelay(clientRelay)
+            clientRelay.finishOpening()
+            return
+        }
         try {
             val relay =
-                Socks5UdpRelay.open(
+                Socks5UdpRelay.openWithControlSocket(
+                    control = controlSocket,
                     proxyHost = socksHost,
                     proxyPort = socksPort,
                     protect = { socket: Socket -> vpnService.protect(socket) },
@@ -890,6 +945,7 @@ class Tun2SocksEngine(
                 return
             }
             if (!clientRelay.publishRelay(relay)) return
+            inFlightIo.unregister(controlSocket)
             installed = true
             clientRelay.failedUntilMs.set(0L)
             registerUdpReceiver(clientRelay, relay)
@@ -924,6 +980,7 @@ class Tun2SocksEngine(
                 clientRelay.clearPending()
             }
         } finally {
+            inFlightIo.unregister(controlSocket)
             clientRelay.finishOpening()
         }
     }
@@ -976,6 +1033,8 @@ class Tun2SocksEngine(
         payload: ByteArray,
         ipv6: Boolean,
     ) {
+        val socket = DatagramSocket()
+        if (!inFlightIo.register(socket)) return
         try {
             val target =
                 when {
@@ -985,7 +1044,8 @@ class Tun2SocksEngine(
                     else -> dnsServer
                 }
             val bytes =
-                ProtectedDatagramExchange.exchange(
+                ProtectedDatagramExchange.exchangeWithSocket(
+                    socket = socket,
                     target = target,
                     targetPort = 53,
                     request = payload,
@@ -1013,7 +1073,9 @@ class Tun2SocksEngine(
                 }
             enqueuePacket(packet)
         } catch (error: Exception) {
-            Log.w(TAG, "DNS direct forward failed: ${error.message}")
+            if (running.get()) Log.w(TAG, "DNS direct forward failed: ${error.message}")
+        } finally {
+            inFlightIo.unregister(socket)
         }
     }
 
@@ -1246,6 +1308,7 @@ class Tun2SocksEngine(
         private const val SERVER_HALF_CLOSE_TIMEOUT_MS = 60_000L
         private const val UPSTREAM_POLL_MS = 200L
         private const val UPSTREAM_WRITER_IDLE_MS = 1_000L
+        private const val STOP_TIMEOUT_MS = 2_000L
         private const val UDP_IDLE_CLEANUP_INTERVAL_MS = 5_000L
         private const val UDP_RELAY_OPERATION_ATTEMPTS = 2
 

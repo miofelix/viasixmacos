@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android `Tun2SocksEngine.stop()` 只中断线程却不等待退出，且 SOCKS CONNECT、UDP ASSOCIATE、直连 DNS 等尚未发布的阻塞 socket 无法由会话表关闭，停止后可能继续存活到 5–10 秒网络超时的问题；建立中资源现进入并发安全的关闭注册表，停止会先关闭 TUN fd 与全部 in-flight I/O，再有界等待 reader、writer、维护线程和 worker pool 收敛，并禁止已停止实例被误重启。
 - 修复 Android TCP 下行重传耗尽或服务端半关闭超时后只静默删除会话，客户端仍会等待到自身超时的问题；异常收敛现主动发送 `RST|ACK`，并使用客户端最新确认的服务端序号而非固定 `SEQ=0`，避免现代 TCP 栈因复位序号不在接收窗口而忽略通知。
 - 修复 Android TUN reader 仍直接向非阻塞 SOCKS5 UDP `DatagramChannel` 写入，发送缓冲短暂不可写时会关闭整个 relay 并触发 ASSOCIATE 重连风暴的问题；UDP 发送现也进入同一 Selector reactor，每 relay 采用按数据报数和字节数双重有界队列，`OP_WRITE` 就绪后公平排空，队列饱和只丢当前数据报而不破坏关联。
 - 修复 Android TCP 发送窗口等待和上行 writer 队列轮询使用 `System.currentTimeMillis()`，设备校时或墙上时钟跳变可能导致等待被意外延长或提前超时的问题；传输层有界等待现统一改用 `System.nanoTime()` 计算纳秒级剩余时间，与重传、半关闭和 UDP relay 生命周期一致。

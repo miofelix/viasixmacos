@@ -60,7 +60,7 @@ make android-assemble
 | mihomo 用户态启动（assets → filesDir） | ✓ |
 | 全量隧道 IPv4/IPv6 TCP→SOCKS | ✓（ACK 驱动握手/重复 SYN；安全解析客户端 MSS 并在 SYN-ACK 发布接口 MSS，无选项时使用协议默认值；SOCKS5 建连与握手均有 10 秒超时且失败关闭；有效 ACK 后才占用下行 worker，上行 writer 按 payload/FIN 单飞启动并空闲退出；下行按实际 VPN MTU 与客户端 MSS 较小值分段；两个半关闭方向独立，远端 EOF 仅等待本方向确认后发送可重传 FIN，读异常、重传耗尽与半关闭超时均以窗口内序号主动 RST；回绕安全序列；客户端接收窗口流控；双向有界队列与背压；所有传输层有界等待使用单调时钟；重复 ACK 快速重传；未确认段有界保留与退避重传；连接/I/O worker 分别硬限 16/64） |
 | 全量隧道通用 UDP→SOCKS5 UDP ASSOCIATE | ✓（每本地源端口一条 ASSOCIATE；DNS 默认复用此路径；严格校验 RSV/FRAG/端口/frame 长度；单 Selector reactor 多路复用所有非阻塞 relay 收发，不占通用 I/O worker；发送按 relay 采用数据报数/字节数双重有界队列并以 `OP_WRITE` 背压，饱和只丢当前数据报；空闲 60 秒主动回收；控制 TCP 每 5 秒探测 EOF；UDP 回包源绑定；relay 代际原子发布与按实例关闭） |
-| TUN 帧与生命周期安全 | ✓（IPv4/IPv6 与 TCP/UDP 声明长度严格受实际帧边界约束；验证 IPv4 头、TCP、IPv6 UDP 与非零 IPv4 UDP 校验和，允许 IPv4 UDP 零校验和；IPv4/IPv6 需重组分片拒绝，IPv6 常见扩展头有界遍历；畸形帧隔离；读写任一方向退出均 fail-closed，启动中途失败会原地回收部分资源） |
+| TUN 帧与生命周期安全 | ✓（IPv4/IPv6 与 TCP/UDP 声明长度严格受实际帧边界约束；验证 IPv4 头、TCP、IPv6 UDP 与非零 IPv4 UDP 校验和，允许 IPv4 UDP 零校验和；IPv4/IPv6 需重组分片拒绝，IPv6 常见扩展头有界遍历；畸形帧隔离；读写任一方向退出均 fail-closed，启动中途失败会原地回收部分资源；停止主动关闭建立中的 TCP/UDP socket 与 TUN fd，并有界等待所有执行线程收敛） |
 | DNS 路由 | ✓（TCP/UDP 默认经 mihomo/SOCKS，支持显式 protect 直连与自定义数字 IPv4/IPv6 服务器；UDP 直连查询有 32 个 in-flight 硬上限，socket 绑定上游来源并保留完整 EDNS 数据报） |
 | VPN MTU | ✓（默认 1500；可在 macOS 同款安全范围 1280–9000 内调整） |
 | VPN 计费属性 | ✓（Android 10+；默认保持平台计费行为，可显式标记为不计费） |

@@ -124,8 +124,24 @@ internal class Socks5UdpRelay private constructor(
             connectTimeoutMs: Int = 10_000,
             protect: ((Socket) -> Boolean)? = null,
             protectDatagram: ((DatagramSocket) -> Boolean)? = null,
+        ): Socks5UdpRelay =
+            openWithControlSocket(
+                control = Socket(),
+                proxyHost = proxyHost,
+                proxyPort = proxyPort,
+                connectTimeoutMs = connectTimeoutMs,
+                protect = protect,
+                protectDatagram = protectDatagram,
+            )
+
+        fun openWithControlSocket(
+            control: Socket,
+            proxyHost: String,
+            proxyPort: Int,
+            connectTimeoutMs: Int = 10_000,
+            protect: ((Socket) -> Boolean)? = null,
+            protectDatagram: ((DatagramSocket) -> Boolean)? = null,
         ): Socks5UdpRelay {
-            val control = Socket()
             var udp: DatagramChannel? = null
             try {
                 control.tcpNoDelay = true

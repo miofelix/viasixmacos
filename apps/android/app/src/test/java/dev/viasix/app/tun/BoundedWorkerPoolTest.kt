@@ -45,6 +45,30 @@ class BoundedWorkerPoolTest {
         }
     }
 
+    @Test
+    fun closeInterruptsAndWaitsForRunningTask() {
+        val pool = BoundedWorkerPool(maxThreads = 1, threadNamePrefix = "close-test")
+        val started = CountDownLatch(1)
+        val exited = CountDownLatch(1)
+        assertTrue(
+            pool.execute {
+                started.countDown()
+                try {
+                    CountDownLatch(1).await()
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                } finally {
+                    exited.countDown()
+                }
+            },
+        )
+        assertTrue(started.await(2, TimeUnit.SECONDS))
+
+        pool.close()
+
+        assertTrue(exited.await(0, TimeUnit.MILLISECONDS))
+    }
+
     private fun executeEventually(
         pool: BoundedWorkerPool,
         task: () -> Unit,

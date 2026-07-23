@@ -39,6 +39,11 @@ class TunReaderSafetySurfaceTest {
         assertTrue(engine.contains("catch (error: Throwable) {\n            stop()\n            throw error"))
         assertTrue(engine.contains("inChannel?.close()"))
         assertTrue(engine.contains("outStream?.close()"))
+        assertTrue(engine.contains("private val inFlightIo = InFlightCloseableRegistry()"))
+        assertTrue(engine.contains("inFlightIo.close()"))
+        assertTrue(engine.contains("joinTunThread(reader, \"reader\")"))
+        assertTrue(engine.contains("maintenanceExecutor.awaitTermination"))
+        assertTrue(engine.contains("@Synchronized\n    fun stop()"))
         assertEquals(
             2,
             Regex("finally \\{\\s+running\\.set\\(false\\)").findAll(engine).count(),
