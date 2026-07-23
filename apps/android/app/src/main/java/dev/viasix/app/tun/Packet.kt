@@ -101,24 +101,75 @@ internal object Packet {
         val start = buffer.position()
         val version = (buffer.get(start).toInt() and 0xf0) ushr 4
         if (version != 6) return null
-        val payloadLength = buffer.getShort(start + 4).toInt() and 0xffff
-        if (IP6_HEADER_SIZE + payloadLength > buffer.limit() - start) return null
-        val nextHeader = buffer.get(start + 6).toInt() and 0xff
-        // Extension headers are not walked — only direct TCP/UDP next-header.
+        val declaredPayloadLength = buffer.getShort(start + 4).toInt() and 0xffff
+        if (IP6_HEADER_SIZE + declaredPayloadLength > buffer.limit() - start) return null
+        val frameEnd = start + IP6_HEADER_SIZE + declaredPayloadLength
         val src = ByteArray(16)
         val dst = ByteArray(16)
         buffer.position(start + 8)
         buffer.get(src)
         buffer.get(dst)
         buffer.position(start)
+
+        var nextHeader = buffer.get(start + 6).toInt() and 0xff
+        var payloadOffset = start + IP6_HEADER_SIZE
+        var payloadLength = declaredPayloadLength
+        var extensionCount = 0
+        var sawFragment = false
+        while (isIpv6ExtensionHeader(nextHeader)) {
+            extensionCount += 1
+            if (extensionCount > MAX_IPV6_EXTENSION_HEADERS) return null
+            val extensionLength =
+                when (nextHeader) {
+                    IPV6_FRAGMENT -> {
+                        if (sawFragment || payloadLength < IPV6_FRAGMENT_HEADER_SIZE) return null
+                        val fragmentBits =
+                            buffer.getShort(payloadOffset + 2).toInt() and 0xffff
+                        val fragmentOffset = (fragmentBits and 0xfff8) ushr 3
+                        val reservedBits = fragmentBits and 0x0006
+                        val moreFragments = fragmentBits and 0x0001 != 0
+                        if (fragmentOffset != 0 || reservedBits != 0 || moreFragments) return null
+                        sawFragment = true
+                        IPV6_FRAGMENT_HEADER_SIZE
+                    }
+                    IPV6_AUTHENTICATION -> {
+                        if (payloadLength < IPV6_AUTHENTICATION_MIN_SIZE) return null
+                        val length =
+                            ((buffer.get(payloadOffset + 1).toInt() and 0xff) + 2) * 4
+                        if (length < IPV6_AUTHENTICATION_MIN_SIZE) return null
+                        length
+                    }
+                    else -> {
+                        if (payloadLength < IPV6_EXTENSION_MIN_SIZE) return null
+                        ((buffer.get(payloadOffset + 1).toInt() and 0xff) + 1) * 8
+                    }
+                }
+            if (
+                extensionLength > payloadLength ||
+                    payloadOffset + extensionLength > frameEnd
+            ) {
+                return null
+            }
+            nextHeader = buffer.get(payloadOffset).toInt() and 0xff
+            payloadOffset += extensionLength
+            payloadLength -= extensionLength
+        }
         return Ip6(
             payloadLength = payloadLength,
             nextHeader = nextHeader,
             source = InetAddress.getByAddress(src),
             destination = InetAddress.getByAddress(dst),
-            payloadOffset = start + IP6_HEADER_SIZE,
+            headerLength = payloadOffset - start,
+            payloadOffset = payloadOffset,
         )
     }
+
+    private fun isIpv6ExtensionHeader(nextHeader: Int): Boolean =
+        nextHeader == IPV6_HOP_BY_HOP ||
+            nextHeader == IPV6_ROUTING ||
+            nextHeader == IPV6_FRAGMENT ||
+            nextHeader == IPV6_AUTHENTICATION ||
+            nextHeader == IPV6_DESTINATION_OPTIONS
 
     fun parseTcp(buffer: ByteBuffer, payloadOffset: Int, l4Length: Int): Tcp? {
         if (l4Length < TCP_HEADER_SIZE || buffer.limit() - payloadOffset < l4Length) return null
@@ -396,4 +447,14 @@ internal object Packet {
         while (sum ushr 16 != 0) sum = (sum and 0xffff) + (sum ushr 16)
         return sum.inv() and 0xffff
     }
+
+    private const val IPV6_HOP_BY_HOP = 0
+    private const val IPV6_ROUTING = 43
+    private const val IPV6_FRAGMENT = 44
+    private const val IPV6_AUTHENTICATION = 51
+    private const val IPV6_DESTINATION_OPTIONS = 60
+    private const val IPV6_EXTENSION_MIN_SIZE = 8
+    private const val IPV6_FRAGMENT_HEADER_SIZE = 8
+    private const val IPV6_AUTHENTICATION_MIN_SIZE = 12
+    private const val MAX_IPV6_EXTENSION_HEADERS = 8
 }
