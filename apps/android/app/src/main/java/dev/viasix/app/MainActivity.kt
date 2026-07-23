@@ -40,6 +40,7 @@ import dev.viasix.app.session.ProfileDraftGate
 import dev.viasix.app.session.ProfileImportText
 import dev.viasix.app.session.SessionRuntimeStore
 import dev.viasix.app.session.SessionStartGate
+import dev.viasix.app.session.VpnPermissionState
 import dev.viasix.app.session.VpnSessionCommands
 import dev.viasix.app.state.DelayTestState
 import dev.viasix.app.state.LogLevel
@@ -78,11 +79,14 @@ class MainActivity : ComponentActivity() {
     private var onVpnPermissionResult: ((granted: Boolean) -> Unit)? = null
     private var onNotificationPermissionResult: ((granted: Boolean, pendingReason: String?) -> Unit)? = null
     private var onRefreshNotificationPermission: (() -> Unit)? = null
+    private var onRefreshVpnPermission: (() -> Unit)? = null
     private var onLaunchIntent: ((Intent) -> Unit)? = null
 
     private val vpnPermission =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val granted = result.resultCode == Activity.RESULT_OK
+            val granted =
+                result.resultCode == Activity.RESULT_OK &&
+                    VpnService.prepare(this) == null
             if (granted) {
                 pendingVpnStartReason?.let { reason ->
                     trafficSampler.reset()
@@ -142,6 +146,7 @@ class MainActivity : ComponentActivity() {
                     currentNotificationPermissionState(
                         wasRequested = initialPrefs.notificationPermissionRequested,
                     ),
+                vpnPermission = currentVpnPermissionState(),
                 runtime = initialRuntime.toUiSnapshot(),
                 connectionPhase =
                     ConnectionPhase.restore(
@@ -185,9 +190,16 @@ class MainActivity : ComponentActivity() {
             }
 
             onVpnPermissionResult = { granted ->
-                if (!granted) {
-                    update {
-                        it.copy(connectionPhase = ConnectionPhase.STOPPED)
+                update {
+                    val next = it.copy(vpnPermission = VpnPermissionState(granted))
+                    if (granted) {
+                        next.appendLog(
+                            "已授予 VPN 权限",
+                            LogLevel.Success,
+                            LogSource.Network,
+                        )
+                    } else {
+                        next.copy(connectionPhase = ConnectionPhase.STOPPED)
                             .appendLog(
                                 "VPN 权限被拒绝",
                                 LogLevel.Error,
@@ -206,6 +218,12 @@ class MainActivity : ComponentActivity() {
                                 wasRequested = it.notificationPermission.wasRequested,
                             ),
                     )
+                }
+            }
+
+            onRefreshVpnPermission = {
+                logOnly {
+                    it.copy(vpnPermission = currentVpnPermissionState())
                 }
             }
 
@@ -1136,6 +1154,23 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            fun manageVpnPermission() {
+                val prepare = VpnService.prepare(this@MainActivity)
+                if (prepare != null) {
+                    pendingVpnStartReason = null
+                    vpnPermission.launch(prepare)
+                    update {
+                        it.appendLog(
+                            "请求 VPN 权限…",
+                            LogLevel.Info,
+                            LogSource.Network,
+                        )
+                    }
+                } else {
+                    openSystemVpnSettings()
+                }
+            }
+
             ViaSixApp(
                 state = state,
                 selectedSection = selectedSection,
@@ -1212,6 +1247,7 @@ class MainActivity : ComponentActivity() {
                 onInspectRuntimeComponents = { inspectRuntimeComponents(announce = true) },
                 onRepairRuntimeComponent = ::repairRuntimeComponent,
                 onManageNotificationPermission = ::manageNotificationPermission,
+                onManageVpnPermission = ::manageVpnPermission,
                 onRoutingModeChange = ::patchRoutingMode,
                 onFullTunnelChange = { full ->
                     if (state.connectionPhase.isActiveOrTransitioning) {
@@ -1255,6 +1291,7 @@ class MainActivity : ComponentActivity() {
                                     currentNotificationPermissionState(
                                         wasRequested = resetPrefs.notificationPermissionRequested,
                                     ),
+                                vpnPermission = currentVpnPermissionState(),
                                 runtimeComponents = state.runtimeComponents,
                                 runtime = currentRuntime.toUiSnapshot(),
                                 connectionPhase =
@@ -1269,6 +1306,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         onRefreshNotificationPermission?.invoke()
+        onRefreshVpnPermission?.invoke()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -1306,6 +1344,22 @@ class MainActivity : ComponentActivity() {
             shouldShowRationale =
                 shouldShowRequestPermissionRationale(POST_NOTIFICATIONS_PERMISSION),
         )
+    }
+
+    private fun currentVpnPermissionState(): VpnPermissionState =
+        VpnPermissionState(granted = VpnService.prepare(this) == null)
+
+    private fun openSystemVpnSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+        } catch (_: Exception) {
+            startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }
     }
 
     private fun openAppNotificationSettings() {

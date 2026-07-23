@@ -9,6 +9,7 @@ import dev.viasix.app.runtime.RuntimeComponentsState
 import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.session.NotificationPermissionState
 import dev.viasix.app.session.ProfileDraftGate
+import dev.viasix.app.session.VpnPermissionState
 import dev.viasix.core.net.Ipv6Address
 import dev.viasix.core.profile.ProfileSummary
 import dev.viasix.core.profile.ProfileSummaryParser
@@ -124,6 +125,7 @@ data class SessionUiState(
     val routingMode: RoutingMode = RoutingMode.RULE,
     val fullTunnel: Boolean = true,
     val notificationPermission: NotificationPermissionState = NotificationPermissionState(),
+    val vpnPermission: VpnPermissionState = VpnPermissionState(),
     val runtimeComponents: RuntimeComponentsState = RuntimeComponentsState(),
     val runtime: RuntimeSnapshot = RuntimeSnapshot(),
     /** UI connection lifecycle; reconciled with [runtime.running] each poll. */

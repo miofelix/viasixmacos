@@ -56,7 +56,7 @@ make android-assemble
 | --- | --- |
 | contracts 投影 | ✓（`:core` 测试） |
 | 分区导航 UI（对齐 macOS 信息架构） | ✓ |
-| VpnService 权限与前台会话 / 重启重连 | ✓（Sticky 恢复已保存会话；进程归属校验；mihomo/TUN 异常退出自动收敛） |
+| VpnService 权限与前台会话 / 重启重连 | ✓（设置页授权与系统“始终开启 VPN”入口；Sticky 恢复；进程归属校验；mihomo/TUN 异常退出自动收敛） |
 | mihomo 用户态启动（assets → filesDir） | ✓ |
 | 全量隧道 IPv4/IPv6 TCP→SOCKS | ✓（`Tun2SocksEngine`） |
 | 全量隧道通用 UDP→SOCKS5 UDP ASSOCIATE | ✓（每本地源端口一条 ASSOCIATE；DNS/53 独立 protect） |

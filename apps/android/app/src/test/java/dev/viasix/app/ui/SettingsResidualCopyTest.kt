@@ -27,6 +27,10 @@ class SettingsResidualCopyTest {
             text.contains("重新检查组件") && text.contains("修复"),
         )
         assertTrue(
+            "Settings should expose VPN consent and always-on system controls",
+            text.contains("VPN 权限") && text.contains("始终开启 VPN"),
+        )
+        assertTrue(
             "Version should come from BuildConfig, not a hard-coded string",
             text.contains("BuildConfig.VERSION_NAME"),
         )

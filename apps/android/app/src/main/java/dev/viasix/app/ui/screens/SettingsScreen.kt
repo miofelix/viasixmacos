@@ -60,6 +60,7 @@ fun SettingsScreen(
     onInspectRuntimeComponents: () -> Unit = {},
     onRepairRuntimeComponent: (RuntimeComponentId) -> Unit = {},
     onManageNotificationPermission: () -> Unit = {},
+    onManageVpnPermission: () -> Unit = {},
 ) {
     val colors = LocalViaSixColors.current
     val uriHandler = LocalUriHandler.current
@@ -114,6 +115,37 @@ fun SettingsScreen(
                             bottom = VisualStyle.spacing12,
                         ),
                 )
+                HorizontalDivider(color = colors.surfaceBorder)
+                CompactInfoRow("VPN 权限", state.vpnPermission.statusLabel)
+                Text(
+                    text =
+                        if (state.vpnPermission.granted) {
+                            "系统已允许 ViaSix 建立 VPN；可继续配置“始终开启 VPN”等系统选项。"
+                        } else {
+                            "连接前必须由系统授权 ViaSix 建立 VPN；可在此预先完成授权。"
+                        },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier =
+                        Modifier.padding(
+                            start = VisualStyle.spacing16,
+                            end = VisualStyle.spacing16,
+                            bottom = VisualStyle.spacing8,
+                        ),
+                )
+                OutlinedButton(
+                    onClick = onManageVpnPermission,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = VisualStyle.spacing16,
+                                end = VisualStyle.spacing16,
+                                bottom = VisualStyle.spacing12,
+                            ),
+                ) {
+                    Text(state.vpnPermission.actionLabel)
+                }
             }
 
             SurfaceCard {

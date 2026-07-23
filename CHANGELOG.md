@@ -21,6 +21,7 @@
 - Android：运行组件管理对齐 macOS 的缺失/损坏区分；校验 AArch64 ELF 格式、架构与执行权限，并支持 mihomo、CFST 独立原子修复/重装及运行中互锁。
 - Android：补齐 Android 12+ 数据提取与旧版 Auto Backup 排除规则；继续禁用云备份和设备迁移，避免配置 YAML、候选节点、控制器密钥及运行状态离开设备。
 - Android：强化 VPN 会话监督与系统恢复；运行状态绑定进程，Sticky 重启复用已保存配置，并在 mihomo/TUN 异常退出或 VPN 权限被撤销时自动收敛。
+- Android：设置页增加 VPN 授权状态、独立授权操作和系统 VPN 设置入口，便于配置“始终开启 VPN”，从系统设置返回后会自动刷新。
 
 ### 新增
 
