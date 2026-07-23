@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android TUN 出站队列虽标记 TCP 为 lossless，但队列已被可丢 UDP 数据报填满时仍只等待空位、不会主动让 UDP 腾位的问题；writer 暂停超过等待上限时，关键 TCP SYN/data/FIN/RST 可能入队失败而 UDP 反被保留。所有 producer 现通过同一入队锁仲裁：lossless 报文先直接入队，满时原子淘汰一个 droppable 并立即占位，只有队列全为 lossless 时才执行原有有界等待；新 UDP 仍只能替换旧 UDP，不能淘汰 TCP。
 - 修复 Android 主动淘汰、替换或关闭 SOCKS5 UDP relay 时只关闭 socket/channel，却没有从共享 `UdpRelayReactor` 的 registrations map 显式注销的问题；关闭 channel 后其 SelectionKey 可能直接从 selector 消失，旧 registration 因而一直残留到 VPN 整体停止并随 relay 代际持续累积。reactor 现提供竞态安全的 unregister：抑制主动关闭回调、取消已有 key、同步移除 map/清空发送队列并关闭 relay，尚在 pending 注册或与故障回收并发时也保持幂等。
 - 修复 Android TCP 重传队列在报文真正进入 TUN 出站队列前就消耗 attempt，短暂背压导致 enqueue 失败时，未发送的重传仍会进入指数退避并可能累计耗尽、错误复位健康会话的问题；每次到期或快速重传现携带内部保留 ID，入队失败会仅在同一最老段与 attempt 尚未被 ACK/并发更新时原子回滚计数，并把截止时间恢复为立即可重试，成功入队后才保留本次 attempt。
 - 修复 Android TCP 把所有“累计 ACK 未推进”的空段都计为重复 ACK，连续的合法客户端窗口更新也可能累计到三次并误触发快速重传的问题；重传队列现以 ACK 号与展开后的 advertised window 共同维护上一输入基线，窗口变化会清零重复计数，空闲期没有保留段时也会刷新基线，只有两者都不变的第三个真正重复 ACK 才重传最老未确认段。

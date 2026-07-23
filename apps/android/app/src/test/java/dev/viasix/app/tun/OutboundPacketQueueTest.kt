@@ -26,4 +26,27 @@ class OutboundPacketQueueTest {
         assertArrayEquals(byteArrayOf(2), queue.poll(timeoutMs = 0L))
         assertNull(queue.poll(timeoutMs = 0L))
     }
+
+    @Test
+    fun losslessPacketEvictsQueuedDatagramBeforeWaiting() {
+        val queue = OutboundPacketQueue(capacity = 1)
+        val tcp = byteArrayOf(2)
+
+        assertTrue(queue.offer(byteArrayOf(1), lossless = false))
+        assertTrue(queue.offer(tcp, lossless = true, timeoutMs = 0L))
+
+        assertArrayEquals(tcp, queue.poll(timeoutMs = 0L))
+        assertNull(queue.poll(timeoutMs = 0L))
+    }
+
+    @Test
+    fun losslessPacketDoesNotEvictAnotherLosslessPacket() {
+        val queue = OutboundPacketQueue(capacity = 1)
+        val first = byteArrayOf(1)
+
+        assertTrue(queue.offer(first, lossless = true))
+        assertFalse(queue.offer(byteArrayOf(2), lossless = true, timeoutMs = 0L))
+
+        assertArrayEquals(first, queue.poll(timeoutMs = 0L))
+    }
 }

@@ -11,27 +11,27 @@ class OutboundPacketQueue(capacity: Int) {
     )
 
     private val queue = LinkedBlockingQueue<Entry>(capacity)
+    private val offerLock = Any()
 
     fun offer(
         packet: ByteArray,
         lossless: Boolean,
         timeoutMs: Long = 0L,
-    ): Boolean {
-        val entry = Entry(packet, lossless)
-        if (lossless) {
-            return try {
-                queue.offer(entry, timeoutMs.coerceAtLeast(0L), TimeUnit.MILLISECONDS)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-                false
+    ): Boolean =
+        synchronized(offerLock) {
+            val entry = Entry(packet, lossless)
+            if (queue.offer(entry)) return@synchronized true
+            if (removeDroppable() && queue.offer(entry)) return@synchronized true
+            if (lossless) {
+                return@synchronized try {
+                    queue.offer(entry, timeoutMs.coerceAtLeast(0L), TimeUnit.MILLISECONDS)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    false
+                }
             }
+            false
         }
-
-        if (queue.offer(entry)) return true
-        val droppable = queue.firstOrNull { !it.lossless } ?: return false
-        if (!queue.remove(droppable)) return false
-        return queue.offer(entry)
-    }
 
     fun poll(timeoutMs: Long): ByteArray? =
         try {
@@ -43,5 +43,10 @@ class OutboundPacketQueue(capacity: Int) {
 
     fun clear() {
         queue.clear()
+    }
+
+    private fun removeDroppable(): Boolean {
+        val droppable = queue.firstOrNull { !it.lossless } ?: return false
+        return queue.remove(droppable)
     }
 }
