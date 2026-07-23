@@ -52,6 +52,10 @@ object VpnSessionCommands {
             .putExtra(ViaSixVpnService.EXTRA_FULL_TUNNEL, prefs.fullTunnel)
             .putExtra(ViaSixVpnService.EXTRA_VPN_MTU, prefs.vpnMtu)
             .putExtra(ViaSixVpnService.EXTRA_VPN_METERED, prefs.vpnMetered)
+            .putExtra(
+                ViaSixVpnService.EXTRA_BYPASS_LOCAL_NETWORK,
+                prefs.bypassLocalNetwork,
+            )
             .putExtra(ViaSixVpnService.EXTRA_DNS_ROUTING_MODE, prefs.dnsRoutingMode)
             .putExtra(ViaSixVpnService.EXTRA_DNS_SERVER, prefs.dnsServer)
             .putExtra(ViaSixVpnService.EXTRA_APP_ROUTING_MODE, prefs.appRoutingMode)

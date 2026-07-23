@@ -97,6 +97,7 @@ fun ViaSixApp(
     onDnsServerChange: (String) -> Unit = {},
     onVpnMtuChange: (String) -> Unit = {},
     onVpnMeteredChange: (Boolean) -> Unit = {},
+    onBypassLocalNetworkChange: (Boolean) -> Unit = {},
     onRoutingModeChange: (RoutingMode) -> Unit,
     onFullTunnelChange: (Boolean) -> Unit,
     onStart: () -> Unit,
@@ -250,6 +251,7 @@ fun ViaSixApp(
                                     onDnsServerChange = onDnsServerChange,
                                     onVpnMtuChange = onVpnMtuChange,
                                     onVpnMeteredChange = onVpnMeteredChange,
+                                    onBypassLocalNetworkChange = onBypassLocalNetworkChange,
                                 )
                         }
                     }

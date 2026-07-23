@@ -27,6 +27,7 @@
 - Android：全量隧道 DNS 默认改为经 mihomo/SOCKS 转发，避免固定 UDP/53 直连；设置页支持显式直连模式及自定义数字 IPv4/IPv6 DNS 服务器。
 - Android：增加可配置 VPN MTU，采用与 macOS 一致的 1280–9000 安全范围，贯通普通启动、快捷磁贴与 Sticky/Always-on 恢复。
 - Android：增加 Android 10+ VPN 计费属性控制；默认保持平台行为，也可标记为不计费以减少系统对后台数据的限制。
+- Android：增加 Android 13+ 原生局域网绕过，按需排除 IPv4/IPv6 私网、链路本地、组播与广播目标，默认仍保持全量 VPN 路由。
 
 ### 新增
 

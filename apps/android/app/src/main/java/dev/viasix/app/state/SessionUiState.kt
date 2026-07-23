@@ -134,6 +134,7 @@ data class SessionUiState(
     val fullTunnel: Boolean = true,
     val vpnMtu: String = VpnMtuPolicy.DEFAULT.toString(),
     val vpnMetered: Boolean = true,
+    val bypassLocalNetwork: Boolean = false,
     val dnsSettings: DnsSettingsState = DnsSettingsState(),
     val appRouting: AppRoutingState = AppRoutingState(),
     val notificationPermission: NotificationPermissionState = NotificationPermissionState(),
@@ -186,6 +187,7 @@ data class SessionUiState(
             fullTunnel = fullTunnel,
             vpnMtu = vpnMtu.trim(),
             vpnMetered = vpnMetered,
+            bypassLocalNetwork = bypassLocalNetwork,
             dnsRoutingMode = dnsSettings.mode.wire,
             dnsServer = dnsSettings.server.trim(),
             appRoutingMode = appRouting.mode.wire,
@@ -233,6 +235,7 @@ data class SessionUiState(
                 fullTunnel = prefs.fullTunnel,
                 vpnMtu = prefs.vpnMtu.trim(),
                 vpnMetered = prefs.vpnMetered,
+                bypassLocalNetwork = prefs.bypassLocalNetwork,
                 dnsSettings =
                     DnsSettingsState(
                         mode = DnsRoutingMode.parse(prefs.dnsRoutingMode),

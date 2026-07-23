@@ -1295,6 +1295,11 @@ class MainActivity : ComponentActivity() {
                 update { it.copy(vpnMetered = metered) }
             }
 
+            fun changeBypassLocalNetwork(enabled: Boolean) {
+                if (state.connectionPhase.isActiveOrTransitioning) return
+                update { it.copy(bypassLocalNetwork = enabled) }
+            }
+
             ViaSixApp(
                 state = state,
                 selectedSection = selectedSection,
@@ -1381,6 +1386,7 @@ class MainActivity : ComponentActivity() {
                 onDnsServerChange = ::changeDnsServer,
                 onVpnMtuChange = ::changeVpnMtu,
                 onVpnMeteredChange = ::changeVpnMetered,
+                onBypassLocalNetworkChange = ::changeBypassLocalNetwork,
                 onRoutingModeChange = ::patchRoutingMode,
                 onFullTunnelChange = { full ->
                     if (state.connectionPhase.isActiveOrTransitioning) {

@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Intent
 import android.graphics.drawable.Icon
+import android.net.IpPrefix
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -23,6 +24,7 @@ import dev.viasix.app.session.AppRoutingMode
 import dev.viasix.app.session.AppRoutingPolicy
 import dev.viasix.app.session.DnsRoutingMode
 import dev.viasix.app.session.DnsSettingsPolicy
+import dev.viasix.app.session.LocalNetworkBypassPolicy
 import dev.viasix.app.session.RuntimeProcessIdentity
 import dev.viasix.app.session.RuntimeStackFailure
 import dev.viasix.app.session.RuntimeStackHealth
@@ -101,6 +103,11 @@ class ViaSixVpnService : VpnService() {
             intent?.getBooleanExtra(EXTRA_VPN_METERED, restoredPrefs?.vpnMetered ?: true)
                 ?: restoredPrefs?.vpnMetered
                 ?: true
+        val bypassLocalNetwork =
+            intent?.getBooleanExtra(
+                EXTRA_BYPASS_LOCAL_NETWORK,
+                restoredPrefs?.bypassLocalNetwork ?: false,
+            ) ?: restoredPrefs?.bypassLocalNetwork ?: false
         val dnsRoutingMode =
             DnsRoutingMode.parse(
                 intent?.getStringExtra(EXTRA_DNS_ROUTING_MODE)
@@ -128,6 +135,7 @@ class ViaSixVpnService : VpnService() {
         appendEvent(
             "启动请求（$reason） mode=${mode.wire} fullTunnel=$fullTunnel mtu=$vpnMtuInput " +
                 "metered=$vpnMetered " +
+                "bypassLocal=$bypassLocalNetwork " +
                 "appRouting=${appRoutingMode.wire} apps=${selectedAppPackages.size}",
             "info",
         )
@@ -149,6 +157,7 @@ class ViaSixVpnService : VpnService() {
                     fullTunnel,
                     vpnMtuInput,
                     vpnMetered,
+                    bypassLocalNetwork,
                     dnsRoutingMode,
                     dnsServerInput,
                     appRoutingMode,
@@ -173,6 +182,7 @@ class ViaSixVpnService : VpnService() {
         fullTunnel: Boolean,
         vpnMtuInput: String,
         vpnMetered: Boolean,
+        bypassLocalNetwork: Boolean,
         dnsRoutingMode: DnsRoutingMode,
         dnsServerInput: String,
         appRoutingMode: AppRoutingMode,
@@ -249,9 +259,21 @@ class ViaSixVpnService : VpnService() {
             if (dnsAddress !is Inet6Address) {
                 builder.addDnsServer(dnsServer)
             }
+            applyLocalNetworkBypass(
+                builder = builder,
+                enabled = bypassLocalNetwork,
+                prefixes = LocalNetworkBypassPolicy.IPV4_PREFIXES,
+            )
+            preserveDnsVpnRoute(
+                builder = builder,
+                enabled = bypassLocalNetwork && dnsAddress !is Inet6Address,
+                dnsAddress = dnsAddress,
+            )
+            var ipv6RouteApplied = false
             try {
                 builder.addAddress("fd00:10:10::2", 128)
                 builder.addRoute("::", 0)
+                ipv6RouteApplied = true
                 if (dnsAddress is Inet6Address) {
                     builder.addDnsServer(dnsServer)
                 }
@@ -264,6 +286,18 @@ class ViaSixVpnService : VpnService() {
                 }
                 Log.w(TAG, "IPv6 route not applied: ${error.message}")
                 appendEvent("IPv6 默认路由未应用：${error.message}", "warning")
+            }
+            if (ipv6RouteApplied) {
+                applyLocalNetworkBypass(
+                    builder = builder,
+                    enabled = bypassLocalNetwork,
+                    prefixes = LocalNetworkBypassPolicy.IPV6_PREFIXES,
+                )
+                preserveDnsVpnRoute(
+                    builder = builder,
+                    enabled = bypassLocalNetwork && dnsAddress is Inet6Address,
+                    dnsAddress = dnsAddress,
+                )
             }
         }
 
@@ -287,6 +321,9 @@ class ViaSixVpnService : VpnService() {
                 "VPN 计费属性：${if (vpnMetered) "按流量计费" else "不计费"}",
                 "info",
             )
+        }
+        if (bypassLocalNetwork && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            appendEvent("局域网绕过：私网、链路本地与组播流量不进入 VPN", "info")
         }
 
         if (fullTunnel) {
@@ -475,6 +512,30 @@ class ViaSixVpnService : VpnService() {
         }
     }
 
+    private fun applyLocalNetworkBypass(
+        builder: Builder,
+        enabled: Boolean,
+        prefixes: List<String>,
+    ) {
+        if (!enabled || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        prefixes.forEach { prefix ->
+            val separator = prefix.lastIndexOf('/')
+            require(separator > 0) { "invalid local-network prefix: $prefix" }
+            val address = InetAddress.getByName(prefix.substring(0, separator))
+            val prefixLength = prefix.substring(separator + 1).toInt()
+            builder.excludeRoute(IpPrefix(address, prefixLength))
+        }
+    }
+
+    private fun preserveDnsVpnRoute(
+        builder: Builder,
+        enabled: Boolean,
+        dnsAddress: InetAddress,
+    ) {
+        if (!enabled || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        builder.addRoute(dnsAddress, if (dnsAddress is Inet6Address) 128 else 32)
+    }
+
     private fun writeRuntimeStatus(
         running: Boolean,
         healthMessage: String,
@@ -604,6 +665,7 @@ class ViaSixVpnService : VpnService() {
         const val EXTRA_FULL_TUNNEL = "full_tunnel"
         const val EXTRA_VPN_MTU = "vpn_mtu"
         const val EXTRA_VPN_METERED = "vpn_metered"
+        const val EXTRA_BYPASS_LOCAL_NETWORK = "bypass_local_network"
         const val EXTRA_DNS_ROUTING_MODE = "dns_routing_mode"
         const val EXTRA_DNS_SERVER = "dns_server"
         const val EXTRA_APP_ROUTING_MODE = "app_routing_mode"

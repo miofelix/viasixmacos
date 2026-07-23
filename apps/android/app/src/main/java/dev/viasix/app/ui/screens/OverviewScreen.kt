@@ -383,7 +383,15 @@ fun OverviewScreen(
                     detail =
                         if (state.fullTunnel) {
                             "默认路由 + TCP/UDP IPv4/IPv6→SOCKS；" +
-                                "DNS ${state.dnsSettings.mode.label} · MTU ${state.vpnMtu}"
+                                "DNS ${state.dnsSettings.mode.label} · MTU ${state.vpnMtu}" +
+                                if (
+                                    state.bypassLocalNetwork &&
+                                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                                ) {
+                                    " · 绕过局域网"
+                                } else {
+                                    ""
+                                }
                         } else {
                             "仅 setHttpProxy，无默认路由 · MTU ${state.vpnMtu}"
                         },
@@ -731,6 +739,20 @@ fun OverviewScreen(
                         "系统决定"
                     },
                     Icons.Outlined.VpnKey,
+                )
+                HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
+                CompactInfoRow(
+                    "局域网",
+                    if (
+                        state.fullTunnel &&
+                            state.bypassLocalNetwork &&
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                    ) {
+                        "绕过 VPN"
+                    } else {
+                        "随 VPN 路由"
+                    },
+                    Icons.Outlined.Route,
                 )
                 HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
                 CompactInfoRow(

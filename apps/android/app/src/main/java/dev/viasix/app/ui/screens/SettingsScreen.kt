@@ -21,6 +21,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.NotificationsOff
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Route
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.VpnKey
 import androidx.compose.material3.Button
@@ -90,6 +91,7 @@ fun SettingsScreen(
     onDnsServerChange: (String) -> Unit = {},
     onVpnMtuChange: (String) -> Unit = {},
     onVpnMeteredChange: (Boolean) -> Unit = {},
+    onBypassLocalNetworkChange: (Boolean) -> Unit = {},
 ) {
     val colors = LocalViaSixColors.current
     val uriHandler = LocalUriHandler.current
@@ -219,6 +221,59 @@ fun SettingsScreen(
                             if (tunnelLocked) {
                                 " 运行中不可修改，请先断开。"
                             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                " 变更在下次连接时生效。"
+                            } else {
+                                ""
+                            },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier =
+                        Modifier.padding(
+                            start = VisualStyle.spacing16,
+                            end = VisualStyle.spacing16,
+                            bottom = VisualStyle.spacing12,
+                        ),
+                )
+                HorizontalDivider(color = colors.surfaceBorder)
+                SettingRow(
+                    title = "绕过局域网",
+                    detail =
+                        when {
+                            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ->
+                                "Android 13+ 可用"
+                            !state.fullTunnel -> "仅全量隧道使用"
+                            state.bypassLocalNetwork -> "私网、链路本地与组播流量直连"
+                            else -> "局域网流量与其他流量一同进入 VPN"
+                        },
+                    icon = Icons.Outlined.Route,
+                ) {
+                    Switch(
+                        checked = state.bypassLocalNetwork,
+                        onCheckedChange = onBypassLocalNetworkChange,
+                        enabled =
+                            !tunnelLocked &&
+                                state.fullTunnel &&
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU,
+                    )
+                }
+                Text(
+                    text =
+                        when {
+                            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ->
+                                "此系统版本不支持原生 VPN 路由排除。"
+                            !state.fullTunnel ->
+                                "开启全量隧道后可配置；当前 HTTP 代理 VPN 没有默认路由。"
+                            state.bypassLocalNetwork ->
+                                "便于访问路由器、NAS 和局域网发现；系统锁定 VPN 仍可能阻止隧道外流量。"
+                            else ->
+                                "默认保持所有目标随 VPN 路由，以减少意外绕过。"
+                        } +
+                            if (tunnelLocked) {
+                                " 运行中不可修改，请先断开。"
+                            } else if (
+                                state.fullTunnel &&
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                            ) {
                                 " 变更在下次连接时生效。"
                             } else {
                                 ""

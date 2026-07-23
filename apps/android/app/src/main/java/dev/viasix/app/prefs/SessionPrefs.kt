@@ -23,6 +23,7 @@ data class SessionPrefs(
     val fullTunnel: Boolean = true,
     val vpnMtu: String = "1500",
     val vpnMetered: Boolean = true,
+    val bypassLocalNetwork: Boolean = false,
     val dnsRoutingMode: String = "proxy",
     val dnsServer: String = "1.1.1.1",
     val appRoutingMode: String = "all",
@@ -45,6 +46,7 @@ data class SessionPrefs(
             .put("fullTunnel", fullTunnel)
             .put("vpnMtu", vpnMtu)
             .put("vpnMetered", vpnMetered)
+            .put("bypassLocalNetwork", bypassLocalNetwork)
             .put("dnsRoutingMode", dnsRoutingMode)
             .put("dnsServer", dnsServer)
             .put("appRoutingMode", appRoutingMode)
@@ -128,6 +130,7 @@ data class SessionPrefs(
                     fullTunnel = o.optBoolean("fullTunnel", true),
                     vpnMtu = o.optString("vpnMtu", "1500"),
                     vpnMetered = o.optBoolean("vpnMetered", true),
+                    bypassLocalNetwork = o.optBoolean("bypassLocalNetwork", false),
                     dnsRoutingMode = o.optString("dnsRoutingMode", "proxy"),
                     dnsServer = o.optString("dnsServer", "1.1.1.1"),
                     appRoutingMode = o.optString("appRoutingMode", "all"),
