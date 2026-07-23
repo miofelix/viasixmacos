@@ -50,6 +50,7 @@ Android 功能对齐以 **macOS** 为准。Windows 端仍在完善中，**不得
 - 会话恢复：持久化当前主分区；Activity 旋转/进程重建时从 VPN runtime 快照同步恢复，授权中的连接动作通过 saved state 延续
 - 运行态监督：runtime 快照绑定当前应用进程，拒绝跨重启残留的 `running=true`；Sticky 服务以已保存配置恢复；启动线程在 mihomo、VPN 接口、底层网络绑定、TUN 转发和流量监督后逐阶段检查取消，且只在整栈就绪后发布运行态；mihomo/TUN 异常退出或系统撤销 VPN 权限时自动清理会话
 - 系统 VPN 控制：设置页显示真实授权状态，可独立发起系统授权；授权后直达 Android VPN 设置以管理“始终开启 VPN”等系统行为，Always-on/Sticky 系统启动均恢复已保存会话，返回应用自动刷新状态
+- 系统配置回流：`VpnService.Builder.setConfigureIntent` 注册不可变 `PendingIntent`；系统 VPN/Always-on 面板触发配置时，通过 `CLEAR_TOP + SINGLE_TOP` 在冷启动和 warm Activity 两条路径中定位到 ViaSix 设置分区
 - 后台稳定性：设置页读取系统电池优化状态并提供设置入口，帮助长期 VPN/Always-on 会话避免被 OEM 后台策略回收；不声明直接请求豁免的敏感权限
 - 数据重置安全：VPN 启动中、运行中或停止中均禁止清除会话偏好，避免当前连接与 Sticky/Always-on 后续恢复参数分叉
 - 组件完整性：本地 mihomo / CFST 检查 64-bit little-endian AArch64 ELF、架构与执行权限；设置页区分缺失/损坏并可独立原子修复

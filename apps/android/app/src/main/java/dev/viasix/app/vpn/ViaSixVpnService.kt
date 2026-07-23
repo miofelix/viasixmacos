@@ -41,6 +41,7 @@ import dev.viasix.app.session.VpnStartupGate
 import dev.viasix.app.session.VpnMtuPolicy
 import dev.viasix.app.tile.ViaSixTileService
 import dev.viasix.app.tun.Tun2SocksEngine
+import dev.viasix.app.ui.AppSection
 import dev.viasix.core.formatting.ByteRateFormatter
 import dev.viasix.core.projection.MihomoProjection
 import dev.viasix.core.projection.ProjectError
@@ -340,6 +341,7 @@ class ViaSixVpnService : VpnService() {
                 // Tun2SocksEngine uses blocking FileChannel reads; the platform default
                 // is a non-blocking TUN descriptor whose EAGAIN would stop the reader.
                 .setBlocking(fullTunnel)
+                .setConfigureIntent(buildConfigureIntent())
                 .addAddress("10.10.0.2", 32)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(vpnMetered)
@@ -811,6 +813,18 @@ class ViaSixVpnService : VpnService() {
         manager.notify(NOTIFICATION_ID, buildNotification(content))
     }
 
+    private fun buildConfigureIntent(): PendingIntent =
+        PendingIntent.getActivity(
+            this,
+            REQUEST_CONFIGURE_VPN,
+            Intent(this, MainActivity::class.java)
+                .putExtra(MainActivity.EXTRA_OPEN_SECTION, AppSection.SETTINGS.wire)
+                .addFlags(
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                ),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
     private fun buildNotification(content: String): Notification {
         val manager = getSystemService(NotificationManager::class.java)
         val channel =
@@ -894,6 +908,7 @@ class ViaSixVpnService : VpnService() {
         private const val NOTIFICATION_ID = 42
         private const val REQUEST_OPEN_APP = 43
         private const val REQUEST_DISCONNECT = 44
+        private const val REQUEST_CONFIGURE_VPN = 45
         private const val TRAFFIC_POLL_MS = 1_500L
         private const val TAG = "ViaSixVpnService"
     }

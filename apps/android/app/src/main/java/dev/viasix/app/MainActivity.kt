@@ -561,14 +561,17 @@ class MainActivity : ComponentActivity() {
             fun handleLaunchIntent(launchIntent: Intent) {
                 val requestStart =
                     launchIntent.getBooleanExtra(VpnSessionCommands.EXTRA_REQUEST_START, false)
+                val requestedSection = launchIntent.getStringExtra(EXTRA_OPEN_SECTION)
                 val gateMessage =
                     launchIntent.getStringExtra(ViaSixTileService.EXTRA_GATE_MESSAGE)
                 val gateSection =
                     launchIntent.getStringExtra(ViaSixTileService.EXTRA_GATE_SECTION)
                 launchIntent.removeExtra(VpnSessionCommands.EXTRA_REQUEST_START)
+                launchIntent.removeExtra(EXTRA_OPEN_SECTION)
                 launchIntent.removeExtra(ViaSixTileService.EXTRA_GATE_MESSAGE)
                 launchIntent.removeExtra(ViaSixTileService.EXTRA_GATE_SECTION)
 
+                requestedSection?.let { selectSection(AppSection.parse(it)) }
                 if (!gateMessage.isNullOrBlank()) {
                     update {
                         it.appendLog(gateMessage, LogLevel.Error, LogSource.Session, asNotice = true)
@@ -1648,6 +1651,8 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        const val EXTRA_OPEN_SECTION = "dev.viasix.app.OPEN_SECTION"
+
         /** Fail STARTING if VPN runtime never becomes ready. */
         private const val START_TIMEOUT_MS = 25_000L
         private const val PROFILE_VALIDATION_IPV6 = "2001:db8::1"

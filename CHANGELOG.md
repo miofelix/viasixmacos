@@ -31,6 +31,7 @@
 - Android：增加 IPv6 应用流量三态控制；默认经 VPN 且 IPv6 路由失败即中止，另提供阻止与显式绕过模式，避免静默 IPv6 旁路。
 - Android：DNS 直连模式补齐 TCP/53 回退；TCP 套接字在连接用户指定 DNS 前先由 `VpnService.protect` 排除，现与 UDP/53 语义一致。
 - Android：监听非 VPN 默认网络并通过 `setUnderlyingNetworks` 显式绑定 Wi-Fi、蜂窝或以太网；切换期间忽略旧网络迟到回调，并在首页、设置与会话日志展示当前状态。
+- Android：向系统 VPN 面板注册配置入口；从 Always-on/VPN 设置触发“配置”时，无论冷启动或已有 Activity 都直接回到 ViaSix 设置分区。
 
 ### 新增
 
