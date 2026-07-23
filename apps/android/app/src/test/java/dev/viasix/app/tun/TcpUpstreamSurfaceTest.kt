@@ -6,7 +6,7 @@ import java.io.File
 
 class TcpUpstreamSurfaceTest {
     @Test
-    fun clientPayloadsUseBoundedQueueAndDrainBeforeRemoteFin() {
+    fun clientPayloadsUseBoundedQueueAndDrainBeforeOutputShutdown() {
         val engine =
             resolve(
                 "src/main/java/dev/viasix/app/tun/Tun2SocksEngine.kt",
@@ -19,7 +19,6 @@ class TcpUpstreamSurfaceTest {
         assertTrue(engine.contains("UPSTREAM_WRITER_IDLE_MS"))
         assertTrue(engine.contains("session.upstream.hasPending"))
         assertTrue(engine.contains("session.upstream.complete(payload.size)"))
-        assertTrue(engine.contains("session.upstream.awaitEmpty(UPSTREAM_DRAIN_TIMEOUT_MS)"))
         assertTrue(engine.contains("socket.shutdownOutput()"))
         assertTrue(engine.contains("session.outputShutdown.compareAndSet(false, true)"))
     }

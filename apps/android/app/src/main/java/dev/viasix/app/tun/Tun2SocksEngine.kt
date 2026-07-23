@@ -475,6 +475,7 @@ class Tun2SocksEngine(
                     peerMss = session.clientMaximumSegmentSize,
                 ),
             )
+        var remoteEof = false
         try {
             val input = socket.getInputStream()
             while (running.get() && sessions[key] === session && !socket.isClosed) {
@@ -485,7 +486,10 @@ class Tun2SocksEngine(
                     )
                 if (allowance <= 0) continue
                 val n = input.read(buf, 0, allowance)
-                if (n < 0) break
+                if (n < 0) {
+                    remoteEof = true
+                    break
+                }
                 if (n == 0) continue
                 val chunk = buf.copyOf(n)
                 val sequence = session.serverSeq
@@ -520,26 +524,35 @@ class Tun2SocksEngine(
                 }
                 session.retransmissions.markQueued(reservation, monotonicTimeMs())
             }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            if (running.get() && sessions[key] === session) {
+                Log.w(TAG, "tcp downstream read failed: ${error.message}")
+            }
         } finally {
             val current = running.get() && sessions[key] === session
-            val upstreamDrained =
-                current && session.upstream.awaitEmpty(UPSTREAM_DRAIN_TIMEOUT_MS)
-            val drained =
-                upstreamDrained &&
-                    session.retransmissions.awaitEmpty(RETRANSMISSION_DRAIN_TIMEOUT_MS)
-            val finAllowed =
-                drained &&
-                    session.sendWindow.awaitAllowance(
-                        maxBytes = 1,
-                        timeoutMs = SERVER_FIN_WINDOW_TIMEOUT_MS,
-                    ) > 0
-            val finRetained =
-                finAllowed &&
-                    running.get() &&
-                    sessions[key] === session &&
-                    enqueueServerFin(session)
-            if (!finRetained) removeSession(key, session)
+            if (!remoteEof) {
+                if (current) {
+                    rejectTcpSession(key, session)
+                } else {
+                    removeSession(key, session)
+                }
+            } else {
+                val drained =
+                    current &&
+                        session.retransmissions.awaitEmpty(RETRANSMISSION_DRAIN_TIMEOUT_MS)
+                val finAllowed =
+                    drained &&
+                        session.sendWindow.awaitAllowance(
+                            maxBytes = 1,
+                            timeoutMs = SERVER_FIN_WINDOW_TIMEOUT_MS,
+                        ) > 0
+                val finRetained =
+                    finAllowed &&
+                        running.get() &&
+                        sessions[key] === session &&
+                        enqueueServerFin(session)
+                if (!finRetained) removeSession(key, session)
+            }
         }
     }
 
@@ -1208,7 +1221,6 @@ class Tun2SocksEngine(
         private const val SERVER_HALF_CLOSE_TIMEOUT_MS = 60_000L
         private const val UPSTREAM_POLL_MS = 200L
         private const val UPSTREAM_WRITER_IDLE_MS = 1_000L
-        private const val UPSTREAM_DRAIN_TIMEOUT_MS = 35_000L
         private const val UDP_IDLE_CLEANUP_INTERVAL_MS = 5_000L
         private const val UDP_RELAY_OPERATION_ATTEMPTS = 2
 

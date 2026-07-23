@@ -1,5 +1,6 @@
 package dev.viasix.app.tun
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -23,6 +24,12 @@ class TcpCloseSurfaceTest {
         assertTrue(engine.contains("session.closeState.acknowledgeServerFin"))
         assertTrue(engine.contains("session.retransmissions.reserve"))
         assertTrue(engine.contains("SERVER_HALF_CLOSE_TIMEOUT_MS"))
+        assertTrue(engine.contains("var remoteEof = false"))
+        assertTrue(engine.contains("tcp downstream read failed"))
+        assertTrue(engine.contains("if (!remoteEof)"))
+        assertTrue(engine.contains("rejectTcpSession(key, session)"))
+        assertFalse(engine.contains("session.upstream.awaitEmpty"))
+        assertFalse(engine.contains("UPSTREAM_DRAIN_TIMEOUT_MS"))
     }
 
     private fun resolve(vararg paths: String): File =
