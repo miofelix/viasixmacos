@@ -36,6 +36,8 @@ import dev.viasix.app.session.RuntimeStackHealth
 import dev.viasix.app.session.UnderlyingNetworkPresentation
 import dev.viasix.app.session.UnderlyingNetworkSelection
 import dev.viasix.app.session.VpnStartOrigin
+import dev.viasix.app.session.VpnStartupCancelledException
+import dev.viasix.app.session.VpnStartupGate
 import dev.viasix.app.session.VpnMtuPolicy
 import dev.viasix.app.tile.ViaSixTileService
 import dev.viasix.app.tun.Tun2SocksEngine
@@ -216,9 +218,11 @@ class ViaSixVpnService : VpnService() {
 
         thread(name = "viasix-vpn-start", isDaemon = true) {
             try {
+                requireStartupActive("before restart cleanup")
                 // Tear down any previous stack before applying new parameters
                 // (node apply / reconnect path).
                 stopStackOnly("restart for $reason")
+                requireStartupActive("after restart cleanup")
                 startStack(
                     profile,
                     selectedIp,
@@ -233,11 +237,19 @@ class ViaSixVpnService : VpnService() {
                     appRoutingMode,
                     selectedAppPackages,
                 )
+            } catch (error: VpnStartupCancelledException) {
+                Log.i(TAG, error.message.orEmpty())
+                finishCancelledStartup()
             } catch (error: Exception) {
-                Log.e(TAG, "start failed", error)
-                appendEvent("启动失败：${error.message}", "error")
-                updateNotification("Start failed: ${error.message}")
-                shutdownAll("start failed", stopService = true)
+                if (shuttingDown.get()) {
+                    Log.i(TAG, "startup stopped during ${error.javaClass.simpleName}")
+                    finishCancelledStartup()
+                } else {
+                    Log.e(TAG, "start failed", error)
+                    appendEvent("启动失败：${error.message}", "error")
+                    updateNotification("Start failed: ${error.message}")
+                    shutdownAll("start failed", stopService = true)
+                }
             } finally {
                 starting.set(false)
             }
@@ -259,6 +271,7 @@ class ViaSixVpnService : VpnService() {
         appRoutingMode: AppRoutingMode,
         selectedAppPackages: List<String>,
     ) {
+        requireStartupActive("configuration validation")
         val vpnMtu =
             VpnMtuPolicy.normalize(vpnMtuInput)
                 ?: throw IllegalArgumentException(
@@ -300,23 +313,19 @@ class ViaSixVpnService : VpnService() {
                 throw IllegalArgumentException("projection: ${error.contractCode}", error)
             }
 
+        requireStartupActive("runtime installation")
         appendEvent("投影完成，启动 mihomo…", "info")
         val binary = MihomoInstaller.installIfNeeded(this)
+        requireStartupActive("mihomo launch")
         val workDir = File(filesDir, "mihomo-runtime")
         val process = MihomoProcess(binary, workDir)
         process.start(yaml)
         mihomo = process
+        requireStartupActive("after mihomo launch")
 
         ControllerClient.sleepQuietly(400)
         val health = ControllerClient.probe("127.0.0.1", CONTROLLER_PORT, secret)
-        val startedAt = System.currentTimeMillis()
-        writeRuntimeStatus(
-            running = process.isRunning,
-            healthMessage = health.message,
-            secret = secret,
-            version = health.version,
-            startedAt = startedAt,
-        )
+        requireStartupActive("after controller probe")
         if (!health.ok) {
             Log.w(TAG, "controller not healthy yet: ${health.message}")
             appendEvent("控制器尚未就绪：${health.message}", "warning")
@@ -393,13 +402,16 @@ class ViaSixVpnService : VpnService() {
             )
         }
 
+        requireStartupActive("VPN establish")
         val established =
             builder.establish()
                 ?: throw IllegalStateException("VpnService.Builder.establish() returned null")
         tunnel = established
+        requireStartupActive("after VPN establish")
         synchronized(underlyingNetworkLock) {
             applyUnderlyingNetwork(underlyingNetworkSelection.network)
         }
+        requireStartupActive("after underlying network binding")
         appendEvent("VPN MTU：$vpnMtu", "info")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             appendEvent(
@@ -426,6 +438,7 @@ class ViaSixVpnService : VpnService() {
                 )
             engine.start()
             tunEngine = engine
+            requireStartupActive("after TUN forwarding launch")
             updateNotification(
                 if (health.ok) {
                     "全量隧道 · mixed :$MIXED_PORT · ${health.version ?: "ok"}"
@@ -448,9 +461,42 @@ class ViaSixVpnService : VpnService() {
             )
             appendEvent("HTTP 代理 VPN 会话已建立（无默认路由）", "success")
         }
+
+        requireStartupActive("runtime publication")
+        if (!process.isRunning) {
+            throw IllegalStateException("mihomo exited before VPN stack became ready")
+        }
+        // Publish running only after mihomo, the VPN interface and optional TUN forwarding
+        // are all owned by this still-active startup.
+        writeRuntimeStatus(
+            running = true,
+            healthMessage = health.message,
+            secret = secret,
+            version = health.version,
+            startedAt = System.currentTimeMillis(),
+        )
+        requireStartupActive("after runtime publication")
         activeSecret = secret
         startTrafficNotificationLoop(secret, fullTunnel)
+        requireStartupActive("after traffic supervision launch")
         Log.i(TAG, "stack ready fullTunnel=$fullTunnel health=${health.message}")
+    }
+
+    private fun requireStartupActive(stage: String) {
+        VpnStartupGate.requireActive(shuttingDown = shuttingDown.get(), stage = stage)
+    }
+
+    private fun finishCancelledStartup() {
+        stopStackOnly("startup cancelled")
+        writeRuntimeStatus(
+            running = false,
+            healthMessage = "stopped",
+            secret = "",
+            version = null,
+            startedAt = null,
+        )
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        appendEvent("启动已取消", "info")
     }
 
     private fun applyAppRouting(

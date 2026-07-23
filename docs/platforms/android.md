@@ -48,7 +48,7 @@ Android 功能对齐以 **macOS** 为准。Windows 端仍在完善中，**不得
 - `ViaSixTileService`：API 34+ 通过 `PendingIntent` 展开应用，API 26–28 不访问 API 29 的磁贴字幕
 - 通知权限：Android 13+ 首次连接前按需请求；拒绝后会话降级运行且不自动重复询问，设置页提供再次请求/系统设置入口
 - 会话恢复：持久化当前主分区；Activity 旋转/进程重建时从 VPN runtime 快照同步恢复，授权中的连接动作通过 saved state 延续
-- 运行态监督：runtime 快照绑定当前应用进程，拒绝跨重启残留的 `running=true`；Sticky 服务以已保存配置恢复，mihomo/TUN 异常退出或系统撤销 VPN 权限时自动清理会话
+- 运行态监督：runtime 快照绑定当前应用进程，拒绝跨重启残留的 `running=true`；Sticky 服务以已保存配置恢复；启动线程在 mihomo、VPN 接口、底层网络绑定、TUN 转发和流量监督后逐阶段检查取消，且只在整栈就绪后发布运行态；mihomo/TUN 异常退出或系统撤销 VPN 权限时自动清理会话
 - 系统 VPN 控制：设置页显示真实授权状态，可独立发起系统授权；授权后直达 Android VPN 设置以管理“始终开启 VPN”等系统行为，Always-on/Sticky 系统启动均恢复已保存会话，返回应用自动刷新状态
 - 后台稳定性：设置页读取系统电池优化状态并提供设置入口，帮助长期 VPN/Always-on 会话避免被 OEM 后台策略回收；不声明直接请求豁免的敏感权限
 - 数据重置安全：VPN 启动中、运行中或停止中均禁止清除会话偏好，避免当前连接与 Sticky/Always-on 后续恢复参数分叉
