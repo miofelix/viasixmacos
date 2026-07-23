@@ -28,6 +28,7 @@ import dev.viasix.app.session.AppRoutingMode
 import dev.viasix.app.session.AppRoutingPolicy
 import dev.viasix.app.session.DnsRoutingMode
 import dev.viasix.app.session.DnsSettingsPolicy
+import dev.viasix.app.session.GenerationGate
 import dev.viasix.app.session.Ipv6RoutingMode
 import dev.viasix.app.session.LocalNetworkBypassPolicy
 import dev.viasix.app.session.RuntimeProcessIdentity
@@ -77,8 +78,9 @@ class ViaSixVpnService : VpnService() {
     private var tunEngine: Tun2SocksEngine? = null
     private val starting = AtomicBoolean(false)
     private val shuttingDown = AtomicBoolean(false)
-    private val trafficSampler = TrafficSampler(maxHistory = 30)
-    private val trafficLoopRunning = AtomicBoolean(false)
+    private val trafficLoopGate = GenerationGate()
+
+    @Volatile
     private var trafficThread: Thread? = null
     private var activeSecret: String = ""
     private lateinit var connectivityManager: ConnectivityManager
@@ -571,56 +573,65 @@ class ViaSixVpnService : VpnService() {
         fullTunnel: Boolean,
     ) {
         stopTrafficNotificationLoop()
-        trafficSampler.reset()
-        trafficLoopRunning.set(true)
-        trafficThread =
-            thread(name = "viasix-vpn-traffic", isDaemon = true) {
-                while (trafficLoopRunning.get()) {
-                    val failure =
-                        RuntimeStackHealth.failure(
-                            mihomoRunning = mihomo?.isRunning == true,
-                            fullTunnel = fullTunnel,
-                            tunnelRunning = tunEngine?.isRunning == true,
-                        )
-                    if (failure != null) {
-                        val component =
-                            when (failure) {
-                                RuntimeStackFailure.MIHOMO_EXITED -> "mihomo"
-                                RuntimeStackFailure.TUNNEL_EXITED -> "TUN 转发"
-                            }
-                        appendEvent("$component 异常退出，正在结束会话", "error")
-                        shutdownAll("$component exited unexpectedly", stopService = true)
-                        break
-                    }
-                    try {
-                        val snap = trafficSampler.sample("127.0.0.1", CONTROLLER_PORT, secret)
-                        if (snap.live) {
-                            val line =
-                                "↑ ${ByteRateFormatter.formatCompactRate(snap.upBps)}  " +
-                                    "↓ ${ByteRateFormatter.formatCompactRate(snap.downBps)}  ·  " +
-                                    "conn ${snap.connectionCount}"
-                            updateNotification(line)
+        val generation = trafficLoopGate.next()
+        val sampler = TrafficSampler(maxHistory = 30)
+        val supervisor =
+            Thread(
+                {
+                    while (trafficLoopGate.isCurrent(generation)) {
+                        val failure =
+                            RuntimeStackHealth.failure(
+                                mihomoRunning = mihomo?.isRunning == true,
+                                fullTunnel = fullTunnel,
+                                tunnelRunning = tunEngine?.isRunning == true,
+                            )
+                        if (failure != null) {
+                            if (!trafficLoopGate.claim(generation)) break
+                            val component =
+                                when (failure) {
+                                    RuntimeStackFailure.MIHOMO_EXITED -> "mihomo"
+                                    RuntimeStackFailure.TUNNEL_EXITED -> "TUN 转发"
+                                }
+                            appendEvent("$component 异常退出，正在结束会话", "error")
+                            shutdownAll("$component exited unexpectedly", stopService = true)
+                            break
                         }
-                    } catch (error: Exception) {
-                        Log.w(TAG, "traffic sample: ${error.message}")
+                        try {
+                            val snap = sampler.sample("127.0.0.1", CONTROLLER_PORT, secret)
+                            if (!trafficLoopGate.isCurrent(generation)) break
+                            if (snap.live) {
+                                val line =
+                                    "↑ ${ByteRateFormatter.formatCompactRate(snap.upBps)}  " +
+                                        "↓ ${ByteRateFormatter.formatCompactRate(snap.downBps)}  ·  " +
+                                        "conn ${snap.connectionCount}"
+                                updateNotification(line)
+                            }
+                        } catch (error: Exception) {
+                            if (trafficLoopGate.isCurrent(generation)) {
+                                Log.w(TAG, "traffic sample: ${error.message}")
+                            }
+                        }
+                        try {
+                            Thread.sleep(TRAFFIC_POLL_MS)
+                        } catch (_: InterruptedException) {
+                            break
+                        }
                     }
-                    try {
-                        Thread.sleep(TRAFFIC_POLL_MS)
-                    } catch (_: InterruptedException) {
-                        break
-                    }
-                }
-            }
+                },
+                "viasix-vpn-traffic",
+            ).apply { isDaemon = true }
+        trafficThread = supervisor
+        supervisor.start()
     }
 
     private fun stopTrafficNotificationLoop() {
-        trafficLoopRunning.set(false)
+        trafficLoopGate.invalidate()
+        val supervisor = trafficThread
+        trafficThread = null
         try {
-            trafficThread?.interrupt()
+            supervisor?.interrupt()
         } catch (_: Exception) {
         }
-        trafficThread = null
-        trafficSampler.reset()
     }
 
     override fun onDestroy() {

@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android 会话重启时旧流量监督线程仅靠共享布尔值与 `interrupt()` 停止；线程若正阻塞在 controller HTTP 采样中，新的会话会把布尔值重新设为 true，使旧线程继续使用旧 secret/full-tunnel 参数更新通知、污染共享速率历史，甚至误关新会话。监督循环现采用单调 generation gate，每次停止或重启永久淘汰旧代际，异常关停只能由当前代际原子 claim；每代使用独立 `TrafficSampler`，迟到采样在任何外部副作用前都会再次校验代际。
 - 修复 Android VPN 启动最终发布运行态前只复核 mihomo 进程，没有复核刚启动的 `Tun2SocksEngine`；若 TUN reader/writer 或 UDP reactor 在异步启动窗口内立即退出，服务仍可能短暂写入 `running=true` 并展示连接成功。启动现复用统一的 `RuntimeStackHealth`，在 TUN 启动后及运行态发布前同时校验 mihomo 与可选 TUN，引擎已失效时直接回滚整栈。
 - 修复 Android 共享 UDP relay reactor 因 `Selector` 层异常而退出时只在内部清理资源，却不把故障传播给 `Tun2SocksEngine`，导致 VPN 继续显示运行、TCP 仍可用但所有通用 UDP 永久失效的问题；reactor 现区分显式关闭与意外线程终止，后者在完成 relay 清理后通知引擎关闭运行健康门，由既有 service supervisor 统一 fail-closed 结束会话。
 - 修复 Android VPN 停止时仅清空 TUN 出站队列，正在等待空位的 lossless TCP producer 会被 `clear` 释放容量后重新入队并返回成功，导致停止后残留报文与虚假发送成功的问题；队列现采用不可逆 cancelled 状态，取消会清空现有报文并唤醒等待者，所有 producer 在入队前后复核取消状态并按对象身份撤回竞态入队，后续 TCP/UDP 报文均不能复活已停止队列。
