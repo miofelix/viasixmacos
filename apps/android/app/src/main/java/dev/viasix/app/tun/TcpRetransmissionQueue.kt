@@ -4,7 +4,7 @@ class TcpRetransmissionQueue(
     private val baseRtoMs: Long = 1_000L,
     private val maxRtoMs: Long = 8_000L,
     private val maxRetransmissions: Int = 5,
-    private val maxRetainedBytes: Int = 131_070,
+    private val maxRetainedBytes: Int = DEFAULT_MAX_RETAINED_BYTES,
 ) {
     sealed class PollResult {
         data class Retransmit(
@@ -247,7 +247,9 @@ class TcpRetransmissionQueue(
         return timeout
     }
 
-    private companion object {
-        const val FAST_RETRANSMIT_DUPLICATE_ACKS = 3
+    companion object {
+        const val DEFAULT_MAX_RETAINED_BYTES = 131_070
+
+        private const val FAST_RETRANSMIT_DUPLICATE_ACKS = 3
     }
 }

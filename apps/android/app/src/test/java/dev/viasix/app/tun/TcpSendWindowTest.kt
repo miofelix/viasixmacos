@@ -78,4 +78,25 @@ class TcpSendWindowTest {
         window.cancel()
         assertNull(window.acknowledgedSequence())
     }
+
+    @Test
+    fun scaledPeerWindowIsCappedByRetransmissionCapacity() {
+        val window = TcpSendWindow(maxInFlightBytes = 131_070)
+
+        assertTrue(
+            window.update(
+                acknowledgement = 100L,
+                advertisedWindow = 1_073_725_440,
+                nextSequence = 100L,
+            ),
+        )
+        assertEquals(131_070, window.awaitAllowance(maxBytes = 1_000_000, timeoutMs = 0L))
+        assertTrue(window.recordSent(sequence = 100L, sequenceLength = 100_000))
+        assertEquals(31_070, window.awaitAllowance(maxBytes = 1_000_000, timeoutMs = 0L))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsNonPositiveInFlightLimit() {
+        TcpSendWindow(maxInFlightBytes = 0)
+    }
 }

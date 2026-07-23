@@ -1,12 +1,18 @@
 package dev.viasix.app.tun
 
-class TcpSendWindow {
+class TcpSendWindow(
+    private val maxInFlightBytes: Int = TcpRetransmissionQueue.DEFAULT_MAX_RETAINED_BYTES,
+) {
     private val monitor = Object()
     private var initialized = false
     private var acknowledgedSequence = 0L
     private var sentSequence = 0L
     private var advertisedBytes = 0
     private var cancelled = false
+
+    init {
+        require(maxInFlightBytes > 0) { "maxInFlightBytes must be positive" }
+    }
 
     fun update(
         acknowledgement: Long,
@@ -15,7 +21,7 @@ class TcpSendWindow {
     ): Boolean =
         synchronized(monitor) {
             if (cancelled) return@synchronized false
-            if (advertisedWindow !in 0..65_535) return@synchronized false
+            if (advertisedWindow < 0) return@synchronized false
             if (!initialized) {
                 if (acknowledgement != nextSequence) return@synchronized false
                 acknowledgedSequence = acknowledgement
@@ -89,8 +95,9 @@ class TcpSendWindow {
     private fun availableBytes(): Int {
         if (!initialized) return 0
         val inFlight = TcpSequence.forwardDistance(acknowledgedSequence, sentSequence)
-        if (inFlight >= advertisedBytes.toLong()) return 0
-        return (advertisedBytes - inFlight).toInt()
+        val effectiveWindow = minOf(advertisedBytes, maxInFlightBytes).toLong()
+        if (inFlight >= effectiveWindow) return 0
+        return (effectiveWindow - inFlight).toInt()
     }
 
     private companion object {

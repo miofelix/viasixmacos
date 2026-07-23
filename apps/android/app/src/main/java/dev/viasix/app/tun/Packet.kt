@@ -54,6 +54,7 @@ internal object Packet {
         val payloadOffset: Int,
         val payloadLength: Int,
         val maximumSegmentSize: Int? = null,
+        val windowScale: Int? = null,
     )
 
     data class Udp(
@@ -210,16 +211,19 @@ internal object Packet {
             tcpPayloadOffset,
             payloadLength,
             options.maximumSegmentSize,
+            options.windowScale,
         )
     }
 
     private data class TcpOptions(
         val maximumSegmentSize: Int?,
+        val windowScale: Int?,
     )
 
     private fun parseTcpOptions(buffer: ByteBuffer, start: Int, end: Int): TcpOptions? {
         var offset = start
         var maximumSegmentSize: Int? = null
+        var windowScale: Int? = null
         while (offset < end) {
             val kind = buffer.get(offset).toInt() and 0xff
             when (kind) {
@@ -235,6 +239,15 @@ internal object Packet {
                     maximumSegmentSize = value
                     offset += length
                 }
+                3 -> {
+                    if (offset > end - 2) return null
+                    val length = buffer.get(offset + 1).toInt() and 0xff
+                    if (length != 3 || offset > end - length) return null
+                    if (windowScale != null) return null
+                    val receivedShift = buffer.get(offset + 2).toInt() and 0xff
+                    windowScale = TcpWindowScale.normalize(receivedShift)
+                    offset += length
+                }
                 else -> {
                     if (offset > end - 2) return null
                     val length = buffer.get(offset + 1).toInt() and 0xff
@@ -243,7 +256,7 @@ internal object Packet {
                 }
             }
         }
-        return TcpOptions(maximumSegmentSize)
+        return TcpOptions(maximumSegmentSize, windowScale)
     }
 
     fun parseTcp(buffer: ByteBuffer, ip: Ip4): Tcp? {
@@ -356,8 +369,9 @@ internal object Packet {
         flags: Int,
         payload: ByteArray,
         maximumSegmentSize: Int? = null,
+        windowScale: Int? = null,
     ): ByteArray {
-        val options = tcpOptions(maximumSegmentSize, flags)
+        val options = tcpOptions(maximumSegmentSize, windowScale, flags)
         requireBuildFields(
             source,
             destination,
@@ -462,8 +476,9 @@ internal object Packet {
         flags: Int,
         payload: ByteArray,
         maximumSegmentSize: Int? = null,
+        windowScale: Int? = null,
     ): ByteArray {
-        val options = tcpOptions(maximumSegmentSize, flags)
+        val options = tcpOptions(maximumSegmentSize, windowScale, flags)
         requireBuildFields(
             source,
             destination,
@@ -555,18 +570,38 @@ internal object Packet {
         bytes[offset + 1] = (value and 0xff).toByte()
     }
 
-    private fun tcpOptions(maximumSegmentSize: Int?, flags: Int): ByteArray {
-        if (maximumSegmentSize == null) return ByteArray(0)
-        require(flags and SYN != 0) { "TCP MSS option is valid only on SYN packets" }
-        require(maximumSegmentSize in 1..0xffff) {
-            "TCP MSS must be an unsigned non-zero 16-bit value"
+    private fun tcpOptions(
+        maximumSegmentSize: Int?,
+        windowScale: Int?,
+        flags: Int,
+    ): ByteArray {
+        if (maximumSegmentSize == null && windowScale == null) return ByteArray(0)
+        require(flags and SYN != 0) { "TCP options are valid only on SYN packets" }
+        maximumSegmentSize?.let {
+            require(it in 1..0xffff) {
+                "TCP MSS must be an unsigned non-zero 16-bit value"
+            }
         }
-        return byteArrayOf(
-            2,
-            4,
-            (maximumSegmentSize ushr 8).toByte(),
-            maximumSegmentSize.toByte(),
-        )
+        windowScale?.let {
+            require(it in 0..TcpWindowScale.MAX_SHIFT) {
+                "TCP window scale must be 0..${TcpWindowScale.MAX_SHIFT}"
+            }
+        }
+        val options = ArrayList<Byte>(8)
+        if (maximumSegmentSize != null) {
+            options.add(2.toByte())
+            options.add(4.toByte())
+            options.add((maximumSegmentSize ushr 8).toByte())
+            options.add(maximumSegmentSize.toByte())
+        }
+        if (windowScale != null) {
+            if (options.isNotEmpty()) options.add(1.toByte())
+            options.add(3.toByte())
+            options.add(3.toByte())
+            options.add(windowScale.toByte())
+        }
+        while (options.size % 4 != 0) options.add(0.toByte())
+        return options.toByteArray()
     }
 
     private fun ipChecksum(buf: ByteArray, offset: Int, length: Int): Int {

@@ -57,6 +57,37 @@ class PacketValidationTest {
     }
 
     @Test
+    fun clampsExcessiveWindowScaleAndRejectsDuplicates() {
+        val packet =
+            Packet.buildIp4Tcp(
+                source = InetAddress.getByName("10.10.0.2"),
+                destination = InetAddress.getByName("1.1.1.1"),
+                sourcePort = 53_000,
+                destPort = 443,
+                seq = 1,
+                ack = 2,
+                flags = Packet.SYN,
+                payload = ByteArray(0),
+                maximumSegmentSize = 1_000,
+                windowScale = 14,
+            )
+        packet[Packet.IP4_HEADER_SIZE + Packet.TCP_HEADER_SIZE + 7] = 30
+        val packetBuffer = ByteBuffer.wrap(packet)
+        val ip = Packet.parseIp4(packetBuffer)!!
+        assertEquals(
+            14,
+            Packet.parseTcp(packetBuffer, ip.payloadOffset, ip.totalLength - ip.headerLength)?.windowScale,
+        )
+
+        val duplicate = ByteBuffer.allocate(28).order(ByteOrder.BIG_ENDIAN)
+        duplicate.put(12, 0x70.toByte())
+        duplicate.put(13, Packet.SYN.toByte())
+        duplicate.position(Packet.TCP_HEADER_SIZE)
+        duplicate.put(byteArrayOf(3, 3, 1, 1, 3, 3, 2, 0))
+        assertNull(Packet.parseTcp(duplicate, payloadOffset = 0, l4Length = duplicate.capacity()))
+    }
+
+    @Test
     fun rejectsIpv4FragmentsThatRequireReassembly() {
         val base =
             Packet.buildIp4Udp(

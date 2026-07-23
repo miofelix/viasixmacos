@@ -318,6 +318,7 @@ class Tun2SocksEngine(
                     remotePort = tcp.destPort,
                     clientIsn = tcp.seq,
                     clientMaximumSegmentSize = tcp.maximumSegmentSize,
+                    clientWindowScale = tcp.windowScale,
                     ipv6 = ipv6,
                 )
             sessions[key] = session
@@ -397,7 +398,11 @@ class Tun2SocksEngine(
             if (
                 session.sendWindow.update(
                     acknowledgement = tcp.ack,
-                    advertisedWindow = tcp.window,
+                    advertisedWindow =
+                        TcpWindowScale.expand(
+                            advertisedWindow = tcp.window,
+                            shift = session.clientWindowScale ?: 0,
+                        ),
                     nextSequence = session.serverSeq,
                 )
             ) {
@@ -721,6 +726,7 @@ class Tun2SocksEngine(
         flags: Int,
         payload: ByteArray,
         maximumSegmentSize: Int? = null,
+        windowScale: Int? = null,
     ): ByteArray =
         if (session.ipv6) {
             Packet.buildIp6Tcp(
@@ -733,6 +739,7 @@ class Tun2SocksEngine(
                 flags = flags,
                 payload = payload,
                 maximumSegmentSize = maximumSegmentSize,
+                windowScale = windowScale,
             )
         } else {
             Packet.buildIp4Tcp(
@@ -745,6 +752,7 @@ class Tun2SocksEngine(
                 flags = flags,
                 payload = payload,
                 maximumSegmentSize = maximumSegmentSize,
+                windowScale = windowScale,
             )
         }
 
@@ -757,6 +765,8 @@ class Tun2SocksEngine(
                 flags = Packet.SYN or Packet.ACK,
                 payload = ByteArray(0),
                 maximumSegmentSize = TcpSegmentSizer.maxPayloadBytes(mtu, session.ipv6),
+                windowScale =
+                    if (session.clientWindowScale != null) SERVER_WINDOW_SCALE else null,
             ),
             lossless = true,
         )
@@ -1296,6 +1306,7 @@ class Tun2SocksEngine(
         val remotePort: Int,
         val clientIsn: Long,
         val clientMaximumSegmentSize: Int? = null,
+        val clientWindowScale: Int? = null,
         val ipv6: Boolean = false,
     ) {
         @Volatile var socket: Socket? = null
@@ -1395,6 +1406,7 @@ class Tun2SocksEngine(
         private const val RETRANSMISSION_DRAIN_TIMEOUT_MS = 35_000L
         private const val SERVER_FIN_WINDOW_TIMEOUT_MS = 30_000L
         private const val SERVER_HALF_CLOSE_TIMEOUT_MS = 60_000L
+        private const val SERVER_WINDOW_SCALE = 0
         private const val UPSTREAM_POLL_MS = 200L
         private const val UPSTREAM_WRITER_IDLE_MS = 1_000L
         private const val STOP_TIMEOUT_MS = 2_000L

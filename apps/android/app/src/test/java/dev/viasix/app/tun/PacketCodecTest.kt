@@ -115,6 +115,31 @@ class PacketCodecTest {
     }
 
     @Test
+    fun tcpWindowScaleOption_roundTripsWithMss() {
+        val bytes =
+            Packet.buildIp4Tcp(
+                source = remote4,
+                destination = client4,
+                sourcePort = 443,
+                destPort = 40_000,
+                seq = 1_000L,
+                ack = 2_001L,
+                flags = Packet.SYN or Packet.ACK,
+                payload = ByteArray(0),
+                maximumSegmentSize = 1_440,
+                windowScale = 7,
+            )
+        val buffer = ByteBuffer.wrap(bytes)
+        val ip = Packet.parseIp4(buffer)!!
+        val tcp = Packet.parseTcp(buffer, ip)!!
+
+        assertEquals(28, tcp.dataOffset)
+        assertEquals(1_440, tcp.maximumSegmentSize)
+        assertEquals(7, tcp.windowScale)
+        assertEquals(0, tcp.payloadLength)
+    }
+
+    @Test
     fun ipv6Udp_roundTrip() {
         val payload = "quic".toByteArray()
         val bytes =
