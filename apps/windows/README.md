@@ -67,6 +67,9 @@ make windows-skeleton         # 目录/文件校验
 | TUN stack/MTU、UDP/嗅探可配 | ✓ |
 | 用户态 Mihomo 启停（投影预检 + 端口可配） | ✓（需 `prebuild`） |
 | 本机代理回环监听不变量 + 端口校验（start/project） | ✓ |
+| mixed/controller 端口不得相同；rule/global 强制 IPv6 选择 | ✓ |
+| 启动后自动 Controller 健康探测 | ✓ |
+| 活动日志导出 TSV（`export_activity_log_text` / 文件） | ✓ |
 | 内核日志一等命令 `ingest_core_log` 并入活动流 | ✓ |
 | Profile 导出到用户选择路径 | ✓ |
 | 系统代理（WinINET 注册表 + 启动/退出恢复） | ✓（仅 Windows 构建） |

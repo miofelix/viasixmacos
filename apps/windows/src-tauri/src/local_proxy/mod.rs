@@ -32,6 +32,49 @@ pub fn validate_port(port: u16, name: &str) -> Result<u16, String> {
     Ok(port)
 }
 
+/// mixed and controller ports must both be valid and distinct (macOS local-proxy invariant).
+pub fn validate_proxy_ports(mixed_port: u16, controller_port: u16) -> Result<(), String> {
+    let mixed = validate_port(mixed_port, "mixedPort")?;
+    let controller = validate_port(controller_port, "controllerPort")?;
+    if mixed == controller {
+        return Err(format!(
+            "mixedPort and controllerPort must differ (both {mixed})"
+        ));
+    }
+    Ok(())
+}
+
+/// IPv6-first selection rule: direct mode needs no node; rule/global require IPv6.
+pub fn validate_selected_address_for_mode(
+    routing_mode: &str,
+    selected_address: Option<&str>,
+) -> Result<Option<String>, String> {
+    let mode = routing_mode.trim().to_ascii_lowercase();
+    if mode == "direct" {
+        return Ok(None);
+    }
+    if mode != "rule" && mode != "global" {
+        return Err(format!("invalid routingMode: {routing_mode}"));
+    }
+    let raw = selected_address.map(str::trim).unwrap_or("");
+    if raw.is_empty() {
+        return Err("selectedAddress required for rule/global modes".into());
+    }
+    if !looks_like_ipv6(raw) {
+        return Err(format!(
+            "selectedAddress must be IPv6 (IPv6-first), got {raw}"
+        ));
+    }
+    Ok(Some(raw.to_string()))
+}
+
+fn looks_like_ipv6(value: &str) -> bool {
+    if value.contains('.') {
+        return false;
+    }
+    value.contains(':') && value.chars().all(|c| c.is_ascii_hexdigit() || c == ':')
+}
+
 /// Merge kernel log tail lines into display-friendly activity messages.
 pub fn kernel_log_lines_for_activity(raw: &str, max_lines: usize) -> Vec<String> {
     let take = max_lines.max(1);
@@ -45,6 +88,19 @@ pub fn kernel_log_lines_for_activity(raw: &str, max_lines: usize) -> Vec<String>
         .into_iter()
         .rev()
         .collect()
+}
+
+/// Format activity entries for file export (TSV-ish, stable for diagnostics).
+pub fn format_activity_export(
+    entries: &[(u64, &str, &str, &str)],
+) -> String {
+    // (at_ms, level, source, message)
+    let mut out = String::from("at_ms\tlevel\tsource\tmessage\n");
+    for (at, level, source, message) in entries {
+        let msg = message.replace('\t', " ").replace('\n', " ");
+        out.push_str(&format!("{at}\t{level}\t{source}\t{msg}\n"));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -88,5 +144,37 @@ mod tests {
     fn rejects_empty_listen() {
         assert!(validate_listen_address("").is_err());
         assert!(validate_listen_address("   ").is_err());
+    }
+
+    #[test]
+    fn proxy_ports_must_differ() {
+        assert!(validate_proxy_ports(11451, 9090).is_ok());
+        let err = validate_proxy_ports(9090, 9090).unwrap_err();
+        assert!(err.contains("must differ"), "{err}");
+    }
+
+    #[test]
+    fn selected_address_rules_match_ipv6_first() {
+        assert_eq!(
+            validate_selected_address_for_mode("direct", None).unwrap(),
+            None
+        );
+        assert!(validate_selected_address_for_mode("rule", None).is_err());
+        assert!(validate_selected_address_for_mode("rule", Some("1.2.3.4")).is_err());
+        assert_eq!(
+            validate_selected_address_for_mode("global", Some("2001:db8::1"))
+                .unwrap()
+                .as_deref(),
+            Some("2001:db8::1")
+        );
+    }
+
+    #[test]
+    fn activity_export_is_tsv() {
+        let rows = [(1u64, "info", "app", "hello\tworld")];
+        let text = format_activity_export(&rows);
+        assert!(text.starts_with("at_ms\tlevel\tsource\tmessage\n"));
+        assert!(text.contains("hello world"));
+        assert!(!text.contains("hello\tworld\n"));
     }
 }

@@ -56,6 +56,19 @@ export async function ingestCoreLog(maxLines = 80): Promise<number> {
   return invoke<number>("ingest_core_log", { maxLines });
 }
 
+export async function exportActivityLogText(): Promise<string> {
+  return invoke<string>("export_activity_log_text");
+}
+
+export async function validateStartConfig(args: {
+  routingMode: string;
+  selectedAddress: string | null;
+  mixedPort?: number | null;
+  controllerPort?: number | null;
+}): Promise<string> {
+  return invoke<string>("validate_start_config", args);
+}
+
 export async function coreStatus(): Promise<CoreStatus> {
   return invoke<CoreStatus>("core_status");
 }

@@ -84,6 +84,7 @@ fn apply_ports(
     if let Some(port) = controller_port {
         options.controller_port = local_proxy::validate_port(port, "controllerPort")?;
     }
+    local_proxy::validate_proxy_ports(options.mixed_port, options.controller_port)?;
     // Product invariant: mixed proxy is loopback-only (macOS LocalProxyConfiguration).
     options.listen_address =
         local_proxy::validate_listen_address(&options.listen_address)?;
@@ -147,7 +148,10 @@ fn project_runtime_config(
     let mode = RoutingMode::parse(&routing_mode).ok_or_else(|| "invalid routingMode".to_string())?;
     let mut options = ProjectOptions::default();
     options.routing_mode = mode;
-    options.selected_address = selected_address;
+    options.selected_address = local_proxy::validate_selected_address_for_mode(
+        &routing_mode,
+        selected_address.as_deref(),
+    )?;
     apply_ports(&mut options, mixed_port, controller_port)?;
     apply_proxy_flags(&mut options, udp_enabled, sniffing_enabled);
     let profile = if mode == RoutingMode::Direct {
@@ -201,6 +205,36 @@ fn ingest_core_log(
     Ok(after.saturating_sub(before))
 }
 
+/// Export activity log as TSV text (caller may write via write_text_file).
+#[tauri::command]
+fn export_activity_log_text(services: State<'_, SharedServices>) -> String {
+    let list = services.activity.lock().list();
+    let rows: Vec<(u64, &str, &str, &str)> = list
+        .iter()
+        .map(|e| (e.at, e.level.as_str(), e.source.as_str(), e.message.as_str()))
+        .collect();
+    local_proxy::format_activity_export(&rows)
+}
+
+/// Lightweight config validation for UI (does not start core).
+#[tauri::command]
+fn validate_start_config(
+    routing_mode: String,
+    selected_address: Option<String>,
+    mixed_port: Option<u16>,
+    controller_port: Option<u16>,
+) -> Result<String, String> {
+    local_proxy::validate_selected_address_for_mode(
+        &routing_mode,
+        selected_address.as_deref(),
+    )?;
+    let mixed = mixed_port.unwrap_or(11_451);
+    let controller = controller_port.unwrap_or(9_090);
+    local_proxy::validate_proxy_ports(mixed, controller)?;
+    local_proxy::validate_listen_address("127.0.0.1")?;
+    Ok("ok".into())
+}
+
 #[tauri::command]
 fn core_status(services: State<'_, SharedServices>) -> CoreStatus {
     services.core.status()
@@ -224,7 +258,14 @@ fn start_core(
     let mode = RoutingMode::parse(&routing_mode).ok_or_else(|| "invalid routingMode".to_string())?;
     let mut options = ProjectOptions::default();
     options.routing_mode = mode;
-    options.selected_address = selected_address;
+    options.selected_address = local_proxy::validate_selected_address_for_mode(
+        &routing_mode,
+        selected_address.as_deref(),
+    )
+    .map_err(|e| {
+        push_log(&services, Some(&app), "error", "config", e.clone());
+        e
+    })?;
     apply_ports(&mut options, mixed_port, controller_port).map_err(|e| {
         push_log(&services, Some(&app), "error", "config", e.clone());
         e
@@ -1095,6 +1136,8 @@ pub fn run() {
             read_text_file,
             write_text_file,
             ingest_core_log,
+            export_activity_log_text,
+            validate_start_config,
             core_status,
             start_core,
             stop_core,

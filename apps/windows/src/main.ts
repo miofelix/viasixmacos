@@ -746,6 +746,22 @@ async function startCore(): Promise<void> {
   }
   if (!canStartProxy(model)) return;
 
+  // Backend-aligned preflight (ports distinct + IPv6-first selection).
+  try {
+    await api.validateStartConfig({
+      routingMode: model.routingMode,
+      selectedAddress:
+        model.routingMode === "direct" ? null : model.selectedAddress || null,
+      mixedPort: model.mixedPort,
+      controllerPort: model.controllerPort,
+    });
+  } catch (error) {
+    toast(`配置校验失败：${error}`, "error");
+    pushLog(model, "error", "config", `配置校验失败：${error}`);
+    paint();
+    return;
+  }
+
   model.busy.start = true;
   paint();
   try {
@@ -770,6 +786,19 @@ async function startCore(): Promise<void> {
       clearTrafficHistory(model);
       startTrafficPolling();
       void refreshCoreLog();
+      // Post-start controller health (macOS probes when running).
+      try {
+        const health = await api.probeController();
+        model.controller = health;
+        pushLog(
+          model,
+          health.ok ? "success" : "warn",
+          "core",
+          `启动后探测：${health.message}`,
+        );
+      } catch (error) {
+        pushLog(model, "warn", "core", `启动后探测失败：${error}`);
+      }
     }
   } catch (error) {
     pushLog(model, "error", "core", `启动失败：${error}`);
@@ -1053,20 +1082,52 @@ async function applyBest(): Promise<void> {
 }
 
 async function exportLogs(): Promise<void> {
-  const lines = filteredLogs(model).map(
-    (e) => `${new Date(e.at).toISOString()}\t${e.level}\t${e.source}\t${e.message}`,
-  );
-  if (lines.length === 0) {
-    toast("没有可导出的日志", "error");
-    return;
-  }
-  const text = lines.join("\n");
-  const ok = await copyText(text);
-  if (ok) {
-    pushLog(model, "info", "app", `已复制 ${lines.length} 条日志到剪贴板`);
-    toast(`已复制 ${lines.length} 条日志`, "success");
-  } else {
-    toast("导出失败", "error");
+  try {
+    // Prefer backend TSV export (stable columns; full activity store).
+    let text = "";
+    try {
+      text = await api.exportActivityLogText();
+    } catch {
+      const lines = filteredLogs(model).map(
+        (e) =>
+          `${e.at}\t${e.level}\t${e.source}\t${e.message.replace(/\t/g, " ").replace(/\n/g, " ")}`,
+      );
+      text = `at_ms\tlevel\tsource\tmessage\n${lines.join("\n")}\n`;
+    }
+    if (!text.trim() || text.trim().split("\n").length <= 1) {
+      toast("没有可导出的日志", "error");
+      return;
+    }
+    try {
+      const path = await save({
+        defaultPath: "viasix-activity.tsv",
+        filters: [
+          { name: "TSV", extensions: ["tsv", "txt"] },
+          { name: "All", extensions: ["*"] },
+        ],
+      });
+      if (path) {
+        await api.writeTextFile(path, text);
+        toast(`已导出日志到 ${path}`, "success");
+        pushLog(model, "info", "app", `已导出活动日志 → ${path}`);
+        return;
+      }
+    } catch (error) {
+      const msg = String(error);
+      if (!/cancel/i.test(msg)) {
+        // fall through to clipboard
+      } else {
+        return;
+      }
+    }
+    const ok = await copyText(text);
+    if (ok) {
+      toast("已复制活动日志到剪贴板", "success");
+    } else {
+      toast("导出失败", "error");
+    }
+  } catch (error) {
+    toast(`导出失败：${error}`, "error");
   }
 }
 
