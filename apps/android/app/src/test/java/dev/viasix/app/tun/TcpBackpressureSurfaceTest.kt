@@ -16,9 +16,10 @@ class TcpBackpressureSurfaceTest {
         assertTrue(engine.contains("OutboundPacketQueue(capacity = 512)"))
         assertTrue(engine.contains("LOSSLESS_ENQUEUE_TIMEOUT_MS"))
         assertTrue(engine.contains("val synAckQueued"))
-        assertTrue(engine.contains("if (!queued) break"))
+        assertTrue(engine.contains("session.retransmissions.cancel()"))
         assertTrue(engine.contains("flags = Packet.FIN or Packet.ACK"))
         assertTrue(engine.contains("lossless = true"))
+        assertTrue(engine.contains("timeoutMs: Long = if (lossless) LOSSLESS_ENQUEUE_TIMEOUT_MS else 0L"))
     }
 
     private fun resolve(vararg paths: String): File =

@@ -18,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -59,6 +60,10 @@ class Tun2SocksEngine(
         Executors.newCachedThreadPool { r ->
             Thread(r, "viasix-tun-worker").apply { isDaemon = true }
         }
+    private val retransmissionExecutor =
+        Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "viasix-tcp-retransmit").apply { isDaemon = true }
+        }
     private lateinit var inChannel: FileChannel
     private lateinit var outStream: FileOutputStream
 
@@ -66,6 +71,18 @@ class Tun2SocksEngine(
         if (!running.compareAndSet(false, true)) return
         inChannel = FileInputStream(tun.fileDescriptor).channel
         outStream = FileOutputStream(tun.fileDescriptor)
+        retransmissionExecutor.scheduleWithFixedDelay(
+            {
+                try {
+                    retransmitDueTcpSegments()
+                } catch (error: Exception) {
+                    Log.w(TAG, "TCP retransmission scan failed: ${error.message}")
+                }
+            },
+            RETRANSMISSION_SCAN_MS,
+            RETRANSMISSION_SCAN_MS,
+            TimeUnit.MILLISECONDS,
+        )
 
         writerThread =
             Thread(
@@ -138,6 +155,7 @@ class Tun2SocksEngine(
         closeAllUdpRelays()
         udpClients.clear()
         outboundPackets.clear()
+        retransmissionExecutor.shutdownNow()
         executor.shutdownNow()
         try {
             inChannel.close()
@@ -243,11 +261,18 @@ class Tun2SocksEngine(
             )
         }
         if (session.handshake.isComplete && tcp.flags and Packet.ACK != 0) {
-            session.sendWindow.update(
-                acknowledgement = tcp.ack,
-                advertisedWindow = tcp.window,
-                nextSequence = session.serverSeq,
-            )
+            if (
+                session.sendWindow.update(
+                    acknowledgement = tcp.ack,
+                    advertisedWindow = tcp.window,
+                    nextSequence = session.serverSeq,
+                )
+            ) {
+                session.retransmissions.acknowledge(
+                    acknowledgement = tcp.ack,
+                    nowMs = monotonicTimeMs(),
+                )
+            }
         }
 
         if (tcp.payloadLength > 0 && session.handshake.isComplete && session.socket != null) {
@@ -369,18 +394,40 @@ class Tun2SocksEngine(
                                 flags = Packet.PSH or Packet.ACK,
                                 payload = chunk,
                             )
-                        if (!session.sendWindow.recordSent(sequence, payloadLength = n)) break
+                        val reservation =
+                            session.retransmissions.reserve(
+                                sequence = sequence,
+                                flags = Packet.PSH or Packet.ACK,
+                                payload = chunk,
+                            )
+                        if (reservation == null) {
+                            session.retransmissions.cancel()
+                            break
+                        }
+                        if (!session.sendWindow.recordSent(sequence, payloadLength = n)) {
+                            session.retransmissions.discard(reservation)
+                            session.retransmissions.cancel()
+                            break
+                        }
                         session.serverSeq = TcpSequence.advance(sequence, payloadLength = n)
                         val queued =
                             enqueuePacket(
                                 packet,
                                 lossless = true,
                             )
-                        if (!queued) break
+                        if (!queued) {
+                            session.retransmissions.cancel()
+                            break
+                        }
+                        session.retransmissions.markQueued(reservation, monotonicTimeMs())
                     }
                 } catch (_: Exception) {
                 } finally {
-                    if (running.get() && sessions[key] === session && !session.serverFinSent) {
+                    val current = running.get() && sessions[key] === session
+                    val drained =
+                        current &&
+                            session.retransmissions.awaitEmpty(RETRANSMISSION_DRAIN_TIMEOUT_MS)
+                    if (drained && running.get() && sessions[key] === session && !session.serverFinSent) {
                         session.serverFinSent = true
                         if (
                             enqueuePacket(
@@ -720,6 +767,38 @@ class Tun2SocksEngine(
 
     // endregion
 
+    private fun retransmitDueTcpSegments() {
+        if (!running.get()) return
+        val nowMs = monotonicTimeMs()
+        for ((key, session) in sessions.entries) {
+            when (val due = session.retransmissions.pollDue(nowMs)) {
+                is TcpRetransmissionQueue.PollResult.Retransmit -> {
+                    if (sessions[key] !== session) continue
+                    val queued =
+                        enqueuePacket(
+                            buildTcpPacket(
+                                session = session,
+                                seq = due.sequence,
+                                ack = session.clientNextSeq,
+                                flags = due.flags,
+                                payload = due.payload,
+                            ),
+                            lossless = true,
+                            timeoutMs = 0L,
+                        )
+                    if (!queued) {
+                        Log.w(TAG, "TCP retransmission deferred by TUN backpressure for $key")
+                    }
+                }
+                TcpRetransmissionQueue.PollResult.Exhausted -> {
+                    Log.w(TAG, "TCP retransmission limit reached for $key")
+                    removeSession(key, session)
+                }
+                null -> Unit
+            }
+        }
+    }
+
     private fun enqueueAck(session: TcpSession) {
         enqueuePacket(
             buildTcpPacket(
@@ -735,12 +814,13 @@ class Tun2SocksEngine(
     private fun enqueuePacket(
         packet: ByteArray,
         lossless: Boolean = false,
+        timeoutMs: Long = if (lossless) LOSSLESS_ENQUEUE_TIMEOUT_MS else 0L,
     ): Boolean =
         running.get() &&
             outboundPackets.offer(
                 packet = packet,
                 lossless = lossless,
-                timeoutMs = if (lossless) LOSSLESS_ENQUEUE_TIMEOUT_MS else 0L,
+                timeoutMs = timeoutMs,
             )
 
     private fun removeSession(key: String, session: TcpSession) {
@@ -773,10 +853,12 @@ class Tun2SocksEngine(
         @Volatile var serverFinSent: Boolean = false
         val handshake = TcpHandshakeGate()
         val sendWindow = TcpSendWindow()
+        val retransmissions = TcpRetransmissionQueue()
 
         fun close() {
             handshake.cancel()
             sendWindow.cancel()
+            retransmissions.cancel()
             try {
                 socket?.close()
             } catch (_: Exception) {
@@ -822,5 +904,9 @@ class Tun2SocksEngine(
         private const val LOSSLESS_ENQUEUE_TIMEOUT_MS = 1_000L
         private const val HANDSHAKE_TIMEOUT_MS = 10_000L
         private const val WINDOW_WAIT_POLL_MS = 1_000L
+        private const val RETRANSMISSION_SCAN_MS = 200L
+        private const val RETRANSMISSION_DRAIN_TIMEOUT_MS = 35_000L
+
+        private fun monotonicTimeMs(): Long = System.nanoTime() / 1_000_000L
     }
 }
