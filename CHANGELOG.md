@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android TCP 对已存在会话收到任意序号的 RST 都立即关闭，陈旧或窗口外复位可错误终止健康连接的问题；同步态 RST 现仅在 socket 与序号状态完整发布后按 RFC 5961 校验客户端下一期望序号，精确命中才关闭，65,535 字节接收窗口内的非精确值触发既有每会话限速 challenge ACK，窗口外、回退序号或尚在建连的 RST 静默丢弃，序号回绕同样安全。
 - 修复 Android TCP 已建立会话静默吞掉重复纯 SYN，而 SYN+ACK 仍可能落入发送窗口、payload 与 FIN 处理路径的问题；同步态现按 RFC 5961 对意外 SYN 回送每会话单调时钟限速的 challenge ACK，握手未完成时稳定重发原 SYN-ACK，并在两种情况下都立即停止该段的后续数据处理，避免异常控制位推进流状态或形成 ACK 放大。
 - 修复 Android TCP 握手只校验 ACK 值，错误客户端序号、携带 SYN 的 ACK 也能提前放行下行 reader，且远端 socket 尚未建立时伪造 `ACK=0` 可能错误拒绝会话的问题；握手门现同时要求 socket 已发布、`SEQ=clientNextSeq`、`ACK=serverSeq`、ACK 标志存在且无 SYN/RST，并以 pending/completed/cancelled 原子三态保证取消后不可复活，同时仍允许第三次握手携带合法 payload/FIN。
 - 修复 Android 用户态 TCP 在会话不存在或达到会话上限时静默丢弃 SYN、ACK 与数据段，应用只能等待自身超时的问题；CLOSED 状态现按 RFC 9293 生成无状态 RST，带 ACK 的输入使用 `SEQ=SEG.ACK`，其余输入确认包含 SYN/FIN 的完整段长度，同时保持 32 位序号回绕安全且绝不响应 RST。

@@ -336,7 +336,19 @@ class Tun2SocksEngine(
         }
 
         if (tcp.flags and Packet.RST != 0) {
-            removeSession(key, session)
+            if (session.socket == null) return
+            when (
+                TcpResetPolicy.classify(
+                    sequence = tcp.seq,
+                    nextExpected = session.clientNextSeq,
+                )
+            ) {
+                TcpResetPolicy.Action.CLOSE -> removeSession(key, session)
+                TcpResetPolicy.Action.CHALLENGE_ACK -> {
+                    if (session.handshake.isComplete) enqueueChallengeAck(session)
+                }
+                TcpResetPolicy.Action.DROP -> Unit
+            }
             return
         }
 
@@ -493,11 +505,11 @@ class Tun2SocksEngine(
                 removeSession(key, session)
                 return
             }
-            session.socket = socket
-            inFlightIo.unregister(socket)
             session.serverIsn = Random.nextInt().toLong() and 0xffffffffL
             session.serverSeq = TcpSequence.advance(session.serverIsn, syn = true)
             session.clientNextSeq = TcpSequence.advance(session.clientIsn, syn = true)
+            session.socket = socket
+            inFlightIo.unregister(socket)
 
             val synAckQueued = enqueueSynAck(session)
             if (!synAckQueued) {

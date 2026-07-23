@@ -25,6 +25,12 @@ class TcpHandshakeSurfaceTest {
         assertTrue(engine.contains("expectedAcknowledgement = session.serverSeq"))
         assertTrue(engine.contains("flags = tcp.flags"))
         assertTrue(engine.contains("session.socket != null"))
+        val openSession =
+            engine.substring(
+                engine.indexOf("private fun openTcpSession"),
+                engine.indexOf("private fun ensureTcpDownstreamReader"),
+            )
+        assertTrue(openSession.indexOf("session.clientNextSeq =") < openSession.indexOf("session.socket = socket"))
         assertTrue(engine.contains("ensureTcpDownstreamReader(key, session)"))
         assertTrue(engine.contains("session.handshakeDeadlineMs = monotonicTimeMs()"))
         assertTrue(engine.contains("TCP handshake timed out for"))
