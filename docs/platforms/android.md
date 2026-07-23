@@ -63,6 +63,7 @@ Android 功能对齐以 **macOS** 为准。Windows 端仍在完善中，**不得
 - VPN 计费属性：Android 10+ 可选择保持默认“按流量计费”或标记为不计费；仅影响系统后台数据策略，不改变物理网络资费，运行中锁定修改
 - 局域网绕过：Android 13+ 使用原生 `VpnService.Builder.excludeRoute` 排除 IPv4/IPv6 私网、回环、链路本地、组播与广播目标；默认关闭，所选 DNS 以更具体的 VPN 主机路由保留，系统锁定 VPN 仍可能阻止其他隧道外访问
 - IPv6 应用流量：全量隧道支持“经 VPN / 阻止 / 绕过 VPN”三态；默认经 VPN，IPv6 地址或默认路由建立失败时中止会话而不是静默旁路；阻止/绕过模式要求 IPv4 DNS，绕过模式会暴露设备真实 IPv6；HTTP 代理-only 模式显式允许 IPv6 地址族，不会因无 IPv6 VPN 路由而误阻断
+- 底层网络切换：`registerDefaultNetworkCallback` 只接受带 `NET_CAPABILITY_NOT_VPN` 的默认网络；Wi-Fi、蜂窝或以太网变化时通过 `setUnderlyingNetworks` 更新 VPN 绑定，当前网络丢失时回退系统选择，并忽略旧网络迟到的 `onLost`
 - 分应用路由：支持所有应用、绕过所选和仅代理所选三种 `VpnService.Builder` 策略；选择器仅查询具有 Launcher 入口的应用，后台型应用可手动添加包名，不申请广泛包可见权限，运行中锁定修改
 
 ## 移动端交互（参考 Clash Meta / NekoBox，语义仍对齐 macOS）
@@ -75,6 +76,7 @@ Android 功能对齐以 **macOS** 为准。Windows 端仍在完善中，**不得
 | 通知实时流量与控制 | 前台 VPN 通知展示 ↑/↓ 紧凑速率与连接数，并提供“断开”动作；更新不重复提醒 |
 | 通知权限体验 | Android 13+ 仅在首次连接前询问；快捷磁贴会转入应用完成授权，拒绝不阻塞 VPN |
 | 会话恢复与回流 | 重建后立即恢复当前分区/运行态；磁贴和通知通过 `CLEAR_TOP + SINGLE_TOP` 回到既有 Activity 并处理新意图 |
+| 移动网络切换 | 首页与设置展示底层网络及联网验证状态；Wi-Fi/蜂窝切换时会话保持并更新 VPN 底层绑定 |
 | 运行组件管理 | 启动时只读检查，设置页分别安装/修复/重装 mihomo 与 CFST；VPN 或测速运行中禁止替换对应组件 |
 | 自适应应用壳 | `<600dp` 底部栏、`600–839dp` 导航轨、`≥840dp` 带连接状态和当前 IPv6 的侧栏 |
 | 跨端品牌图标 | 启动器复用 macOS IPv6 地址标记，支持 Adaptive Icon、圆形蒙版和 Android 13 主题图标；磁贴/通知使用高对比紧凑标记 |

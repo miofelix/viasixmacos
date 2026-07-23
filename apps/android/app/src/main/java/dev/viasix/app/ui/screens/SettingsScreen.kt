@@ -122,6 +122,8 @@ fun SettingsScreen(
             SurfaceCard {
                 CardHeader(title = "网络接入", icon = Icons.Outlined.VpnKey, tone = AppTone.Accent)
                 HorizontalDivider(color = colors.surfaceBorder)
+                CompactInfoRow("底层网络", state.runtime.underlyingNetwork)
+                HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
                 SettingRow(
                     title = "全量隧道",
                     detail = "默认路由 + 用户态 TCP/UDP（IPv4/IPv6→SOCKS；DNS 可经代理或直连）",

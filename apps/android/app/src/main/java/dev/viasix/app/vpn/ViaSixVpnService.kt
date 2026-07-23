@@ -7,7 +7,10 @@ import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Intent
 import android.graphics.drawable.Icon
+import android.net.ConnectivityManager
 import android.net.IpPrefix
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -30,6 +33,8 @@ import dev.viasix.app.session.LocalNetworkBypassPolicy
 import dev.viasix.app.session.RuntimeProcessIdentity
 import dev.viasix.app.session.RuntimeStackFailure
 import dev.viasix.app.session.RuntimeStackHealth
+import dev.viasix.app.session.UnderlyingNetworkPresentation
+import dev.viasix.app.session.UnderlyingNetworkSelection
 import dev.viasix.app.session.VpnStartOrigin
 import dev.viasix.app.session.VpnMtuPolicy
 import dev.viasix.app.tile.ViaSixTileService
@@ -63,6 +68,7 @@ import kotlin.concurrent.thread
  * Emits a circular event log into SharedPreferences for the UI log pane.
  */
 class ViaSixVpnService : VpnService() {
+    @Volatile
     private var tunnel: ParcelFileDescriptor? = null
     private var mihomo: MihomoProcess? = null
     private var tunEngine: Tun2SocksEngine? = null
@@ -72,6 +78,61 @@ class ViaSixVpnService : VpnService() {
     private val trafficLoopRunning = AtomicBoolean(false)
     private var trafficThread: Thread? = null
     private var activeSecret: String = ""
+    private lateinit var connectivityManager: ConnectivityManager
+    private var networkCallbackRegistered = false
+    private val underlyingNetworkLock = Any()
+
+    @Volatile
+    private var underlyingNetworkSelection = UnderlyingNetworkSelection<Network>()
+
+    private val underlyingNetworkCallback =
+        object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                connectivityManager.getNetworkCapabilities(network)?.let { capabilities ->
+                    handleUnderlyingNetwork(network, capabilities)
+                }
+            }
+
+            override fun onCapabilitiesChanged(
+                network: Network,
+                networkCapabilities: NetworkCapabilities,
+            ) {
+                handleUnderlyingNetwork(network, networkCapabilities)
+            }
+
+            override fun onLost(network: Network) {
+                val handoverLabel =
+                    synchronized(underlyingNetworkLock) {
+                        val current = underlyingNetworkSelection
+                        val updated = current.lost(network)
+                        if (updated == current) {
+                            null
+                        } else {
+                            underlyingNetworkSelection = updated
+                            applyUnderlyingNetwork(null)
+                            updated.label
+                        }
+                    }
+                if (handoverLabel == null) return
+
+                writeUnderlyingNetworkStatus(handoverLabel)
+                appendEvent("底层网络丢失，等待系统切换", "warning")
+            }
+        }
+
+    override fun onCreate() {
+        super.onCreate()
+        connectivityManager = getSystemService(ConnectivityManager::class.java)
+        writeUnderlyingNetworkStatus(underlyingNetworkSelection.label)
+        try {
+            connectivityManager.registerDefaultNetworkCallback(underlyingNetworkCallback)
+            networkCallbackRegistered = true
+        } catch (error: Exception) {
+            Log.w(TAG, "default network callback: ${error.message}")
+            writeUnderlyingNetworkStatus("网络检测不可用")
+            appendEvent("无法监听底层网络：${error.message}", "warning")
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
@@ -336,6 +397,9 @@ class ViaSixVpnService : VpnService() {
             builder.establish()
                 ?: throw IllegalStateException("VpnService.Builder.establish() returned null")
         tunnel = established
+        synchronized(underlyingNetworkLock) {
+            applyUnderlyingNetwork(underlyingNetworkSelection.network)
+        }
         appendEvent("VPN MTU：$vpnMtu", "info")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             appendEvent(
@@ -484,6 +548,14 @@ class ViaSixVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        if (networkCallbackRegistered) {
+            try {
+                connectivityManager.unregisterNetworkCallback(underlyingNetworkCallback)
+            } catch (error: Exception) {
+                Log.w(TAG, "unregister network callback: ${error.message}")
+            }
+            networkCallbackRegistered = false
+        }
         shutdownAll("destroyed", stopService = false)
         super.onDestroy()
     }
@@ -558,6 +630,65 @@ class ViaSixVpnService : VpnService() {
     ) {
         if (!enabled || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         builder.addRoute(dnsAddress, if (dnsAddress is Inet6Address) 128 else 32)
+    }
+
+    private fun handleUnderlyingNetwork(
+        network: Network,
+        capabilities: NetworkCapabilities,
+    ) {
+        if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) return
+
+        val label =
+            UnderlyingNetworkPresentation.label(
+                wifi = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
+                cellular = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
+                ethernet = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET),
+                validated =
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+            )
+        val changed =
+            synchronized(underlyingNetworkLock) {
+                val current = underlyingNetworkSelection
+                val updated = current.updated(network, label)
+                if (updated == current) {
+                    false
+                } else {
+                    underlyingNetworkSelection = updated
+                    if (current.network != network) {
+                        applyUnderlyingNetwork(network)
+                    }
+                    true
+                }
+            }
+        if (!changed) return
+
+        writeUnderlyingNetworkStatus(label)
+        appendEvent("底层网络：$label", "info")
+    }
+
+    private fun applyUnderlyingNetwork(network: Network?) {
+        if (tunnel == null) return
+        try {
+            val accepted =
+                if (network == null) {
+                    setUnderlyingNetworks(null)
+                } else {
+                    setUnderlyingNetworks(arrayOf(network))
+                }
+            if (!accepted) {
+                appendEvent("系统未接受底层网络绑定", "warning")
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "set underlying network: ${error.message}")
+            appendEvent("底层网络绑定失败：${error.message}", "warning")
+        }
+    }
+
+    private fun writeUnderlyingNetworkStatus(label: String) {
+        getSharedPreferences(RUNTIME_PREFS, MODE_PRIVATE)
+            .edit()
+            .putString(KEY_UNDERLYING_NETWORK, label)
+            .apply()
     }
 
     private fun writeRuntimeStatus(
@@ -708,6 +839,7 @@ class ViaSixVpnService : VpnService() {
         const val KEY_STARTED_AT = "startedAt"
         const val KEY_EVENTS = "events"
         const val KEY_PROCESS_TOKEN = "processToken"
+        const val KEY_UNDERLYING_NETWORK = "underlyingNetwork"
 
         private const val CHANNEL_ID = "viasix_vpn"
         private const val NOTIFICATION_ID = 42

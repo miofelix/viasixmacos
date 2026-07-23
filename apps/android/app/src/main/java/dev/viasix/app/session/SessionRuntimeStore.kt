@@ -16,6 +16,7 @@ data class SessionRuntimeStatus(
     val startedAtMillis: Long? = null,
     val eventsJson: String = "[]",
     val processToken: String = "",
+    val underlyingNetwork: String = "正在检测",
 ) {
     /** A persisted running flag is valid only while owned by this app process. */
     fun forProcess(currentProcessToken: String): SessionRuntimeStatus =
@@ -42,6 +43,7 @@ data class SessionRuntimeStatus(
             mihomoVersion = mihomoVersion,
             secretPresent = secret.isNotBlank(),
             startedAtMillis = startedAtMillis,
+            underlyingNetwork = underlyingNetwork,
         )
 }
 
@@ -72,5 +74,8 @@ class SessionRuntimeStore(context: Context) {
                     .takeIf { it > 0L },
             eventsJson = prefs.getString(ViaSixVpnService.KEY_EVENTS, "[]") ?: "[]",
             processToken = prefs.getString(ViaSixVpnService.KEY_PROCESS_TOKEN, "") ?: "",
+            underlyingNetwork =
+                prefs.getString(ViaSixVpnService.KEY_UNDERLYING_NETWORK, "正在检测")
+                    ?: "正在检测",
         ).forProcess(RuntimeProcessIdentity.token)
 }

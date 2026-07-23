@@ -25,6 +25,7 @@ class SessionRuntimeStatusTest {
                 secret = "secret",
                 mihomoVersion = "v1.2.3",
                 startedAtMillis = 42L,
+                underlyingNetwork = "Wi-Fi · 已联网",
             ).toUiSnapshot(traffic)
 
         assertTrue(snapshot.running)
@@ -35,6 +36,7 @@ class SessionRuntimeStatusTest {
         assertEquals(42L, snapshot.startedAtMillis)
         assertEquals(traffic, snapshot.traffic)
         assertTrue(snapshot.secretPresent)
+        assertEquals("Wi-Fi · 已联网", snapshot.underlyingNetwork)
     }
 
     @Test

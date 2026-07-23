@@ -66,6 +66,7 @@ data class RuntimeSnapshot(
     val mihomoVersion: String? = null,
     val secretPresent: Boolean = false,
     val startedAtMillis: Long? = null,
+    val underlyingNetwork: String = "正在检测",
 )
 
 data class ExitIPState(

@@ -22,6 +22,7 @@ ViaSix 是 **全平台** 本地运行的网络客户端（macOS / Windows / Andr
 - 会话偏好（代理模式、分区记忆、本地端口等）
 - Android 全量隧道的 DNS 路由方式与用户填写的数字 DNS 服务器地址
 - Android 分应用路由所选择的应用包名；应用选择器仅在本机查询具有启动器入口的应用，不上传应用列表
+- Android VPN 运行状态中的底层网络类型（Wi-Fi、蜂窝、以太网或其他）及系统联网验证状态
 
 代理配置可能包含 UUID、域名、端口、密钥或其他敏感信息。ViaSix 将应用数据目录限制为当前用户（或应用沙箱）访问，但磁盘备份、恶意软件、拥有同等用户权限的进程或用户主动分享仍可能暴露这些文件。
 
@@ -37,6 +38,8 @@ ViaSix 是 **全平台** 本地运行的网络客户端（macOS / Windows / Andr
 - 用户 Mihomo 配置指定的服务器、Proxy Provider、Rule Provider、DNS 和目标站点
 - Android 用户选择的 DNS 服务器；TCP/UDP 默认通过本地 mihomo/SOCKS 路径访问，用户也可显式选择受保护套接字直连
 - Android 用户若明确选择“IPv6 绕过 VPN”，应用 IPv6 流量会直接使用物理网络并可能向目标暴露设备真实 IPv6 地址；默认模式仍将 IPv6 纳入 VPN，配置失败时中止连接
+
+Android 为在 Wi-Fi、蜂窝和以太网之间可靠切换，仅通过 `ACCESS_NETWORK_STATE` 观察默认网络的传输类型与系统 `VALIDATED` 状态，并据此更新 VPN 底层网络绑定。ViaSix 不读取 SSID、BSSID 或运营商身份，也不上传这些网络状态信息。
 
 ViaSix 无法控制这些第三方服务的日志、隐私政策、可用性或司法管辖范围。`XIU2/CloudflareSpeedTest` 是独立第三方项目，并非 Cloudflare 官方产品。
 

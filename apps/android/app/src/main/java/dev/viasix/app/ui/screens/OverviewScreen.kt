@@ -378,6 +378,12 @@ fun OverviewScreen(
             SurfaceCard {
                 CardHeader(title = "网络设置", icon = Icons.Outlined.Language, tone = AppTone.Accent)
                 HorizontalDivider(color = colors.surfaceBorder)
+                CompactInfoRow(
+                    "底层网络",
+                    state.runtime.underlyingNetwork,
+                    Icons.Outlined.Language,
+                )
+                HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
                 SettingRow(
                     title = "全量隧道",
                     detail =
