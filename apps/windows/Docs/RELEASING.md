@@ -4,7 +4,7 @@
 
 | 产物 | 说明 |
 | --- | --- |
-| NSIS installer | 发布名建议 `ViaSix-windows-<version>.exe`（构建机原始名多为 `ViaSix_*_x64-setup.exe`） |
+| NSIS installer | 发布名建议 `ViaSix-<version>-windows-x64.exe`（构建机原始名多为 `ViaSix_*_x64-setup.exe`） |
 | 裸 exe | `ViaSix.exe`（调试/便携参考，一般不单独作为正式下载名） |
 
 GitHub Actions：`.github/workflows/windows-build.yml`  
