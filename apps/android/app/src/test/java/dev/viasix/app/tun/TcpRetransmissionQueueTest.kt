@@ -131,6 +131,40 @@ class TcpRetransmissionQueueTest {
     }
 
     @Test
+    fun advertisedWindowChangeResetsDuplicateAcknowledgementCount() {
+        val queue = queue()
+        val reservation = queue.reserve(100L, Packet.ACK, byteArrayOf(1, 2))!!
+        queue.markQueued(reservation, nowMs = 0L)
+
+        assertNull(queue.noteDuplicateAcknowledgement(100L, nowMs = 10L, advertisedWindow = 1_000))
+        assertNull(queue.noteDuplicateAcknowledgement(100L, nowMs = 20L, advertisedWindow = 1_000))
+        assertNull(queue.noteDuplicateAcknowledgement(100L, nowMs = 30L, advertisedWindow = 2_000))
+        assertNull(queue.noteDuplicateAcknowledgement(100L, nowMs = 40L, advertisedWindow = 2_000))
+        assertNull(queue.noteDuplicateAcknowledgement(100L, nowMs = 50L, advertisedWindow = 2_000))
+        val due =
+            queue.noteDuplicateAcknowledgement(100L, nowMs = 60L, advertisedWindow = 2_000)
+
+        assertEquals(100L, due!!.sequence)
+        assertEquals(1, due.attempt)
+    }
+
+    @Test
+    fun idleAcknowledgementWindowProvidesNextDuplicateBaseline() {
+        val queue = queue()
+
+        assertNull(queue.noteDuplicateAcknowledgement(100L, nowMs = 0L, advertisedWindow = 1_000))
+        val reservation = queue.reserve(100L, Packet.ACK, byteArrayOf(1, 2))!!
+        queue.markQueued(reservation, nowMs = 1L)
+        assertNull(queue.noteDuplicateAcknowledgement(100L, nowMs = 10L, advertisedWindow = 2_000))
+        assertNull(queue.noteDuplicateAcknowledgement(100L, nowMs = 20L, advertisedWindow = 2_000))
+        assertNull(queue.noteDuplicateAcknowledgement(100L, nowMs = 30L, advertisedWindow = 2_000))
+        val due =
+            queue.noteDuplicateAcknowledgement(100L, nowMs = 40L, advertisedWindow = 2_000)
+
+        assertEquals(100L, due!!.sequence)
+    }
+
+    @Test
     fun advancingAcknowledgementResetsFastRetransmitForNewOldestSegment() {
         val queue = queue()
         val first = queue.reserve(200L, Packet.PSH or Packet.ACK, byteArrayOf(1, 2))!!

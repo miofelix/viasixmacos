@@ -18,6 +18,7 @@ class TcpRetransmissionSurfaceTest {
         assertTrue(engine.contains("session.retransmissions.acknowledge"))
         assertTrue(engine.contains("session.retransmissions.pollDue"))
         assertTrue(engine.contains("session.retransmissions.noteDuplicateAcknowledgement"))
+        assertTrue(engine.contains("advertisedWindow = advertisedWindow"))
         assertTrue(engine.contains("reason = \"fast\""))
         assertTrue(engine.contains("session.retransmissions.awaitEmpty"))
         assertTrue(engine.contains("Executors.newSingleThreadScheduledExecutor"))

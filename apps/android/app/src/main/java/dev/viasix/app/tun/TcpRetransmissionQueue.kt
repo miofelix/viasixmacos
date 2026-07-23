@@ -33,6 +33,7 @@ class TcpRetransmissionQueue(
     private var nextId = 1L
     private var cancelled = false
     private var duplicateAcknowledgement: Long? = null
+    private var duplicateAcknowledgementWindow: Int? = null
     private var duplicateAcknowledgementCount = 0
     private var fastRetransmittedSequence: Long? = null
 
@@ -101,6 +102,7 @@ class TcpRetransmissionQueue(
     fun acknowledge(
         acknowledgement: Long,
         nowMs: Long,
+        advertisedWindow: Int? = null,
     ): Boolean =
         synchronized(monitor) {
             if (cancelled) return@synchronized false
@@ -139,7 +141,7 @@ class TcpRetransmissionQueue(
                 break
             }
             if (advanced) {
-                resetDuplicateAcknowledgements()
+                resetDuplicateAcknowledgements(acknowledgement, advertisedWindow)
                 segments.firstOrNull()?.let { first ->
                     first.retransmissions = 0
                     if (first.queuedAtMs != null) first.queuedAtMs = nowMs
@@ -152,19 +154,34 @@ class TcpRetransmissionQueue(
     fun noteDuplicateAcknowledgement(
         acknowledgement: Long,
         nowMs: Long,
+        advertisedWindow: Int? = null,
     ): PollResult.Retransmit? =
         synchronized(monitor) {
             if (cancelled) return@synchronized null
-            val segment = segments.firstOrNull() ?: return@synchronized null
+            val segment =
+                segments.firstOrNull()
+                    ?: run {
+                        resetDuplicateAcknowledgements(acknowledgement, advertisedWindow)
+                        return@synchronized null
+                    }
             if (segment.queuedAtMs == null || acknowledgement != segment.sequence) {
-                resetDuplicateAcknowledgements()
+                resetDuplicateAcknowledgements(acknowledgement, advertisedWindow)
                 return@synchronized null
             }
-            if (duplicateAcknowledgement == acknowledgement) {
+            if (duplicateAcknowledgement == null) {
+                duplicateAcknowledgement = acknowledgement
+                duplicateAcknowledgementWindow = advertisedWindow
+                duplicateAcknowledgementCount = 1
+                fastRetransmittedSequence = null
+            } else if (
+                duplicateAcknowledgement == acknowledgement &&
+                    duplicateAcknowledgementWindow == advertisedWindow
+            ) {
                 duplicateAcknowledgementCount += 1
             } else {
                 duplicateAcknowledgement = acknowledgement
-                duplicateAcknowledgementCount = 1
+                duplicateAcknowledgementWindow = advertisedWindow
+                duplicateAcknowledgementCount = 0
                 fastRetransmittedSequence = null
             }
             if (
@@ -235,8 +252,12 @@ class TcpRetransmissionQueue(
         }
     }
 
-    private fun resetDuplicateAcknowledgements() {
-        duplicateAcknowledgement = null
+    private fun resetDuplicateAcknowledgements(
+        acknowledgement: Long? = null,
+        advertisedWindow: Int? = null,
+    ) {
+        duplicateAcknowledgement = acknowledgement
+        duplicateAcknowledgementWindow = advertisedWindow
         duplicateAcknowledgementCount = 0
         fastRetransmittedSequence = null
     }

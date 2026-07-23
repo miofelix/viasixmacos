@@ -398,15 +398,16 @@ class Tun2SocksEngine(
             return
         }
         if (session.handshake.isComplete && tcp.flags and Packet.ACK != 0) {
+            val advertisedWindow =
+                TcpWindowScale.expand(
+                    advertisedWindow = tcp.window,
+                    shift = session.clientWindowScale ?: 0,
+                )
             if (
                 session.sendWindow.update(
                     segmentSequence = tcp.seq,
                     acknowledgement = tcp.ack,
-                    advertisedWindow =
-                        TcpWindowScale.expand(
-                            advertisedWindow = tcp.window,
-                            shift = session.clientWindowScale ?: 0,
-                        ),
+                    advertisedWindow = advertisedWindow,
                     nextSequence = session.serverSeq,
                 )
             ) {
@@ -415,6 +416,7 @@ class Tun2SocksEngine(
                     session.retransmissions.acknowledge(
                         acknowledgement = tcp.ack,
                         nowMs = nowMs,
+                        advertisedWindow = advertisedWindow,
                     )
                 if (
                     !acknowledgementAdvanced &&
@@ -424,6 +426,7 @@ class Tun2SocksEngine(
                     session.retransmissions.noteDuplicateAcknowledgement(
                         acknowledgement = tcp.ack,
                         nowMs = nowMs,
+                        advertisedWindow = advertisedWindow,
                     )?.let { due ->
                         enqueueTcpRetransmission(key, session, due, reason = "fast")
                     }
