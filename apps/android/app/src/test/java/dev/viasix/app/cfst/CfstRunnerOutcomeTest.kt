@@ -163,4 +163,39 @@ class CfstRunnerOutcomeTest {
         assertTrue(onDestroy.contains("cfstRunner.requestCancel()"))
         assertTrue(onDestroy.contains("super.onDestroy()"))
     }
+
+    @Test
+    fun runnerInjectsAndroidSslCertDirForHttping() {
+        val runner =
+            listOf(
+                File("src/main/java/dev/viasix/app/cfst/CfstRunner.kt"),
+                File("app/src/main/java/dev/viasix/app/cfst/CfstRunner.kt"),
+            ).firstOrNull { it.isFile } ?: error("CfstRunner.kt not found")
+        val source = runner.readText()
+        assertTrue(source.contains("CfstSslEnvironment.applyTo"))
+        assertTrue(source.contains("没有任何 IP 通过测速"))
+    }
+
+    @Test
+    fun sslEnvironmentResolvesAndroidCertDirsAndDoesNotOverrideExisting() {
+        assertEquals(
+            "/system/etc/security/cacerts",
+            CfstSslEnvironment.resolveCertDir { path ->
+                path == "/system/etc/security/cacerts"
+            },
+        )
+        assertEquals(
+            "/apex/com.android.conscrypt/cacerts",
+            CfstSslEnvironment.resolveCertDir { path ->
+                path == "/apex/com.android.conscrypt/cacerts"
+            },
+        )
+        val env = mutableMapOf("SSL_CERT_DIR" to "/custom")
+        CfstSslEnvironment.applyTo(env, certDir = "/system/etc/security/cacerts")
+        assertEquals("/custom", env["SSL_CERT_DIR"])
+
+        val empty = mutableMapOf<String, String>()
+        CfstSslEnvironment.applyTo(empty, certDir = "/system/etc/security/cacerts")
+        assertEquals("/system/etc/security/cacerts", empty["SSL_CERT_DIR"])
+    }
 }

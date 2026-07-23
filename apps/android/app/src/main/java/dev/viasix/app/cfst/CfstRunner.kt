@@ -97,10 +97,15 @@ class CfstRunner {
 
         val process =
             try {
-                ProcessBuilder(command)
-                    .directory(workDir)
-                    .redirectErrorStream(true)
-                    .start()
+                val builder =
+                    ProcessBuilder(command)
+                        .directory(workDir)
+                        .redirectErrorStream(true)
+                // Go's x509 does not use the Android system trust store by default.
+                // Without this, HTTPing fails with "certificate signed by unknown authority"
+                // and CFST exits 0 without writing result.csv (0 available IPs).
+                CfstSslEnvironment.applyTo(builder.environment())
+                builder.start()
             } catch (error: Exception) {
                 return CfstRunOutcome.Failed("无法启动 CFST：${error.message}")
             }
@@ -148,8 +153,12 @@ class CfstRunner {
             return CfstRunOutcome.Failed("CFST 异常退出（状态码 $exit）")
         }
 
+        // When every IP fails latency filtering (common with broken TLS trust for HTTPing),
+        // CFST often exits 0 without creating -o result.csv.
         if (!resultPath.isFile) {
-            return CfstRunOutcome.Failed("CFST 未生成测速结果：${resultPath.absolutePath}")
+            return CfstRunOutcome.Failed(
+                "没有任何 IP 通过测速。若正在使用 HTTPing，请确认系统证书可用，或在测速设置中改用 TCPing",
+            )
         }
 
         val csv =

@@ -942,7 +942,7 @@ class MainActivity : ComponentActivity() {
                             it.speedTest.copy(
                                 isRunning = true,
                                 isNodeTest = false,
-                                message = "正在准备 CFST…",
+                                message = "正在测速…",
                             ),
                     ).appendLog("开始 IPv6 优选测速", LogLevel.Info, LogSource.Node)
                 }
