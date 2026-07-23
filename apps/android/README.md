@@ -70,7 +70,7 @@ make android-skeleton
 | 完整 UDP / 成熟 TCP 状态机 / IPv6 转发 | 用户态简化，后续可换 hev/native |
 | 会话偏好持久化 | ✓ SharedPreferences（含候选/出口设置） |
 | mihomo 资产拉取脚本 | ✓ `scripts/fetch-mihomo.mjs` |
-| CloudflareSpeedTest 测速 | ✓（arm64 CFST + 取消 + 结果排序 + 当前节点测速 + 应用/重连；`fetch-cfst.mjs`） |
+| CloudflareSpeedTest 测速 | ✓（arm64；对齐 macOS：参数面板 / IP 源 / 排序 / 当前节点测速 / 应用重连；`fetch-cfst.mjs`） |
 
 ## 契约
 
