@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,8 +44,10 @@ import dev.viasix.app.ui.theme.StatusBadge
 import dev.viasix.app.ui.theme.SurfaceCard
 import dev.viasix.app.ui.theme.VisualStyle
 import dev.viasix.core.net.Ipv6Address
+import dev.viasix.core.speedtest.IPSourceMode
 import dev.viasix.core.speedtest.Ipv6IpPresets
 import dev.viasix.core.speedtest.NodeSortKey
+import dev.viasix.core.speedtest.SpeedTestParameters
 import dev.viasix.core.speedtest.SpeedTestResult
 
 @Composable
@@ -54,9 +57,11 @@ fun NodesScreen(
     onApplyNode: (address: String, reconnect: Boolean) -> Unit,
     onRemoveCandidate: (String) -> Unit,
     onCopy: (label: String, value: String) -> Unit,
-    onSpeedIpRangeChange: (String) -> Unit = {},
-    onSpeedUseBundledChange: (Boolean) -> Unit = {},
-    onSpeedDisableDownloadChange: (Boolean) -> Unit = {},
+    onSpeedParametersChange: (SpeedTestParameters) -> Unit = {},
+    onIpSourceModeChange: (IPSourceMode) -> Unit = {},
+    onCustomIpFilePathChange: (String) -> Unit = {},
+    onResetSpeedParameters: () -> Unit = {},
+    onToggleParametersExpanded: () -> Unit = {},
     onStartSpeedTest: () -> Unit = {},
     onStopSpeedTest: () -> Unit = {},
     onStartCurrentNodeTest: () -> Unit = {},
@@ -119,77 +124,112 @@ fun NodesScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Text(
+                        speed.parameterSummaryText,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
 
+                    // 数据源 — macOS IPSourceMode picker (no IPv4)
+                    Text("数据源", style = MaterialTheme.typography.titleSmall)
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+                    ) {
+                        IPSourceMode.nodesPickerModes.forEach { mode ->
+                            FilterChip(
+                                selected = speed.ipSourceMode == mode,
+                                onClick = { onIpSourceModeChange(mode) },
+                                enabled = !speed.isRunning,
+                                label = { Text(mode.title) },
+                            )
+                        }
+                    }
+                    when (speed.ipSourceMode) {
+                        IPSourceMode.IPV6 ->
+                            Text(
+                                "使用内置 ipv6.txt（macOS 默认 IPv6 列表，CFST -f）。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        IPSourceMode.RANGE -> {
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+                            ) {
+                                Ipv6IpPresets.all.forEach { preset ->
+                                    FilterChip(
+                                        selected = speed.parameters.ipRange == preset.ipRange,
+                                        onClick = {
+                                            onSpeedParametersChange(
+                                                speed.parameters.copy(ipRange = preset.ipRange),
+                                            )
+                                        },
+                                        enabled = !speed.isRunning,
+                                        label = { Text(preset.title) },
+                                    )
+                                }
+                            }
+                            OutlinedTextField(
+                                value = speed.parameters.ipRange,
+                                onValueChange = {
+                                    onSpeedParametersChange(speed.parameters.copy(ipRange = it))
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("自定义 CIDR / IP") },
+                                enabled = !speed.isRunning,
+                                textStyle =
+                                    MaterialTheme.typography.bodyMedium.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                    ),
+                                supportingText = {
+                                    Text("多个 IPv6 地址或 CIDR 用英文逗号分隔")
+                                },
+                            )
+                        }
+                        IPSourceMode.FILE ->
+                            OutlinedTextField(
+                                value = speed.customIpFilePath,
+                                onValueChange = onCustomIpFilePathChange,
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("IP 文件路径") },
+                                enabled = !speed.isRunning,
+                                textStyle =
+                                    MaterialTheme.typography.bodyMedium.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                    ),
+                                supportingText = {
+                                    Text("应用私有目录下的列表文件绝对路径（CFST -f）")
+                                },
+                            )
+                    }
+
+                    OutlinedButton(
+                        onClick = onToggleParametersExpanded,
+                        enabled = !speed.isRunning,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            "使用内置 IPv6 列表",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Switch(
-                            checked = speed.useBundledList,
-                            onCheckedChange = onSpeedUseBundledChange,
-                            enabled = !speed.isRunning,
-                        )
-                    }
-
-                    if (!speed.useBundledList) {
-                        Row(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
-                        ) {
-                            Ipv6IpPresets.all.forEach { preset ->
-                                FilterChip(
-                                    selected = speed.ipRange == preset.ipRange,
-                                    onClick = { onSpeedIpRangeChange(preset.ipRange) },
-                                    enabled = !speed.isRunning,
-                                    label = { Text(preset.title) },
-                                )
-                            }
-                        }
-                        OutlinedTextField(
-                            value = speed.ipRange,
-                            onValueChange = onSpeedIpRangeChange,
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("IP / CIDR（逗号分隔）") },
-                            enabled = !speed.isRunning,
-                            textStyle =
-                                MaterialTheme.typography.bodyMedium.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                ),
-                            supportingText = {
-                                Text("对应 CFST -ip；与 macOS IP 段测速源一致")
+                            if (speed.parametersExpanded) {
+                                "收起测速设置"
+                            } else {
+                                "测速设置（模式 · 筛选 · 性能）"
                             },
                         )
-                    } else {
-                        Text(
-                            "使用 assets 内置 ipv6.txt（CFST -f），与 macOS 默认列表核心段对齐。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
 
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            "跳过下载测速（仅延迟）",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Switch(
-                            checked = speed.disableDownload,
-                            onCheckedChange = onSpeedDisableDownloadChange,
+                    if (speed.parametersExpanded) {
+                        MacosStyleParametersPanel(
+                            parameters = speed.parameters,
                             enabled = !speed.isRunning,
+                            onChange = onSpeedParametersChange,
+                            onReset = onResetSpeedParameters,
                         )
                     }
 
@@ -231,7 +271,7 @@ fun NodesScreen(
                         )
                     }
                     Text(
-                        "「当前节点测速」仅对选中 IPv6 运行 CFST（对齐 macOS 配置测速），结果可应用 / 重连。",
+                        "「当前节点测速」对齐 macOS 配置测速：保留当前参数并放宽筛选，仅测选中 IPv6。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -490,6 +530,158 @@ fun NodesScreen(
             }
         }
     }
+}
+
+@Composable
+private fun MacosStyleParametersPanel(
+    parameters: SpeedTestParameters,
+    enabled: Boolean,
+    onChange: (SpeedTestParameters) -> Unit,
+    onReset: () -> Unit,
+) {
+    val p = parameters
+    Column(verticalArrangement = Arrangement.spacedBy(VisualStyle.spacing12)) {
+        Text("测速模式", style = MaterialTheme.typography.titleSmall)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+        ) {
+            FilterChip(
+                selected = !p.httping,
+                onClick = { onChange(p.copy(httping = false)) },
+                enabled = enabled,
+                label = { Text("TCPing") },
+            )
+            FilterChip(
+                selected = p.httping,
+                onClick = { onChange(p.copy(httping = true)) },
+                enabled = enabled,
+                label = { Text("HTTPing") },
+            )
+        }
+        IntField(
+            label = "测速端口",
+            value = p.port,
+            enabled = enabled,
+            onValue = { onChange(p.copy(port = it)) },
+        )
+        if (p.httping) {
+            IntField(
+                label = "HTTP 状态码（0=默认）",
+                value = p.httpingCode,
+                enabled = enabled,
+                onValue = { onChange(p.copy(httpingCode = it)) },
+            )
+        }
+        OutlinedTextField(
+            value = p.colo,
+            onValueChange = { onChange(p.copy(colo = it)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("区域过滤（IATA，逗号分隔）") },
+            enabled = enabled,
+            singleLine = true,
+        )
+        OutlinedTextField(
+            value = p.url,
+            onValueChange = { onChange(p.copy(url = it)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("测速 URL（可空）") },
+            enabled = enabled && !p.disableDownload,
+            singleLine = true,
+        )
+
+        Text("筛选条件", style = MaterialTheme.typography.titleSmall)
+        IntField("延迟上限 (ms)", p.latencyUpperBound, enabled) {
+            onChange(p.copy(latencyUpperBound = it))
+        }
+        IntField("延迟下限 (ms)", p.latencyLowerBound, enabled) {
+            onChange(p.copy(latencyLowerBound = it))
+        }
+        DoubleField("丢包率上限 (0–1)", p.lossRateUpperBound, enabled) {
+            onChange(p.copy(lossRateUpperBound = it))
+        }
+        DoubleField("下载速度下限 (MB/s)", p.speedLowerBound, enabled && !p.disableDownload) {
+            onChange(p.copy(speedLowerBound = it))
+        }
+
+        Text("性能调优", style = MaterialTheme.typography.titleSmall)
+        IntField("延迟测速线程", p.threads, enabled) { onChange(p.copy(threads = it)) }
+        IntField("单 IP Ping 次数", p.pingCount, enabled) { onChange(p.copy(pingCount = it)) }
+        IntField("下载测速数量", p.downloadCount, enabled && !p.disableDownload) {
+            onChange(p.copy(downloadCount = it))
+        }
+        IntField("单 IP 下载时长 (s)", p.downloadTime, enabled && !p.disableDownload) {
+            onChange(p.copy(downloadTime = it))
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("禁用下载测速", modifier = Modifier.weight(1f))
+            Switch(
+                checked = p.disableDownload,
+                onCheckedChange = { onChange(p.copy(disableDownload = it)) },
+                enabled = enabled,
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("调试模式", modifier = Modifier.weight(1f))
+            Switch(
+                checked = p.debug,
+                onCheckedChange = { onChange(p.copy(debug = it)) },
+                enabled = enabled,
+            )
+        }
+        TextButton(onClick = onReset, enabled = enabled) {
+            Text("恢复默认测速设置")
+        }
+    }
+}
+
+@Composable
+private fun IntField(
+    label: String,
+    value: Int,
+    enabled: Boolean,
+    onValue: (Int) -> Unit,
+) {
+    OutlinedTextField(
+        value = value.toString(),
+        onValueChange = { raw ->
+            raw.filter { it.isDigit() }.toIntOrNull()?.let(onValue)
+        },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) },
+        enabled = enabled,
+        singleLine = true,
+    )
+}
+
+@Composable
+private fun DoubleField(
+    label: String,
+    value: Double,
+    enabled: Boolean,
+    onValue: (Double) -> Unit,
+) {
+    OutlinedTextField(
+        value =
+            if (value == value.toLong().toDouble()) {
+                value.toLong().toString()
+            } else {
+                value.toString()
+            },
+        onValueChange = { raw ->
+            raw.toDoubleOrNull()?.let(onValue)
+        },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) },
+        enabled = enabled,
+        singleLine = true,
+    )
 }
 
 @Composable

@@ -1,12 +1,14 @@
 package dev.viasix.app.prefs
 
 import android.content.Context
+import dev.viasix.core.speedtest.IPSourceMode
+import dev.viasix.core.speedtest.SpeedTestParameters
 import org.json.JSONArray
 import org.json.JSONObject
 
 /**
  * SharedPreferences-backed session state for the Android shell.
- * Extends macOS-aligned fields: node candidates, exit-IP detection prefs.
+ * Speed-test fields align with macOS [UserPreferences] parameters + ipSourceMode.
  */
 data class SessionPrefs(
     val profileYaml: String = "",
@@ -16,11 +18,9 @@ data class SessionPrefs(
     val candidateAddresses: List<String> = emptyList(),
     val exitIPEndpoint: String = "https://api.myip.la/cn?json",
     val exitIPDetectionMode: String = "automatic",
-    /** Last CFST IP range (comma-separated CIDRs / addresses). */
-    val lastSpeedIpRange: String = "2606:4700::/32",
-    /** When true, CFST uses bundled ipv6.txt (`-f`) instead of [lastSpeedIpRange]. */
-    val speedUseBundledList: Boolean = false,
-    val speedDisableDownload: Boolean = false,
+    val ipSourceMode: String = IPSourceMode.IPV6.wire,
+    val speedParameters: SpeedTestParameters = SpeedTestParameters.defaultsForRange(),
+    val customIpFilePath: String = "",
 ) {
     fun toJson(): JSONObject =
         JSONObject()
@@ -36,9 +36,16 @@ data class SessionPrefs(
             )
             .put("exitIPEndpoint", exitIPEndpoint)
             .put("exitIPDetectionMode", exitIPDetectionMode)
-            .put("lastSpeedIpRange", lastSpeedIpRange)
-            .put("speedUseBundledList", speedUseBundledList)
-            .put("speedDisableDownload", speedDisableDownload)
+            .put("ipSourceMode", ipSourceMode)
+            .put("customIpFilePath", customIpFilePath)
+            .put("speedParameters", speedParameters.toJson())
+            // Legacy keys kept for one-way migration readers (ignored on write path above).
+            .put("lastSpeedIpRange", speedParameters.ipRange)
+            .put(
+                "speedUseBundledList",
+                IPSourceMode.parse(ipSourceMode) == IPSourceMode.IPV6,
+            )
+            .put("speedDisableDownload", speedParameters.disableDownload)
 
     companion object {
         fun fromJson(raw: String?): SessionPrefs {
@@ -53,6 +60,24 @@ data class SessionPrefs(
                         if (value.isNotEmpty()) candidates += value
                     }
                 }
+                val legacyMode =
+                    when {
+                        o.has("ipSourceMode") -> o.optString("ipSourceMode", IPSourceMode.IPV6.wire)
+                        o.optBoolean("speedUseBundledList", false) -> IPSourceMode.IPV6.wire
+                        else -> IPSourceMode.RANGE.wire
+                    }
+                val paramsObj = o.optJSONObject("speedParameters")
+                val params =
+                    if (paramsObj != null) {
+                        speedTestParametersFromJson(paramsObj)
+                    } else {
+                        SpeedTestParameters(
+                            ipRange =
+                                o.optString("lastSpeedIpRange", SpeedTestParameters.DEFAULT_IPV6_RANGE)
+                                    .ifBlank { SpeedTestParameters.DEFAULT_IPV6_RANGE },
+                            disableDownload = o.optBoolean("speedDisableDownload", false),
+                        )
+                    }
                 SessionPrefs(
                     profileYaml = o.optString("profileYaml", ""),
                     selectedAddress = o.optString("selectedAddress", "2001:db8::1"),
@@ -63,11 +88,9 @@ data class SessionPrefs(
                         o.optString("exitIPEndpoint", "https://api.myip.la/cn?json")
                             .ifBlank { "https://api.myip.la/cn?json" },
                     exitIPDetectionMode = o.optString("exitIPDetectionMode", "automatic"),
-                    lastSpeedIpRange =
-                        o.optString("lastSpeedIpRange", "2606:4700::/32")
-                            .ifBlank { "2606:4700::/32" },
-                    speedUseBundledList = o.optBoolean("speedUseBundledList", false),
-                    speedDisableDownload = o.optBoolean("speedDisableDownload", false),
+                    ipSourceMode = legacyMode,
+                    speedParameters = params,
+                    customIpFilePath = o.optString("customIpFilePath", ""),
                 )
             } catch (_: Exception) {
                 SessionPrefs()
@@ -75,6 +98,52 @@ data class SessionPrefs(
         }
     }
 }
+
+fun SpeedTestParameters.toJson(): JSONObject =
+    JSONObject()
+        .put("ipFile", ipFile)
+        .put("ipRange", ipRange)
+        .put("threads", threads)
+        .put("pingCount", pingCount)
+        .put("downloadCount", downloadCount)
+        .put("downloadTime", downloadTime)
+        .put("latencyUpperBound", latencyUpperBound)
+        .put("latencyLowerBound", latencyLowerBound)
+        .put("lossRateUpperBound", lossRateUpperBound)
+        .put("speedLowerBound", speedLowerBound)
+        .put("colo", colo)
+        .put("port", port)
+        .put("url", url)
+        .put("httping", httping)
+        .put("httpingCode", httpingCode)
+        .put("disableDownload", disableDownload)
+        .put("allIP", allIP)
+        .put("debug", debug)
+
+fun speedTestParametersFromJson(o: JSONObject): SpeedTestParameters =
+    SpeedTestParameters(
+        ipFile = o.optString("ipFile", ""),
+        ipRange =
+            o.optString("ipRange", SpeedTestParameters.DEFAULT_IPV6_RANGE)
+                .ifBlank { SpeedTestParameters.DEFAULT_IPV6_RANGE },
+        threads = o.optInt("threads", SpeedTestParameters.DEFAULT_THREADS),
+        pingCount = o.optInt("pingCount", SpeedTestParameters.DEFAULT_PING_COUNT),
+        downloadCount = o.optInt("downloadCount", SpeedTestParameters.DEFAULT_DOWNLOAD_COUNT),
+        downloadTime = o.optInt("downloadTime", SpeedTestParameters.DEFAULT_DOWNLOAD_TIME),
+        latencyUpperBound = o.optInt("latencyUpperBound", SpeedTestParameters.DEFAULT_LATENCY_UPPER),
+        latencyLowerBound = o.optInt("latencyLowerBound", SpeedTestParameters.DEFAULT_LATENCY_LOWER),
+        lossRateUpperBound =
+            o.optDouble("lossRateUpperBound", SpeedTestParameters.DEFAULT_LOSS_RATE_UPPER),
+        speedLowerBound = o.optDouble("speedLowerBound", SpeedTestParameters.DEFAULT_SPEED_LOWER),
+        colo = o.optString("colo", ""),
+        port = o.optInt("port", SpeedTestParameters.DEFAULT_PORT),
+        url = o.optString("url", ""),
+        httping = o.optBoolean("httping", true),
+        httpingCode = o.optInt("httpingCode", 0),
+        disableDownload = o.optBoolean("disableDownload", false),
+        allIP = o.optBoolean("allIP", false),
+        debug = o.optBoolean("debug", false),
+    )
 
 class SessionPrefsStore(context: Context) {
     private val prefs =

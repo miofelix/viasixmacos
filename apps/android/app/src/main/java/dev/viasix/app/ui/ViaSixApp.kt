@@ -26,7 +26,9 @@ import dev.viasix.app.ui.screens.SettingsScreen
 import dev.viasix.app.ui.theme.LocalViaSixColors
 import dev.viasix.app.ui.theme.ViaSixTheme
 import dev.viasix.core.projection.RoutingMode
+import dev.viasix.core.speedtest.IPSourceMode
 import dev.viasix.core.speedtest.NodeSortKey
+import dev.viasix.core.speedtest.SpeedTestParameters
 
 @Composable
 fun ViaSixApp(
@@ -38,9 +40,11 @@ fun ViaSixApp(
     onSelectedAddressChange: (String) -> Unit,
     onApplyNode: (address: String, reconnect: Boolean) -> Unit,
     onRemoveCandidate: (String) -> Unit,
-    onSpeedIpRangeChange: (String) -> Unit = {},
-    onSpeedUseBundledChange: (Boolean) -> Unit = {},
-    onSpeedDisableDownloadChange: (Boolean) -> Unit = {},
+    onSpeedParametersChange: (SpeedTestParameters) -> Unit = {},
+    onIpSourceModeChange: (IPSourceMode) -> Unit = {},
+    onCustomIpFilePathChange: (String) -> Unit = {},
+    onResetSpeedParameters: () -> Unit = {},
+    onToggleParametersExpanded: () -> Unit = {},
     onStartSpeedTest: () -> Unit = {},
     onStopSpeedTest: () -> Unit = {},
     onStartCurrentNodeTest: () -> Unit = {},
@@ -144,9 +148,11 @@ fun ViaSixApp(
                             onApplyNode = onApplyNode,
                             onRemoveCandidate = onRemoveCandidate,
                             onCopy = onCopy,
-                            onSpeedIpRangeChange = onSpeedIpRangeChange,
-                            onSpeedUseBundledChange = onSpeedUseBundledChange,
-                            onSpeedDisableDownloadChange = onSpeedDisableDownloadChange,
+                            onSpeedParametersChange = onSpeedParametersChange,
+                            onIpSourceModeChange = onIpSourceModeChange,
+                            onCustomIpFilePathChange = onCustomIpFilePathChange,
+                            onResetSpeedParameters = onResetSpeedParameters,
+                            onToggleParametersExpanded = onToggleParametersExpanded,
                             onStartSpeedTest = onStartSpeedTest,
                             onStopSpeedTest = onStopSpeedTest,
                             onStartCurrentNodeTest = onStartCurrentNodeTest,

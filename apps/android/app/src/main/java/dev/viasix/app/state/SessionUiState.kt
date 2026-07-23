@@ -9,10 +9,12 @@ import dev.viasix.core.net.Ipv6Address
 import dev.viasix.core.profile.ProfileSummary
 import dev.viasix.core.profile.ProfileSummaryParser
 import dev.viasix.core.projection.RoutingMode
+import dev.viasix.core.speedtest.IPSourceMode
 import dev.viasix.core.speedtest.NodeResultSorting
 import dev.viasix.core.speedtest.NodeSortKey
 import dev.viasix.core.speedtest.SpeedTestParameters
 import dev.viasix.core.speedtest.SpeedTestResult
+import dev.viasix.core.speedtest.parameterSummary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -74,15 +76,22 @@ data class SpeedTestUiState(
     val isNodeTest: Boolean = false,
     val message: String = "需要先执行 node scripts/fetch-cfst.mjs 下载 CFST（arm64）",
     val results: List<SpeedTestResult> = emptyList(),
-    val ipRange: String = SpeedTestParameters.DEFAULT_IPV6_RANGE,
-    val useBundledList: Boolean = false,
-    val disableDownload: Boolean = false,
+    /** macOS [IPSourceMode] — Nodes picker excludes IPv4. */
+    val ipSourceMode: IPSourceMode = IPSourceMode.IPV6,
+    /** Full CFST parameters (macOS [SpeedTestParameters]). */
+    val parameters: SpeedTestParameters = SpeedTestParameters.defaultsForRange(),
+    /** User-selected IP list path when [ipSourceMode] is [IPSourceMode.FILE]. */
+    val customIpFilePath: String = "",
     val binaryReady: Boolean = false,
     val sortKey: NodeSortKey = NodeSortKey.LATENCY,
     val sortAscending: Boolean = true,
+    val parametersExpanded: Boolean = false,
 ) {
     val sortedResults: List<SpeedTestResult>
         get() = NodeResultSorting.sorted(results, sortKey, sortAscending)
+
+    val parameterSummaryText: String
+        get() = parameters.parameterSummary(ipSourceMode)
 }
 
 /**
@@ -125,9 +134,9 @@ data class SessionUiState(
             candidateAddresses = candidateAddresses,
             exitIPEndpoint = exitIP.endpoint,
             exitIPDetectionMode = exitIP.mode.wire,
-            lastSpeedIpRange = speedTest.ipRange,
-            speedUseBundledList = speedTest.useBundledList,
-            speedDisableDownload = speedTest.disableDownload,
+            ipSourceMode = speedTest.ipSourceMode.wire,
+            speedParameters = speedTest.parameters,
+            customIpFilePath = speedTest.customIpFilePath,
         )
 
     companion object {
@@ -164,9 +173,9 @@ data class SessionUiState(
                     ),
                 speedTest =
                     SpeedTestUiState(
-                        ipRange = prefs.lastSpeedIpRange,
-                        useBundledList = prefs.speedUseBundledList,
-                        disableDownload = prefs.speedDisableDownload,
+                        ipSourceMode = IPSourceMode.parse(prefs.ipSourceMode),
+                        parameters = prefs.speedParameters,
+                        customIpFilePath = prefs.customIpFilePath,
                     ),
             )
         }

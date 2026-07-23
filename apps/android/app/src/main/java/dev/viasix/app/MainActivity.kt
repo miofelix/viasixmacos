@@ -39,7 +39,9 @@ import dev.viasix.core.projection.MihomoProjection
 import dev.viasix.core.projection.ProjectError
 import dev.viasix.core.projection.ProjectOptions
 import dev.viasix.core.projection.RoutingMode
+import dev.viasix.core.speedtest.IPSourceMode
 import dev.viasix.core.speedtest.SpeedTestParameters
+import dev.viasix.core.speedtest.resolveForRun
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -397,9 +399,9 @@ class MainActivity : ComponentActivity() {
                     }
                     return
                 }
-                val useBundled = state.speedTest.useBundledList
-                val ipRange = state.speedTest.ipRange
-                val disableDownload = state.speedTest.disableDownload
+                val mode = state.speedTest.ipSourceMode
+                val baseParams = state.speedTest.parameters
+                val customFile = state.speedTest.customIpFilePath
                 update {
                     it.copy(
                         speedTest =
@@ -416,17 +418,11 @@ class MainActivity : ComponentActivity() {
                             try {
                                 val install = CfstInstaller.installIfNeeded(this@MainActivity)
                                 val parameters =
-                                    if (useBundled) {
-                                        SpeedTestParameters(
-                                            ipFile = install.ipv6List.absolutePath,
-                                            disableDownload = disableDownload,
-                                        )
-                                    } else {
-                                        SpeedTestParameters(
-                                            ipRange = ipRange,
-                                            disableDownload = disableDownload,
-                                        )
-                                    }
+                                    baseParams.resolveForRun(
+                                        mode = mode,
+                                        bundledIpv6ListPath = install.ipv6List.absolutePath,
+                                        customIpFilePath = customFile,
+                                    )
                                 val work = CfstInstaller.workDir(this@MainActivity)
                                 cfstRunner.run(install.binary, work, parameters) to true
                             } catch (error: Exception) {
@@ -455,14 +451,9 @@ class MainActivity : ComponentActivity() {
                     }
                     return
                 }
-                val baseParams =
-                    SpeedTestParameters(
-                        ipRange = state.speedTest.ipRange,
-                        disableDownload = state.speedTest.disableDownload,
-                    )
                 val parameters =
                     try {
-                        baseParams.forCurrentNodeConfigurationTest(normalized)
+                        state.speedTest.parameters.forCurrentNodeConfigurationTest(normalized)
                     } catch (error: Exception) {
                         update {
                             it.appendLog(
@@ -700,14 +691,36 @@ class MainActivity : ComponentActivity() {
                             .appendLog("已移除候选 $address", LogLevel.Info, LogSource.Node)
                     }
                 },
-                onSpeedIpRangeChange = { range ->
-                    update { it.copy(speedTest = it.speedTest.copy(ipRange = range)) }
+                onSpeedParametersChange = { params ->
+                    update { it.copy(speedTest = it.speedTest.copy(parameters = params)) }
                 },
-                onSpeedUseBundledChange = { bundled ->
-                    update { it.copy(speedTest = it.speedTest.copy(useBundledList = bundled)) }
+                onIpSourceModeChange = { mode ->
+                    update { it.copy(speedTest = it.speedTest.copy(ipSourceMode = mode)) }
                 },
-                onSpeedDisableDownloadChange = { disable ->
-                    update { it.copy(speedTest = it.speedTest.copy(disableDownload = disable)) }
+                onCustomIpFilePathChange = { path ->
+                    update { it.copy(speedTest = it.speedTest.copy(customIpFilePath = path)) }
+                },
+                onResetSpeedParameters = {
+                    update {
+                        it.copy(
+                            speedTest =
+                                it.speedTest.copy(
+                                    ipSourceMode = IPSourceMode.IPV6,
+                                    parameters = SpeedTestParameters.defaultsForRange(),
+                                    customIpFilePath = "",
+                                ),
+                        ).appendLog("已恢复默认测速设置", LogLevel.Info, LogSource.Node)
+                    }
+                },
+                onToggleParametersExpanded = {
+                    update {
+                        it.copy(
+                            speedTest =
+                                it.speedTest.copy(
+                                    parametersExpanded = !it.speedTest.parametersExpanded,
+                                ),
+                        )
+                    }
                 },
                 onStartSpeedTest = ::startSpeedTest,
                 onStopSpeedTest = ::stopSpeedTest,
