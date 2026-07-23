@@ -48,7 +48,7 @@ Android 功能对齐以 **macOS** 为准。Windows 端仍在完善中，**不得
 - `ProfileSummaryParser` / `Ipv6Address` / `ByteRateFormatter` / `SpeedTestResultParser`：`:core` 可测纯逻辑
 - 会话偏好扩展：候选节点、出口检测端点与模式、测速 IP 源
 - CFST：`CfstInstaller` + `CfstRunner` + `IPSourceMode` / `SpeedTestParameters`（macOS 参数语义）+ `NodeResultSorting` + 当前节点测速
-- 全量隧道：`Tun2SocksEngine` — IPv4/IPv6 TCP→SOCKS5 CONNECT；通用 UDP→SOCKS5 UDP ASSOCIATE（含 DNS）；ASSOCIATE 失败时 DNS/53 回退 `protect` 直连
+- 全量隧道：`Tun2SocksEngine` — IPv4/IPv6 TCP→SOCKS5 CONNECT；通用 UDP→**每本地源端口** SOCKS5 UDP ASSOCIATE（正确并发 demux）；DNS/53 始终 per-query `protect` DatagramSocket
 
 ## 验证
 

@@ -78,7 +78,7 @@ fun SettingsScreen(
                 HorizontalDivider(color = colors.surfaceBorder)
                 SettingRow(
                     title = "全量隧道",
-                    detail = "默认路由 + 用户态 IPv4 TCP→SOCKS 与 DNS protect",
+                    detail = "默认路由 + 用户态 TCP/UDP（IPv4/IPv6→SOCKS；DNS 独立 protect）",
                     icon = Icons.Outlined.VpnKey,
                 ) {
                     Switch(

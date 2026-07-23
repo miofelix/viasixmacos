@@ -19,15 +19,17 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.random.Random
 
 /**
  * Userspace IPv4/IPv6 forwarder for full-tunnel mode:
  * - TCP → SOCKS5 CONNECT (mihomo mixed port)
- * - UDP → SOCKS5 UDP ASSOCIATE (general, including DNS/53)
- * - Fallback: UDP/53 via protected DatagramSocket if ASSOCIATE is unavailable
+ * - UDP general → SOCKS5 UDP ASSOCIATE **per local client endpoint** (correct demux)
+ * - UDP/53 (DNS) → always protected per-query DatagramSocket (concurrent-safe)
  *
- * Typical app traffic (QUIC/HTTP3, DNS, games) is no longer silently dropped.
+ * ASSOCIATE open runs on the worker pool (never blocks the TUN reader). Failures are
+ * negative-cached so retries do not stall packet processing.
  */
 class Tun2SocksEngine(
     private val vpnService: VpnService,
@@ -36,15 +38,14 @@ class Tun2SocksEngine(
     private val socksPort: Int,
     private val dnsUpstream: InetAddress = InetAddress.getByName("1.1.1.1"),
     private val maxSessions: Int = 256,
-    private val maxUdpFlows: Int = 256,
+    private val maxUdpClients: Int = 256,
+    private val associateFailBackoffMs: Long = 5_000L,
 ) {
     private val running = AtomicBoolean(false)
     private val sessions = ConcurrentHashMap<String, TcpSession>()
     private val activeSessionCount = AtomicInteger(0)
-    private val udpNat = UdpNatTable(maxEntries = maxUdpFlows)
-    private val udpRelayLock = Any()
-    @Volatile private var udpRelay: Socks5UdpRelay? = null
-    private var udpReceiverThread: Thread? = null
+    private val udpClients = UdpClientEndpointTable(maxEntries = maxUdpClients)
+    private val udpRelays = ConcurrentHashMap<String, UdpClientRelay>()
     private var readerThread: Thread? = null
     private var writerThread: Thread? = null
     private val outboundPackets = LinkedBlockingQueue<ByteArray>(512)
@@ -120,18 +121,13 @@ class Tun2SocksEngine(
             writerThread?.interrupt()
         } catch (_: Exception) {
         }
-        try {
-            udpReceiverThread?.interrupt()
-        } catch (_: Exception) {
-        }
         readerThread = null
         writerThread = null
-        udpReceiverThread = null
         sessions.values.forEach { it.close() }
         sessions.clear()
         activeSessionCount.set(0)
-        udpNat.clear()
-        closeUdpRelay()
+        closeAllUdpRelays()
+        udpClients.clear()
         outboundPackets.clear()
         executor.shutdownNow()
         try {
@@ -164,7 +160,7 @@ class Tun2SocksEngine(
         }
     }
 
-    // region IPv4 TCP
+    // region IPv4/IPv6 TCP
 
     private fun handleTcp4(buffer: ByteBuffer, ip: Packet.Ip4) {
         val tcp = Packet.parseTcp(buffer, ip) ?: return
@@ -409,107 +405,139 @@ class Tun2SocksEngine(
             buffer.position(pos)
         }
 
-        if (!udpNat.observeOutbound(clientIp, udp.sourcePort, remoteIp, udp.destPort, ipv6)) {
-            Log.w(TAG, "UDP flow limit $maxUdpFlows reached; drop")
+        // DNS: always per-query protected sockets so concurrent A/B queries demux correctly.
+        // Never share a single SOCKS reverse-NAT keyed only by remote:53.
+        if (udp.destPort == 53) {
+            executor.execute {
+                forwardDnsDirect(clientIp, udp.sourcePort, remoteIp, payload, ipv6)
+            }
             return
         }
 
-        val relay = ensureUdpRelay()
-        if (relay != null) {
+        // Drop idle client associates opportunistically (non-blocking).
+        for (expired in udpClients.purgeExpired()) {
+            closeUdpClient(expired)
+        }
+
+        val endpoint =
+            UdpClientEndpointTable.Endpoint(
+                ip = clientIp,
+                port = udp.sourcePort,
+                ipv6 = ipv6,
+            )
+        if (!udpClients.noteActivity(endpoint)) {
+            Log.w(TAG, "UDP client limit $maxUdpClients reached; drop")
+            return
+        }
+
+        val clientKey = endpoint.key()
+        val clientRelay =
+            udpRelays.computeIfAbsent(clientKey) {
+                UdpClientRelay(endpoint)
+            }
+
+        val relay = clientRelay.relay.get()
+        if (relay != null && relay.isOpen) {
             try {
                 relay.send(remoteIp, udp.destPort, payload)
             } catch (error: Exception) {
                 Log.w(TAG, "UDP via SOCKS failed: ${error.message}")
-                // DNS fallback when associate path breaks mid-flight
-                if (udp.destPort == 53 && !ipv6) {
-                    executor.execute {
-                        forwardDnsDirect(clientIp, udp.sourcePort, remoteIp, payload)
-                    }
-                }
+                // Drop dead relay; next packet will re-open asynchronously.
+                closeUdpClient(endpoint)
             }
             return
         }
 
-        // No SOCKS UDP: keep DNS working so name resolution is not hard-down.
-        if (udp.destPort == 53 && !ipv6) {
-            executor.execute {
-                forwardDnsDirect(clientIp, udp.sourcePort, remoteIp, payload)
-            }
+        // Negative cache: do not retry ASSOCIATE on every packet after a recent failure.
+        val now = System.currentTimeMillis()
+        if (now < clientRelay.failedUntilMs.get()) {
+            return
+        }
+
+        // Queue a small amount of early datagrams while ASSOCIATE opens off the reader thread.
+        clientRelay.offerPending(remoteIp, udp.destPort, payload)
+        if (clientRelay.opening.compareAndSet(false, true)) {
+            executor.execute { openUdpAssociate(clientRelay) }
         }
     }
 
-    private fun ensureUdpRelay(): Socks5UdpRelay? {
-        val existing = udpRelay
-        if (existing != null && existing.isOpen) return existing
-        synchronized(udpRelayLock) {
-            val again = udpRelay
-            if (again != null && again.isOpen) return again
-            return try {
-                val relay =
-                    Socks5UdpRelay.open(
-                        proxyHost = socksHost,
-                        proxyPort = socksPort,
-                        protect = { socket: Socket -> vpnService.protect(socket) },
-                        protectDatagram = { ds: DatagramSocket -> vpnService.protect(ds) },
-                    )
-                udpRelay = relay
-                startUdpReceiver(relay)
-                Log.i(TAG, "SOCKS5 UDP ASSOCIATE ready")
-                relay
-            } catch (error: Exception) {
-                Log.w(TAG, "SOCKS5 UDP ASSOCIATE failed: ${error.message}")
-                null
-            }
+    private fun openUdpAssociate(clientRelay: UdpClientRelay) {
+        if (!running.get()) {
+            clientRelay.opening.set(false)
+            return
         }
-    }
-
-    private fun startUdpReceiver(relay: Socks5UdpRelay) {
-        udpReceiverThread?.interrupt()
-        udpReceiverThread =
-            Thread(
-                {
-                    while (running.get() && relay.isOpen) {
-                        val datagram =
-                            try {
-                                relay.receive(200)
-                            } catch (_: Exception) {
-                                break
-                            } ?: continue
-                        handleSocksUdpInbound(datagram)
-                    }
-                },
-                "viasix-tun-udp-rx",
-            ).also {
-                it.isDaemon = true
-                it.start()
-            }
-    }
-
-    private fun handleSocksUdpInbound(datagram: Socks5UdpFraming.Datagram) {
-        val client =
-            udpNat.lookupInbound(datagram.remote, datagram.remotePort) ?: run {
-                // No NAT hit: ignore (orphan reply)
+        try {
+            val relay =
+                Socks5UdpRelay.open(
+                    proxyHost = socksHost,
+                    proxyPort = socksPort,
+                    protect = { socket: Socket -> vpnService.protect(socket) },
+                    protectDatagram = { ds: DatagramSocket -> vpnService.protect(ds) },
+                )
+            if (!running.get()) {
+                relay.close()
+                clientRelay.opening.set(false)
                 return
             }
-        val packet =
-            if (client.ipv6) {
-                Packet.buildIp6Udp(
-                    source = datagram.remote,
-                    destination = client.ip,
-                    sourcePort = datagram.remotePort,
-                    destPort = client.port,
-                    payload = datagram.payload,
-                )
-            } else {
-                Packet.buildIp4Udp(
-                    source = datagram.remote,
-                    destination = client.ip,
-                    sourcePort = datagram.remotePort,
-                    destPort = client.port,
-                    payload = datagram.payload,
-                )
+            clientRelay.relay.set(relay)
+            clientRelay.failedUntilMs.set(0L)
+            clientRelay.opening.set(false)
+            startUdpReceiver(clientRelay, relay)
+            // Drain datagrams queued during open.
+            while (true) {
+                val pending = clientRelay.pollPending() ?: break
+                try {
+                    relay.send(pending.remote, pending.port, pending.payload)
+                } catch (error: Exception) {
+                    Log.w(TAG, "UDP pending send failed: ${error.message}")
+                    break
+                }
             }
-        enqueuePacket(packet)
+            Log.i(
+                TAG,
+                "SOCKS5 UDP ASSOCIATE ready client=${clientRelay.endpoint.ip.hostAddress}:${clientRelay.endpoint.port}",
+            )
+        } catch (error: Exception) {
+            Log.w(TAG, "SOCKS5 UDP ASSOCIATE failed: ${error.message}")
+            clientRelay.failedUntilMs.set(System.currentTimeMillis() + associateFailBackoffMs)
+            clientRelay.opening.set(false)
+            clientRelay.clearPending()
+        }
+    }
+
+    private fun startUdpReceiver(clientRelay: UdpClientRelay, relay: Socks5UdpRelay) {
+        executor.execute {
+            val endpoint = clientRelay.endpoint
+            while (running.get() && relay.isOpen) {
+                val datagram =
+                    try {
+                        relay.receive(200)
+                    } catch (_: Exception) {
+                        break
+                    } ?: continue
+                // Demux is implicit: this relay only carries traffic for [endpoint].
+                enqueuePacket(
+                    if (endpoint.ipv6) {
+                        Packet.buildIp6Udp(
+                            source = datagram.remote,
+                            destination = endpoint.ip,
+                            sourcePort = datagram.remotePort,
+                            destPort = endpoint.port,
+                            payload = datagram.payload,
+                        )
+                    } else {
+                        Packet.buildIp4Udp(
+                            source = datagram.remote,
+                            destination = endpoint.ip,
+                            sourcePort = datagram.remotePort,
+                            destPort = endpoint.port,
+                            payload = datagram.payload,
+                        )
+                    },
+                )
+                udpClients.noteActivity(endpoint)
+            }
+        }
     }
 
     private fun forwardDnsDirect(
@@ -517,16 +545,18 @@ class Tun2SocksEngine(
         clientPort: Int,
         dnsServer: InetAddress,
         payload: ByteArray,
+        ipv6: Boolean,
     ) {
         try {
             DatagramSocket().use { socket ->
                 vpnService.protect(socket)
                 socket.soTimeout = 5_000
                 val target =
-                    if (dnsServer.isAnyLocalAddress || dnsServer.hostAddress == "0.0.0.0") {
-                        dnsUpstream
-                    } else {
-                        dnsServer
+                    when {
+                        dnsServer.isAnyLocalAddress -> dnsUpstream
+                        dnsServer.hostAddress == "0.0.0.0" -> dnsUpstream
+                        dnsServer.hostAddress == "::" -> dnsUpstream
+                        else -> dnsServer
                     }
                 val request =
                     DatagramPacket(
@@ -539,29 +569,53 @@ class Tun2SocksEngine(
                 val response = DatagramPacket(responseBuf, responseBuf.size)
                 socket.receive(response)
                 val bytes = response.data.copyOf(response.length)
-                enqueuePacket(
-                    Packet.buildIp4Udp(
-                        source = dnsServer,
-                        destination = clientIp,
-                        sourcePort = 53,
-                        destPort = clientPort,
-                        payload = bytes,
-                    ),
-                )
+                // Reply source is the DNS server the client addressed (or upstream).
+                val replySource = if (target == dnsUpstream) dnsServer else target
+                val packet =
+                    if (ipv6) {
+                        Packet.buildIp6Udp(
+                            source = replySource,
+                            destination = clientIp,
+                            sourcePort = 53,
+                            destPort = clientPort,
+                            payload = bytes,
+                        )
+                    } else {
+                        Packet.buildIp4Udp(
+                            source = replySource,
+                            destination = clientIp,
+                            sourcePort = 53,
+                            destPort = clientPort,
+                            payload = bytes,
+                        )
+                    }
+                enqueuePacket(packet)
             }
         } catch (error: Exception) {
             Log.w(TAG, "DNS direct forward failed: ${error.message}")
         }
     }
 
-    private fun closeUdpRelay() {
-        synchronized(udpRelayLock) {
+    private fun closeUdpClient(endpoint: UdpClientEndpointTable.Endpoint) {
+        udpClients.remove(endpoint)
+        val relay = udpRelays.remove(endpoint.key())
+        try {
+            relay?.relay?.get()?.close()
+        } catch (_: Exception) {
+        }
+        relay?.clearPending()
+    }
+
+    private fun closeAllUdpRelays() {
+        for (key in udpRelays.keys.toList()) {
+            val r = udpRelays.remove(key)
             try {
-                udpRelay?.close()
+                r?.relay?.get()?.close()
             } catch (_: Exception) {
             }
-            udpRelay = null
+            r?.clearPending()
         }
+        udpClients.clear()
     }
 
     // endregion
@@ -622,7 +676,39 @@ class Tun2SocksEngine(
         }
     }
 
+    /**
+     * One SOCKS5 UDP ASSOCIATE per local client endpoint so replies demux by relay socket.
+     */
+    private class UdpClientRelay(
+        val endpoint: UdpClientEndpointTable.Endpoint,
+    ) {
+        val relay = AtomicReference<Socks5UdpRelay?>(null)
+        val opening = AtomicBoolean(false)
+        val failedUntilMs = AtomicReference(0L)
+        private val pending = LinkedBlockingQueue<PendingUdp>(PENDING_CAP)
+
+        fun offerPending(remote: InetAddress, port: Int, payload: ByteArray) {
+            if (!pending.offer(PendingUdp(remote, port, payload))) {
+                pending.poll()
+                pending.offer(PendingUdp(remote, port, payload))
+            }
+        }
+
+        fun pollPending(): PendingUdp? = pending.poll()
+
+        fun clearPending() {
+            pending.clear()
+        }
+
+        data class PendingUdp(
+            val remote: InetAddress,
+            val port: Int,
+            val payload: ByteArray,
+        )
+    }
+
     companion object {
         private const val TAG = "Tun2SocksEngine"
+        private const val PENDING_CAP = 8
     }
 }

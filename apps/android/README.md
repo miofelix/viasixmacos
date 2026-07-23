@@ -59,7 +59,7 @@ make android-assemble
 | VpnService 权限与前台会话 / 重启重连 | ✓ |
 | mihomo 用户态启动（assets → filesDir） | ✓ |
 | 全量隧道 IPv4/IPv6 TCP→SOCKS | ✓（`Tun2SocksEngine`） |
-| 全量隧道通用 UDP→SOCKS5 UDP ASSOCIATE | ✓（含 DNS；失败时 DNS/53 `protect` 回退） |
+| 全量隧道通用 UDP→SOCKS5 UDP ASSOCIATE | ✓（每本地源端口一条 ASSOCIATE；DNS/53 独立 protect） |
 | HTTP 代理 VPN 模式（可选，无默认路由） | ✓ |
 | 系统代理 | 不适用 |
 | 流量：速率差分 + 曲线 + 内存 + 连接数 | ✓ |

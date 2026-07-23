@@ -140,7 +140,7 @@ fun OverviewScreen(
                     title = "网络接入",
                     detail =
                         if (state.fullTunnel) {
-                            "VpnService 全量隧道（TCP→SOCKS + DNS）"
+                            "VpnService 全量隧道（TCP/UDP IPv4/IPv6→SOCKS；DNS protect）"
                         } else {
                             "仅 HTTP 代理 VPN（无默认路由）"
                         },
