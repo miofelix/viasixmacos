@@ -42,6 +42,7 @@ fun ProfilesScreen(
     onProfileChange: (String) -> Unit,
     onProjectPreview: () -> Unit,
     onImportProfile: () -> Unit,
+    onImportClipboard: () -> Unit = {},
 ) {
     val colors = LocalViaSixColors.current
     val summary = state.profileSummary
@@ -158,9 +159,15 @@ fun ProfilesScreen(
                         OutlinedButton(onClick = onImportProfile) {
                             Text("导入文件")
                         }
-                        Button(onClick = onProjectPreview) {
-                            Text("生成运行配置预览")
+                        OutlinedButton(onClick = onImportClipboard) {
+                            Text("粘贴剪贴板")
                         }
+                    }
+                    Button(
+                        onClick = onProjectPreview,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("生成运行配置预览")
                     }
                 }
             }

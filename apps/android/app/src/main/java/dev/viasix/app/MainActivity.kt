@@ -24,6 +24,9 @@ import dev.viasix.app.mihomo.TrafficSnapshot
 import dev.viasix.app.net.ExitIPDetectionMode
 import dev.viasix.app.net.ExitIPDetector
 import dev.viasix.app.prefs.SessionPrefsStore
+import dev.viasix.app.session.ProfileImportText
+import dev.viasix.app.session.SessionStartGate
+import dev.viasix.app.session.VpnSessionCommands
 import dev.viasix.app.state.DelayTestState
 import dev.viasix.app.state.LogLevel
 import dev.viasix.app.state.LogSource
@@ -31,6 +34,7 @@ import dev.viasix.app.state.RuntimeSnapshot
 import dev.viasix.app.state.SessionUiState
 import dev.viasix.app.state.appendLog
 import dev.viasix.app.state.rememberCandidate
+import dev.viasix.app.tile.ViaSixTileService
 import dev.viasix.app.ui.AppSection
 import dev.viasix.app.ui.ViaSixApp
 import dev.viasix.app.vpn.ViaSixVpnService
@@ -215,31 +219,36 @@ class MainActivity : ComponentActivity() {
                     .putExtra(ViaSixVpnService.EXTRA_REASON, reason)
 
             fun startVpn(reason: String = "connect") {
-                if (state.routingMode != RoutingMode.DIRECT && !state.selectedIsIpv6) {
-                    update {
-                        it.appendLog(
-                            "无法连接：请先选择合法 IPv6 节点",
-                            LogLevel.Error,
-                            LogSource.Node,
-                            asNotice = true,
+                when (
+                    val gate =
+                        SessionStartGate.evaluate(
+                            state.routingMode,
+                            state.selectedAddress,
+                            state.profileSummary,
                         )
-                    }
-                    selectedSection = AppSection.NODES
-                    return
-                }
-                if (state.routingMode != RoutingMode.DIRECT &&
-                    state.profileSummary.primary == null
                 ) {
-                    update {
-                        it.appendLog(
-                            "无法连接：连接配置缺少有效代理入口",
-                            LogLevel.Error,
-                            LogSource.Proxy,
-                            asNotice = true,
-                        )
+                    is SessionStartGate.Result.Blocked -> {
+                        update {
+                            it.appendLog(
+                                gate.message,
+                                LogLevel.Error,
+                                if (gate.sectionWire == "profiles") {
+                                    LogSource.Proxy
+                                } else {
+                                    LogSource.Node
+                                },
+                                asNotice = true,
+                            )
+                        }
+                        selectedSection =
+                            when (gate.sectionWire) {
+                                "profiles" -> AppSection.PROFILES
+                                "nodes" -> AppSection.NODES
+                                else -> selectedSection
+                            }
+                        return
                     }
-                    selectedSection = AppSection.PROFILES
-                    return
+                    SessionStartGate.Result.Ok -> Unit
                 }
 
                 val intent = buildStartIntent(reason)
@@ -256,6 +265,62 @@ class MainActivity : ComponentActivity() {
                     update {
                         it.appendLog("正在启动 VPN + mihomo…", LogLevel.Info, LogSource.Session)
                     }
+                }
+            }
+
+            fun importClipboardProfile() {
+                val cm = getSystemService(ClipboardManager::class.java)
+                val raw =
+                    runCatching {
+                        cm.primaryClip?.getItemAt(0)?.coerceToText(this@MainActivity)?.toString()
+                    }.getOrNull()
+                val yaml = ProfileImportText.extractYaml(raw)
+                if (yaml == null) {
+                    update {
+                        it.appendLog(
+                            if (ProfileImportText.looksLikeBareUrl(raw.orEmpty())) {
+                                "剪贴板是订阅 URL，请先下载 YAML 再导入（暂不支持在线拉取）"
+                            } else {
+                                "剪贴板不是有效的 mihomo/Clash YAML 配置"
+                            },
+                            LogLevel.Warning,
+                            LogSource.Proxy,
+                            asNotice = true,
+                        )
+                    }
+                    return
+                }
+                update {
+                    it.copy(profileYaml = yaml)
+                        .appendLog(
+                            "已从剪贴板导入配置（${yaml.length} 字符）",
+                            LogLevel.Success,
+                            LogSource.Proxy,
+                            asNotice = true,
+                        )
+                }
+            }
+
+            // Quick Settings tile / cold start: honor request-to-start extras once.
+            LaunchedEffect(Unit) {
+                val requestStart =
+                    intent?.getBooleanExtra(VpnSessionCommands.EXTRA_REQUEST_START, false) == true
+                val gateMessage = intent?.getStringExtra(ViaSixTileService.EXTRA_GATE_MESSAGE)
+                val gateSection = intent?.getStringExtra(ViaSixTileService.EXTRA_GATE_SECTION)
+                if (!gateMessage.isNullOrBlank()) {
+                    update {
+                        it.appendLog(gateMessage, LogLevel.Error, LogSource.Session, asNotice = true)
+                    }
+                    selectedSection =
+                        when (gateSection) {
+                            "profiles" -> AppSection.PROFILES
+                            "nodes" -> AppSection.NODES
+                            else -> selectedSection
+                        }
+                }
+                if (requestStart) {
+                    intent?.removeExtra(VpnSessionCommands.EXTRA_REQUEST_START)
+                    startVpn(reason = "quick-settings")
                 }
             }
 
@@ -689,6 +754,7 @@ class MainActivity : ComponentActivity() {
                 onImportProfile = {
                     openDocument.launch(arrayOf("text/*", "application/*", "*/*"))
                 },
+                onImportClipboard = { importClipboardProfile() },
                 onSelectedAddressChange = { ip -> update { it.copy(selectedAddress = ip) } },
                 onApplyNode = { address, reconnect -> applyNode(address, reconnect) },
                 onRemoveCandidate = { address ->

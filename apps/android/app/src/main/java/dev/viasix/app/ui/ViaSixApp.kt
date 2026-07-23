@@ -37,6 +37,7 @@ fun ViaSixApp(
     onSectionChange: (AppSection) -> Unit,
     onProfileChange: (String) -> Unit,
     onImportProfile: () -> Unit,
+    onImportClipboard: () -> Unit = {},
     onSelectedAddressChange: (String) -> Unit,
     onApplyNode: (address: String, reconnect: Boolean) -> Unit,
     onRemoveCandidate: (String) -> Unit,
@@ -166,6 +167,7 @@ fun ViaSixApp(
                             onProfileChange = onProfileChange,
                             onProjectPreview = onProjectPreview,
                             onImportProfile = onImportProfile,
+                            onImportClipboard = onImportClipboard,
                         )
                     AppSection.LOGS ->
                         LogsScreen(

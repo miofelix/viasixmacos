@@ -117,23 +117,107 @@ fun OverviewScreen(
                     ),
             verticalArrangement = Arrangement.spacedBy(VisualStyle.spacing12),
         ) {
+            // Clash Meta / NekoBox-style primary power control on home.
+            SurfaceCard {
+                Column(
+                    modifier = Modifier.padding(VisualStyle.spacing16),
+                    verticalArrangement = Arrangement.spacedBy(VisualStyle.spacing12),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing12),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (running) "已连接" else "未连接",
+                                style =
+                                    MaterialTheme.typography.headlineSmall.copy(
+                                        fontWeight = FontWeight.SemiBold,
+                                    ),
+                                color =
+                                    if (running) {
+                                        colors.positive
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                            )
+                            Text(
+                                text =
+                                    when {
+                                        running && state.runtime.traffic.live ->
+                                            state.runtime.traffic.message
+                                        running -> state.runtime.health
+                                        else ->
+                                            if (state.fullTunnel) {
+                                                "点按连接 · 全量隧道"
+                                            } else {
+                                                "点按连接 · HTTP 代理 VPN"
+                                            }
+                                    },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (running) {
+                            OutlinedButton(
+                                onClick = onStop,
+                                modifier =
+                                    Modifier
+                                        .height(52.dp)
+                                        .padding(start = VisualStyle.spacing4),
+                            ) {
+                                Text("断开", fontWeight = FontWeight.SemiBold)
+                            }
+                        } else {
+                            Button(
+                                onClick = onStart,
+                                modifier =
+                                    Modifier
+                                        .height(52.dp)
+                                        .padding(start = VisualStyle.spacing4),
+                            ) {
+                                Text("连接", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                    if (running && state.runtime.traffic.live) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+                        ) {
+                            MetricTile(
+                                title = "上传",
+                                value = ByteRateFormatter.formatRate(state.runtime.traffic.upBps),
+                                tone = AppTone.Accent,
+                                modifier = Modifier.weight(1f),
+                            )
+                            MetricTile(
+                                title = "下载",
+                                value = ByteRateFormatter.formatRate(state.runtime.traffic.downBps),
+                                tone = AppTone.Positive,
+                                modifier = Modifier.weight(1f),
+                            )
+                            MetricTile(
+                                title = "连接",
+                                value = state.runtime.traffic.connectionCount.toString(),
+                                tone = AppTone.Neutral,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
+
             SurfaceCard {
                 CardHeader(
                     title = "IPv6 链路",
                     icon = Icons.Outlined.VpnKey,
                     tone = headerTone,
                 ) {
-                    if (running) {
-                        OutlinedButton(
-                            onClick = onStop,
-                            modifier = Modifier.height(VisualStyle.controlHeight),
-                        ) { Text("断开") }
-                    } else {
-                        Button(
-                            onClick = onStart,
-                            modifier = Modifier.height(VisualStyle.controlHeight),
-                        ) { Text("连接") }
-                    }
+                    StatusBadge(headerStatus, tone = headerTone)
                 }
                 HorizontalDivider(color = colors.surfaceBorder)
                 LinkStep(

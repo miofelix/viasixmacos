@@ -13,7 +13,9 @@ import dev.viasix.app.MainActivity
 import dev.viasix.app.mihomo.ControllerClient
 import dev.viasix.app.mihomo.MihomoInstaller
 import dev.viasix.app.mihomo.MihomoProcess
+import dev.viasix.app.mihomo.TrafficSampler
 import dev.viasix.app.tun.Tun2SocksEngine
+import dev.viasix.core.formatting.ByteRateFormatter
 import dev.viasix.core.projection.MihomoProjection
 import dev.viasix.core.projection.ProjectError
 import dev.viasix.core.projection.ProjectOptions
@@ -44,6 +46,10 @@ class ViaSixVpnService : VpnService() {
     private var mihomo: MihomoProcess? = null
     private var tunEngine: Tun2SocksEngine? = null
     private val starting = AtomicBoolean(false)
+    private val trafficSampler = TrafficSampler(maxHistory = 30)
+    private val trafficLoopRunning = AtomicBoolean(false)
+    private var trafficThread: Thread? = null
+    private var activeSecret: String = ""
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
@@ -198,7 +204,48 @@ class ViaSixVpnService : VpnService() {
             )
             appendEvent("HTTP 代理 VPN 会话已建立（无默认路由）", "success")
         }
+        activeSecret = secret
+        startTrafficNotificationLoop(secret)
         Log.i(TAG, "stack ready fullTunnel=$fullTunnel health=${health.message}")
+    }
+
+    /** Clash-style live rates in the ongoing VPN notification. */
+    private fun startTrafficNotificationLoop(secret: String) {
+        stopTrafficNotificationLoop()
+        trafficSampler.reset()
+        trafficLoopRunning.set(true)
+        trafficThread =
+            thread(name = "viasix-vpn-traffic", isDaemon = true) {
+                while (trafficLoopRunning.get()) {
+                    try {
+                        val snap = trafficSampler.sample("127.0.0.1", CONTROLLER_PORT, secret)
+                        if (snap.live) {
+                            val line =
+                                "↑ ${ByteRateFormatter.formatCompactRate(snap.upBps)}  " +
+                                    "↓ ${ByteRateFormatter.formatCompactRate(snap.downBps)}  ·  " +
+                                    "conn ${snap.connectionCount}"
+                            updateNotification(line)
+                        }
+                    } catch (error: Exception) {
+                        Log.w(TAG, "traffic sample: ${error.message}")
+                    }
+                    try {
+                        Thread.sleep(TRAFFIC_POLL_MS)
+                    } catch (_: InterruptedException) {
+                        break
+                    }
+                }
+            }
+    }
+
+    private fun stopTrafficNotificationLoop() {
+        trafficLoopRunning.set(false)
+        try {
+            trafficThread?.interrupt()
+        } catch (_: Exception) {
+        }
+        trafficThread = null
+        trafficSampler.reset()
     }
 
     override fun onDestroy() {
@@ -209,6 +256,8 @@ class ViaSixVpnService : VpnService() {
     /** Stop engines/process but keep the service if a restart is about to begin. */
     private fun stopStackOnly(reason: String) {
         Log.i(TAG, "stop stack: $reason")
+        stopTrafficNotificationLoop()
+        activeSecret = ""
         try {
             tunEngine?.stop()
         } catch (error: Exception) {
@@ -354,6 +403,7 @@ class ViaSixVpnService : VpnService() {
         private val TIME_FORMAT = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
         private const val CHANNEL_ID = "viasix_vpn"
         private const val NOTIFICATION_ID = 42
+        private const val TRAFFIC_POLL_MS = 1_500L
         private const val TAG = "ViaSixVpnService"
     }
 }
