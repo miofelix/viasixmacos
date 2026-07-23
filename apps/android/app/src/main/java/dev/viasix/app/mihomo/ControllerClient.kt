@@ -20,6 +20,8 @@ data class TrafficTotals(
     val uploadTotal: Long = 0,
     val downloadTotal: Long = 0,
     val connectionCount: Int = 0,
+    /** Session memory from `/connections` (mihomo); 0 when the field is absent. */
+    val memoryInUse: Long = 0,
 )
 
 /** Full UI snapshot: rates (derived), totals, optional memory. */
@@ -91,41 +93,83 @@ object ControllerClient {
             if (code !in 200..299) {
                 return TrafficTotals(false, "HTTP $code")
             }
-            val json = JSONObject(body)
-            val up = json.optLong("uploadTotal", 0)
-            val down = json.optLong("downloadTotal", 0)
-            val count =
-                when {
-                    json.has("connections") -> json.optJSONArray("connections")?.length() ?: 0
-                    else -> 0
-                }
-            TrafficTotals(
-                live = true,
-                message =
-                    "Σ ↑ ${ByteRateFormatter.formatBytes(up)}  ↓ ${ByteRateFormatter.formatBytes(down)}",
-                uploadTotal = up,
-                downloadTotal = down,
-                connectionCount = count,
-            )
+            parseConnectionsTotalsBody(body)
         } catch (error: Exception) {
             TrafficTotals(false, "traffic unavailable: ${error.message}")
         }
     }
 
-    /** Best-effort HTTP GET /memory (some builds expose it without WebSocket). */
-    fun memoryInUse(host: String, port: Int, secret: String, timeoutMs: Int = 2000): Long {
-        return try {
-            val conn = open("http://$host:$port/memory", secret, timeoutMs)
-            if (conn.responseCode !in 200..299) return 0
-            val json = JSONObject(readBody(conn))
+    /**
+     * Parse a finite `/connections` JSON body (upload/download totals, connection count,
+     * optional memory). Mihomo's dedicated `/memory` and `/traffic` endpoints are **chunked
+     * streams** that never close; never use [readBody] on them or the UI poll will hang.
+     *
+     * Pure string parsing so JVM unit tests do not need Android's stubbed [JSONObject].
+     */
+    fun parseConnectionsTotalsBody(body: String): TrafficTotals {
+        val up = longField(body, "uploadTotal")
+        val down = longField(body, "downloadTotal")
+        val memory = longField(body, "memory").coerceAtLeast(0)
+        val count = topLevelArrayLength(body, "connections")
+        return TrafficTotals(
+            live = true,
+            message =
+                "Σ ↑ ${ByteRateFormatter.formatBytes(up)}  ↓ ${ByteRateFormatter.formatBytes(down)}",
+            uploadTotal = up,
+            downloadTotal = down,
+            connectionCount = count,
+            memoryInUse = memory,
+        )
+    }
+
+    /** Top-level JSON number field (int/long). Nested objects are ignored by the regex. */
+    internal fun longField(json: String, key: String): Long {
+        val pattern = Regex("\"${Regex.escape(key)}\"\\s*:\\s*(-?\\d+)")
+        return pattern.find(json)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+    }
+
+    /**
+     * Length of a top-level JSON array field. Counts root-ish `{`/`[` nesting so nested
+     * objects inside array elements do not terminate the scan early.
+     */
+    internal fun topLevelArrayLength(json: String, key: String): Int {
+        val keyPattern = Regex("\"${Regex.escape(key)}\"\\s*:\\s*\\[")
+        val match = keyPattern.find(json) ?: return 0
+        var i = match.range.last + 1
+        var depth = 1
+        var elements = 0
+        var inString = false
+        var escape = false
+        var expectingValue = true
+        while (i < json.length && depth > 0) {
+            val c = json[i]
             when {
-                json.has("inuse") -> json.optLong("inuse", 0)
-                json.has("inUse") -> json.optLong("inUse", 0)
-                else -> 0
+                escape -> escape = false
+                inString && c == '\\' -> escape = true
+                c == '"' -> inString = !inString
+                inString -> Unit
+                c == '{' || c == '[' -> {
+                    if (depth == 1 && expectingValue) {
+                        elements += 1
+                        expectingValue = false
+                    }
+                    depth += 1
+                }
+                c == '}' || c == ']' -> {
+                    depth -= 1
+                }
+                depth == 1 && c == ',' -> {
+                    expectingValue = true
+                }
+                depth == 1 && expectingValue && !c.isWhitespace() && c != ']' -> {
+                    // primitive element (number/bool/null/string already handled via quotes)
+                    elements += 1
+                    expectingValue = false
+                }
             }
-        } catch (_: Exception) {
-            0
+            i += 1
         }
+        return elements.coerceAtLeast(0)
     }
 
     fun patchMode(
@@ -275,14 +319,14 @@ class TrafficSampler(
         points.addLast(SpeedPoint(upBps, downBps, now))
         while (points.size > maxHistory) points.removeFirst()
 
-        val memory = ControllerClient.memoryInUse(host, port, secret)
+        // Memory comes from the finite /connections snapshot — do not call streaming /memory.
         return TrafficSnapshot(
             live = true,
             upBps = upBps,
             downBps = downBps,
             uploadTotal = totals.uploadTotal,
             downloadTotal = totals.downloadTotal,
-            memoryInUse = memory,
+            memoryInUse = totals.memoryInUse,
             connectionCount = totals.connectionCount,
             message =
                 "↑ ${ByteRateFormatter.formatRate(upBps)}  ↓ ${ByteRateFormatter.formatRate(downBps)}" +

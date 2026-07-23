@@ -577,7 +577,7 @@ fun OverviewScreen(
                     Text(
                         text =
                             if (running) {
-                                "速率由 /connections 累计差分估算；内存来自 /memory（若可用）"
+                                "速率由 /connections 累计差分估算；内存取自同接口（若可用）"
                             } else {
                                 "启动连接后显示实时速率、累计流量、曲线与连接数"
                             },
