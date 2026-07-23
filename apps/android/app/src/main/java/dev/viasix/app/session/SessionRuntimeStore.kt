@@ -110,4 +110,16 @@ class SessionRuntimeStore(context: Context) {
                     ?: "正在检测",
         ).forProcess(RuntimeProcessIdentity.token)
     }
+
+    fun clearedEventId(): Long =
+        prefs.getLong(KEY_CLEARED_EVENT_ID, 0L).coerceAtLeast(0L)
+
+    fun markEventsClearedThrough(eventId: Long) {
+        val next = maxOf(clearedEventId(), eventId.coerceAtLeast(0L))
+        prefs.edit().putLong(KEY_CLEARED_EVENT_ID, next).apply()
+    }
+
+    private companion object {
+        const val KEY_CLEARED_EVENT_ID = "uiClearedEventId"
+    }
 }

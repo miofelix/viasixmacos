@@ -45,6 +45,7 @@ Android 功能对齐以 **macOS** 为准。Windows 端仍在完善中，**不得
 
 - `TrafficSampler`：与 Windows 相同，由 `/connections` 累计差分得瞬时速率；Activity 以进程、controller secret、启动时间和端口组成的 runtime 会话身份隔离采样，阻塞请求返回后再次读取 runtime，旧会话结果会被丢弃并清空历史
 - `ViaSixVpnService`：重启栈（节点应用并重连）、使用持久化严格递增 ID 的环形事件日志（抵抗同毫秒写入与设备校时回拨）、通知栏实时上下行（Clash 风格）
+- 日志流：默认按时间正序并自动跟随底部最新记录，可显式暂停/恢复跟随或切换为最新在上；清空前二次确认，并把最新 runtime 事件 ID 持久化为单调游标，旋转和进程重建不会重新导入已清空记录
 - `ViaSixTileService`：API 34+ 通过 `PendingIntent` 展开应用，API 26–28 不访问 API 29 的磁贴字幕
 - 通知权限：Android 13+ 首次连接前按需请求；拒绝后会话降级运行且不自动重复询问，设置页提供再次请求/系统设置入口
 - 会话恢复：持久化当前主分区；Activity 旋转/进程重建时从 VPN runtime 快照同步恢复，授权中的连接动作通过 saved state 延续

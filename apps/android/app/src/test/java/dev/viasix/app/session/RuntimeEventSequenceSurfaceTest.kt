@@ -21,6 +21,26 @@ class RuntimeEventSequenceSurfaceTest {
         assertFalse(service.contains(".put(\"id\", System.currentTimeMillis())"))
     }
 
+    @Test
+    fun activityPersistsClearCursorAcrossRecreation() {
+        val activity =
+            resolve(
+                "src/main/java/dev/viasix/app/MainActivity.kt",
+                "app/src/main/java/dev/viasix/app/MainActivity.kt",
+            ).readText()
+        val store =
+            resolve(
+                "src/main/java/dev/viasix/app/session/SessionRuntimeStore.kt",
+                "app/src/main/java/dev/viasix/app/session/SessionRuntimeStore.kt",
+            ).readText()
+
+        assertTrue(activity.contains("lastImportedEventId = runtimeStore.clearedEventId()"))
+        assertTrue(activity.contains("RuntimeEventCursor.latestId(runtimeStore.load().eventsJson)"))
+        assertTrue(activity.contains("runtimeStore.markEventsClearedThrough(clearThrough)"))
+        assertTrue(store.contains("KEY_CLEARED_EVENT_ID"))
+        assertTrue(store.contains("maxOf(clearedEventId(), eventId.coerceAtLeast(0L))"))
+    }
+
     private fun resolve(vararg paths: String): File =
         paths.map { File(it) }.firstOrNull { it.isFile }
             ?: error("file not found from cwd=${File(".").absolutePath}: ${paths.toList()}")

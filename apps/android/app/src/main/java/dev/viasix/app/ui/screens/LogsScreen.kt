@@ -9,11 +9,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.SwapVert
+import androidx.compose.material.icons.outlined.VerticalAlignBottom
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -21,6 +25,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +38,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.viasix.app.state.LogLevel
+import dev.viasix.app.state.LogFollowState
+import dev.viasix.app.state.LogOrder
 import dev.viasix.app.state.LogSource
 import dev.viasix.app.state.SessionUiState
 import dev.viasix.app.ui.AppSection
@@ -69,7 +77,10 @@ fun LogsScreen(
     var search by remember { mutableStateOf("") }
     var levelFilter by remember { mutableStateOf(LevelFilter.All) }
     var sourceFilter by remember { mutableStateOf(SourceFilter.All) }
-    var newestFirst by remember { mutableStateOf(true) }
+    var followState by remember { mutableStateOf(LogFollowState()) }
+    var showsClearConfirmation by remember { mutableStateOf(false) }
+    val newestFirst = followState.order == LogOrder.NEWEST_FIRST
+    val listState = rememberLazyListState()
 
     val filtered =
         remember(state.logs, search, levelFilter, sourceFilter, newestFirst) {
@@ -95,6 +106,23 @@ fun LogsScreen(
             if (newestFirst) result else result.asReversed()
         }
 
+    val latestVisibleId =
+        if (followState.canFollowLatest) {
+            filtered.lastOrNull()?.id
+        } else {
+            null
+        }
+    LaunchedEffect(
+        latestVisibleId,
+        filtered.size,
+        followState.order,
+        followState.followsLatest,
+    ) {
+        if (followState.canFollowLatest && followState.followsLatest && filtered.isNotEmpty()) {
+            listState.scrollToItem(filtered.lastIndex)
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         AppPageHeader(
             title = AppSection.LOGS.title,
@@ -104,13 +132,34 @@ fun LogsScreen(
                 title = "${filtered.size}/${state.logs.size}",
                 tone = AppTone.Neutral,
             )
-            IconButton(onClick = { newestFirst = !newestFirst }) {
+            IconButton(
+                onClick = { followState = followState.toggleOrder() },
+                enabled = state.logs.isNotEmpty(),
+            ) {
                 Icon(
                     imageVector = Icons.Outlined.SwapVert,
                     contentDescription = if (newestFirst) "切换为最旧在上" else "切换为最新在上",
                 )
             }
-            IconButton(onClick = onClear, enabled = state.logs.isNotEmpty()) {
+            IconButton(
+                onClick = { followState = followState.toggleFollowing() },
+                enabled = state.logs.isNotEmpty() && followState.canFollowLatest,
+            ) {
+                Icon(
+                    imageVector =
+                        if (followState.followsLatest) {
+                            Icons.Outlined.Pause
+                        } else {
+                            Icons.Outlined.VerticalAlignBottom
+                        },
+                    contentDescription =
+                        if (followState.followsLatest) "暂停跟随最新日志" else "恢复跟随最新日志",
+                )
+            }
+            IconButton(
+                onClick = { showsClearConfirmation = true },
+                enabled = state.logs.isNotEmpty(),
+            ) {
                 Icon(
                     imageVector = Icons.Outlined.DeleteSweep,
                     contentDescription = "清空日志",
@@ -194,7 +243,10 @@ fun LogsScreen(
                         modifier = Modifier.padding(VisualStyle.spacing16),
                     )
                 } else {
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
                         items(filtered, key = { it.id }) { entry ->
                             Row(
                                 modifier =
@@ -245,5 +297,29 @@ fun LogsScreen(
                 }
             }
         }
+    }
+
+    if (showsClearConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showsClearConfirmation = false },
+            title = { Text("清空日志？") },
+            text = { Text("这会移除全部会话记录，且无法撤销。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showsClearConfirmation = false
+                        followState = followState.resetAfterClear()
+                        onClear()
+                    },
+                ) {
+                    Text("清空")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showsClearConfirmation = false }) {
+                    Text("取消")
+                }
+            },
+        )
     }
 }

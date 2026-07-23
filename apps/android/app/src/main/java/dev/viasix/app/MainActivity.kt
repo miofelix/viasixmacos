@@ -46,6 +46,7 @@ import dev.viasix.app.session.NotificationPermissionState
 import dev.viasix.app.session.POST_NOTIFICATIONS_PERMISSION
 import dev.viasix.app.session.ProfileDraftGate
 import dev.viasix.app.session.ProfileImportText
+import dev.viasix.app.session.RuntimeEventCursor
 import dev.viasix.app.session.RuntimeSessionKey
 import dev.viasix.app.session.SessionRuntimeStore
 import dev.viasix.app.session.SessionStartGate
@@ -153,6 +154,7 @@ class MainActivity : ComponentActivity() {
         startingSinceMillis = savedInstanceState?.getLong(STATE_STARTING_SINCE_MILLIS) ?: 0L
         prefsStore = SessionPrefsStore(this)
         runtimeStore = SessionRuntimeStore(this)
+        lastImportedEventId = runtimeStore.clearedEventId()
         val initialPrefs = prefsStore.load()
         val initialRuntime = runtimeStore.load()
         trafficSessionKey = initialRuntime.sessionKey()
@@ -1626,6 +1628,13 @@ class MainActivity : ComponentActivity() {
                 onDelayTest = ::runDelayTest,
                 onCopy = ::copyText,
                 onClearLogs = {
+                    val clearThrough =
+                        maxOf(
+                            lastImportedEventId,
+                            RuntimeEventCursor.latestId(runtimeStore.load().eventsJson),
+                        )
+                    lastImportedEventId = clearThrough
+                    runtimeStore.markEventsClearedThrough(clearThrough)
                     state = state.copy(logs = emptyList(), statusMessage = "日志已清空")
                 },
                 onDismissNotice = { state = state.copy(notice = null) },
