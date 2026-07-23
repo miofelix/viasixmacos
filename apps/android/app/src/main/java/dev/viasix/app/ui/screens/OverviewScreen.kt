@@ -263,7 +263,7 @@ fun OverviewScreen(
                     title = "全量隧道",
                     detail =
                         if (state.fullTunnel) {
-                            "默认路由 + 用户态 TCP/DNS 转发"
+                            "默认路由 + TCP/UDP IPv4/IPv6→SOCKS；DNS protect"
                         } else {
                             "仅 setHttpProxy，无默认路由"
                         },
