@@ -30,6 +30,7 @@ import dev.viasix.app.session.DnsRoutingMode
 import dev.viasix.app.session.DnsSettingsPolicy
 import dev.viasix.app.session.GenerationGate
 import dev.viasix.app.session.Ipv6RoutingMode
+import dev.viasix.app.session.LatestRequestGate
 import dev.viasix.app.session.LocalNetworkBypassPolicy
 import dev.viasix.app.session.RuntimeProcessIdentity
 import dev.viasix.app.session.RuntimeStackFailure
@@ -76,7 +77,7 @@ class ViaSixVpnService : VpnService() {
     private var tunnel: ParcelFileDescriptor? = null
     private var mihomo: MihomoProcess? = null
     private var tunEngine: Tun2SocksEngine? = null
-    private val starting = AtomicBoolean(false)
+    private val startRequests = LatestRequestGate<StartRequest>()
     private val shuttingDown = AtomicBoolean(false)
     private val trafficLoopGate = GenerationGate()
 
@@ -89,6 +90,22 @@ class ViaSixVpnService : VpnService() {
 
     @Volatile
     private var underlyingNetworkSelection = UnderlyingNetworkSelection<Network>()
+
+    private data class StartRequest(
+        val profile: String,
+        val selectedIp: String?,
+        val mode: RoutingMode,
+        val fullTunnel: Boolean,
+        val vpnMtuInput: String,
+        val vpnMetered: Boolean,
+        val bypassLocalNetwork: Boolean,
+        val ipv6RoutingMode: Ipv6RoutingMode,
+        val dnsRoutingMode: DnsRoutingMode,
+        val dnsServerInput: String,
+        val appRoutingMode: AppRoutingMode,
+        val selectedAppPackages: List<String>,
+        val reason: String,
+    )
 
     private val underlyingNetworkCallback =
         object : ConnectivityManager.NetworkCallback() {
@@ -203,6 +220,22 @@ class ViaSixVpnService : VpnService() {
             intent?.getStringExtra(EXTRA_REASON).orEmpty().ifBlank {
                 startOrigin.reason
             }
+        val request =
+            StartRequest(
+                profile = profile,
+                selectedIp = selectedIp,
+                mode = mode,
+                fullTunnel = fullTunnel,
+                vpnMtuInput = vpnMtuInput,
+                vpnMetered = vpnMetered,
+                bypassLocalNetwork = bypassLocalNetwork,
+                ipv6RoutingMode = ipv6RoutingMode,
+                dnsRoutingMode = dnsRoutingMode,
+                dnsServerInput = dnsServerInput,
+                appRoutingMode = appRoutingMode,
+                selectedAppPackages = selectedAppPackages,
+                reason = reason,
+            )
 
         startForeground(NOTIFICATION_ID, buildNotification("Starting ViaSix…"))
         appendEvent(
@@ -214,50 +247,56 @@ class ViaSixVpnService : VpnService() {
             "info",
         )
 
-        if (!starting.compareAndSet(false, true)) {
-            appendEvent("已有启动任务进行中，忽略重复请求", "warning")
+        if (!startRequests.submit(request)) {
+            appendEvent("已有启动任务进行中，已合并为最新请求", "info")
             return START_STICKY
         }
+        launchStartupWorker()
+        return START_STICKY
+    }
 
+    private fun launchStartupWorker() {
         thread(name = "viasix-vpn-start", isDaemon = true) {
-            try {
-                requireStartupActive("before restart cleanup")
-                // Tear down any previous stack before applying new parameters
-                // (node apply / reconnect path).
-                stopStackOnly("restart for $reason")
-                requireStartupActive("after restart cleanup")
-                startStack(
-                    profile,
-                    selectedIp,
-                    mode,
-                    fullTunnel,
-                    vpnMtuInput,
-                    vpnMetered,
-                    bypassLocalNetwork,
-                    ipv6RoutingMode,
-                    dnsRoutingMode,
-                    dnsServerInput,
-                    appRoutingMode,
-                    selectedAppPackages,
-                )
-            } catch (error: VpnStartupCancelledException) {
-                Log.i(TAG, error.message.orEmpty())
-                finishCancelledStartup()
-            } catch (error: Exception) {
-                if (shuttingDown.get()) {
-                    Log.i(TAG, "startup stopped during ${error.javaClass.simpleName}")
+            while (!shuttingDown.get()) {
+                val request = startRequests.takeNext() ?: break
+                try {
+                    requireStartupActive("before restart cleanup")
+                    // Tear down any previous stack before applying new parameters
+                    // (node apply / reconnect path).
+                    stopStackOnly("restart for ${request.reason}")
+                    requireStartupActive("after restart cleanup")
+                    startStack(
+                        request.profile,
+                        request.selectedIp,
+                        request.mode,
+                        request.fullTunnel,
+                        request.vpnMtuInput,
+                        request.vpnMetered,
+                        request.bypassLocalNetwork,
+                        request.ipv6RoutingMode,
+                        request.dnsRoutingMode,
+                        request.dnsServerInput,
+                        request.appRoutingMode,
+                        request.selectedAppPackages,
+                    )
+                } catch (error: VpnStartupCancelledException) {
+                    Log.i(TAG, error.message.orEmpty())
                     finishCancelledStartup()
-                } else {
-                    Log.e(TAG, "start failed", error)
-                    appendEvent("启动失败：${error.message}", "error")
-                    updateNotification("Start failed: ${error.message}")
-                    shutdownAll("start failed", stopService = true)
+                    break
+                } catch (error: Exception) {
+                    if (shuttingDown.get()) {
+                        Log.i(TAG, "startup stopped during ${error.javaClass.simpleName}")
+                        finishCancelledStartup()
+                    } else {
+                        Log.e(TAG, "start failed", error)
+                        appendEvent("启动失败：${error.message}", "error")
+                        updateNotification("Start failed: ${error.message}")
+                        shutdownAll("start failed", stopService = true)
+                    }
+                    break
                 }
-            } finally {
-                starting.set(false)
             }
         }
-        return START_STICKY
     }
 
     private fun startStack(
@@ -679,6 +718,7 @@ class ViaSixVpnService : VpnService() {
 
     private fun shutdownAll(reason: String, stopService: Boolean) {
         if (!shuttingDown.compareAndSet(false, true)) return
+        startRequests.cancelPending()
         Log.i(TAG, "shutdown: $reason")
         stopStackOnly(reason)
         writeRuntimeStatus(

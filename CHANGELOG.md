@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android 在 VPN 启动或重连尚未完成时直接忽略后续启动 Intent 的问题；Activity 快速应用新配置、磁贴与 Sticky/Always-on 恢复等入口并发时，UI 可能显示最新设置已提交，但实际连接仍停留在较早参数。服务现通过单 worker 的 latest-wins gate 合并请求：当前启动安全收敛，尚未处理的请求只保留最新一份并随后顺序重启；worker 空闲切换与新提交原子化，停止会清除待处理请求而不会在关停后复活。
 - 修复 Android 会话重启时旧流量监督线程仅靠共享布尔值与 `interrupt()` 停止；线程若正阻塞在 controller HTTP 采样中，新的会话会把布尔值重新设为 true，使旧线程继续使用旧 secret/full-tunnel 参数更新通知、污染共享速率历史，甚至误关新会话。监督循环现采用单调 generation gate，每次停止或重启永久淘汰旧代际，异常关停只能由当前代际原子 claim；每代使用独立 `TrafficSampler`，迟到采样在任何外部副作用前都会再次校验代际。
 - 修复 Android VPN 启动最终发布运行态前只复核 mihomo 进程，没有复核刚启动的 `Tun2SocksEngine`；若 TUN reader/writer 或 UDP reactor 在异步启动窗口内立即退出，服务仍可能短暂写入 `running=true` 并展示连接成功。启动现复用统一的 `RuntimeStackHealth`，在 TUN 启动后及运行态发布前同时校验 mihomo 与可选 TUN，引擎已失效时直接回滚整栈。
 - 修复 Android 共享 UDP relay reactor 因 `Selector` 层异常而退出时只在内部清理资源，却不把故障传播给 `Tun2SocksEngine`，导致 VPN 继续显示运行、TCP 仍可用但所有通用 UDP 永久失效的问题；reactor 现区分显式关闭与意外线程终止，后者在完成 relay 清理后通知引擎关闭运行健康门，由既有 service supervisor 统一 fail-closed 结束会话。
