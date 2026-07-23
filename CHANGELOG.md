@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android VPN 环形事件日志直接用 `System.currentTimeMillis()` 作为去重 ID；同一毫秒内的迟到事件或设备时钟回拨后产生的记录，可能不大于 Activity 已导入游标而被永久跳过。服务现持久化严格递增事件序列，并在升级时以现有事件最大 ID 和墙上时钟共同初始化；事件数组与序列游标在同一次偏好编辑中发布，确保会话时间线不会因校时或快速连续状态变化漏项。
 - 修复 Android runtime 只持久化 `running` 布尔值，重连拆栈期间仍暴露旧 `running=true`、controller secret 与启动时间的问题；Activity 轮询会把“连接中”错误改回“已连接”，冷启动无法恢复过渡态，快捷磁贴也不能区分连接、运行和断开。runtime 现对齐 macOS `ProxyCorePhase` 持久化 `stopped / starting / running / stopping`：重启在拆栈前清除旧凭据并发布 `starting`，整栈健康后才发布 `running`，关停先发布 `stopping` 再收敛为 `stopped`；Activity、进程恢复与磁贴共享同一权威 phase，旧版本布尔偏好仍可兼容读取，跨进程残留过渡态会被拒绝。
 - 修复 Android 在 VPN 启动或重连尚未完成时直接忽略后续启动 Intent 的问题；Activity 快速应用新配置、磁贴与 Sticky/Always-on 恢复等入口并发时，UI 可能显示最新设置已提交，但实际连接仍停留在较早参数。服务现通过单 worker 的 latest-wins gate 合并请求：当前启动安全收敛，尚未处理的请求只保留最新一份并随后顺序重启；worker 空闲切换与新提交原子化，停止会清除待处理请求而不会在关停后复活。
 - 修复 Android 会话重启时旧流量监督线程仅靠共享布尔值与 `interrupt()` 停止；线程若正阻塞在 controller HTTP 采样中，新的会话会把布尔值重新设为 true，使旧线程继续使用旧 secret/full-tunnel 参数更新通知、污染共享速率历史，甚至误关新会话。监督循环现采用单调 generation gate，每次停止或重启永久淘汰旧代际，异常关停只能由当前代际原子 claim；每代使用独立 `TrafficSampler`，迟到采样在任何外部副作用前都会再次校验代际。

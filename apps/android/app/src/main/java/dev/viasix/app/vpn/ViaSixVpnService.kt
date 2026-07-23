@@ -33,6 +33,7 @@ import dev.viasix.app.session.GenerationGate
 import dev.viasix.app.session.Ipv6RoutingMode
 import dev.viasix.app.session.LatestRequestGate
 import dev.viasix.app.session.LocalNetworkBypassPolicy
+import dev.viasix.app.session.RuntimeEventSequence
 import dev.viasix.app.session.RuntimeProcessIdentity
 import dev.viasix.app.session.RuntimeStackFailure
 import dev.viasix.app.session.RuntimeStackHealth
@@ -882,12 +883,25 @@ class ViaSixVpnService : VpnService() {
                 } catch (_: Exception) {
                     JSONArray()
                 }
+            var previousEventId = prefs.getLong(KEY_EVENT_SEQUENCE, 0L)
+            for (i in 0 until array.length()) {
+                previousEventId =
+                    maxOf(
+                        previousEventId,
+                        array.optJSONObject(i)?.optLong("id", 0L) ?: 0L,
+                    )
+            }
+            val eventId =
+                RuntimeEventSequence.next(
+                    previousId = previousEventId,
+                    wallClockMillis = System.currentTimeMillis(),
+                )
             val entry =
                 JSONObject()
                     .put("ts", formatEventTime())
                     .put("level", level)
                     .put("message", message)
-                    .put("id", System.currentTimeMillis())
+                    .put("id", eventId)
             // newest first
             val next = JSONArray()
             next.put(entry)
@@ -895,7 +909,10 @@ class ViaSixVpnService : VpnService() {
             for (i in 0 until minOf(array.length(), limit - 1)) {
                 next.put(array.get(i))
             }
-            prefs.edit().putString(KEY_EVENTS, next.toString()).apply()
+            prefs.edit()
+                .putLong(KEY_EVENT_SEQUENCE, eventId)
+                .putString(KEY_EVENTS, next.toString())
+                .apply()
         } catch (error: Exception) {
             Log.w(TAG, "appendEvent failed: ${error.message}")
         }
@@ -998,6 +1015,7 @@ class ViaSixVpnService : VpnService() {
         const val KEY_VERSION = "version"
         const val KEY_STARTED_AT = "startedAt"
         const val KEY_EVENTS = "events"
+        const val KEY_EVENT_SEQUENCE = "eventSequence"
         const val KEY_PROCESS_TOKEN = "processToken"
         const val KEY_UNDERLYING_NETWORK = "underlyingNetwork"
 
