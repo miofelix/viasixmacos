@@ -20,6 +20,11 @@ object TcpSequence {
         return distance != 0L && distance < HALF_RANGE
     }
 
+    fun forwardDistance(
+        from: Long,
+        to: Long,
+    ): Long = (to - from) and MASK
+
     /** Null means the segment starts ahead of the next expected byte (out of order). */
     fun consumedPayloadPrefix(
         segmentStart: Long,

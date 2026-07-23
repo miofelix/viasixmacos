@@ -242,6 +242,13 @@ class Tun2SocksEngine(
                 expected = session.serverSeq,
             )
         }
+        if (session.handshake.isComplete && tcp.flags and Packet.ACK != 0) {
+            session.sendWindow.update(
+                acknowledgement = tcp.ack,
+                advertisedWindow = tcp.window,
+                nextSequence = session.serverSeq,
+            )
+        }
 
         if (tcp.payloadLength > 0 && session.handshake.isComplete && session.socket != null) {
             val skip =
@@ -343,24 +350,33 @@ class Tun2SocksEngine(
                 try {
                     val input = socket.getInputStream()
                     while (running.get() && !socket.isClosed) {
-                        val n = input.read(buf)
+                        val allowance =
+                            session.sendWindow.awaitAllowance(
+                                maxBytes = buf.size,
+                                timeoutMs = WINDOW_WAIT_POLL_MS,
+                            )
+                        if (allowance <= 0) continue
+                        val n = input.read(buf, 0, allowance)
                         if (n < 0) break
                         if (n == 0) continue
                         val chunk = buf.copyOf(n)
+                        val sequence = session.serverSeq
+                        val packet =
+                            buildTcpPacket(
+                                session = session,
+                                seq = sequence,
+                                ack = session.clientNextSeq,
+                                flags = Packet.PSH or Packet.ACK,
+                                payload = chunk,
+                            )
+                        if (!session.sendWindow.recordSent(sequence, payloadLength = n)) break
+                        session.serverSeq = TcpSequence.advance(sequence, payloadLength = n)
                         val queued =
                             enqueuePacket(
-                                buildTcpPacket(
-                                    session = session,
-                                    seq = session.serverSeq,
-                                    ack = session.clientNextSeq,
-                                    flags = Packet.PSH or Packet.ACK,
-                                    payload = chunk,
-                                ),
+                                packet,
                                 lossless = true,
                             )
                         if (!queued) break
-                        session.serverSeq =
-                            TcpSequence.advance(session.serverSeq, payloadLength = n)
                     }
                 } catch (_: Exception) {
                 } finally {
@@ -756,9 +772,11 @@ class Tun2SocksEngine(
         @Volatile var clientFinReceived: Boolean = false
         @Volatile var serverFinSent: Boolean = false
         val handshake = TcpHandshakeGate()
+        val sendWindow = TcpSendWindow()
 
         fun close() {
             handshake.cancel()
+            sendWindow.cancel()
             try {
                 socket?.close()
             } catch (_: Exception) {
@@ -803,5 +821,6 @@ class Tun2SocksEngine(
         private const val PENDING_CAP = 8
         private const val LOSSLESS_ENQUEUE_TIMEOUT_MS = 1_000L
         private const val HANDSHAKE_TIMEOUT_MS = 10_000L
+        private const val WINDOW_WAIT_POLL_MS = 1_000L
     }
 }

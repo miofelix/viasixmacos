@@ -49,6 +49,7 @@ internal object Packet {
         val ack: Long,
         val dataOffset: Int,
         val flags: Int,
+        val window: Int,
         val payloadOffset: Int,
         val payloadLength: Int,
     )
@@ -129,9 +130,20 @@ internal object Packet {
         val dataOffset = ((buffer.get(start + 12).toInt() and 0xf0) ushr 4) * 4
         if (dataOffset < TCP_HEADER_SIZE || dataOffset > l4Length) return null
         val flags = buffer.get(start + 13).toInt() and 0xff
+        val window = buffer.getShort(start + 14).toInt() and 0xffff
         val tcpPayloadOffset = start + dataOffset
         val payloadLength = l4Length - dataOffset
-        return Tcp(sourcePort, destPort, seq, ack, dataOffset, flags, tcpPayloadOffset, payloadLength)
+        return Tcp(
+            sourcePort,
+            destPort,
+            seq,
+            ack,
+            dataOffset,
+            flags,
+            window,
+            tcpPayloadOffset,
+            payloadLength,
+        )
     }
 
     fun parseTcp(buffer: ByteBuffer, ip: Ip4): Tcp? =
