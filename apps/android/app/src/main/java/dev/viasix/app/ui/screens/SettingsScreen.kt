@@ -220,7 +220,8 @@ fun SettingsScreen(
                         text =
                             "mihomo / CFST 由 assets 安装到 filesDir；" +
                                 "更新：scripts/fetch-mihomo.mjs、scripts/fetch-cfst.mjs（仅 arm64）。" +
-                                "生产级 tun2socks / 完整 UDP·IPv6 转发仍在路线图中。",
+                                "全量隧道已转发 TCP/UDP（IPv4/IPv6→SOCKS；DNS protect）；" +
+                                "可选增强：native hev/tun2socks。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
