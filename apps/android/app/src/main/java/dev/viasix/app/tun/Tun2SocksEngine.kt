@@ -22,11 +22,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.random.Random
 
 /**
- * Userspace IPv4 forwarder:
- * - TCP → SOCKS5 (mihomo mixed port)
- * - UDP/53 → protected DatagramSocket to upstream DNS
+ * Userspace IPv4/IPv6 forwarder for full-tunnel mode:
+ * - TCP → SOCKS5 CONNECT (mihomo mixed port)
+ * - UDP → SOCKS5 UDP ASSOCIATE (general, including DNS/53)
+ * - Fallback: UDP/53 via protected DatagramSocket if ASSOCIATE is unavailable
  *
- * Full UDP and IPv6 remain out of scope for this milestone.
+ * Typical app traffic (QUIC/HTTP3, DNS, games) is no longer silently dropped.
  */
 class Tun2SocksEngine(
     private val vpnService: VpnService,
@@ -35,10 +36,15 @@ class Tun2SocksEngine(
     private val socksPort: Int,
     private val dnsUpstream: InetAddress = InetAddress.getByName("1.1.1.1"),
     private val maxSessions: Int = 256,
+    private val maxUdpFlows: Int = 256,
 ) {
     private val running = AtomicBoolean(false)
     private val sessions = ConcurrentHashMap<String, TcpSession>()
     private val activeSessionCount = AtomicInteger(0)
+    private val udpNat = UdpNatTable(maxEntries = maxUdpFlows)
+    private val udpRelayLock = Any()
+    @Volatile private var udpRelay: Socks5UdpRelay? = null
+    private var udpReceiverThread: Thread? = null
     private var readerThread: Thread? = null
     private var writerThread: Thread? = null
     private val outboundPackets = LinkedBlockingQueue<ByteArray>(512)
@@ -101,7 +107,7 @@ class Tun2SocksEngine(
                 it.isDaemon = true
                 it.start()
             }
-        Log.i(TAG, "Tun2SocksEngine started socks=$socksHost:$socksPort")
+        Log.i(TAG, "Tun2SocksEngine started socks=$socksHost:$socksPort (TCP+UDP IPv4/IPv6)")
     }
 
     fun stop() {
@@ -114,11 +120,18 @@ class Tun2SocksEngine(
             writerThread?.interrupt()
         } catch (_: Exception) {
         }
+        try {
+            udpReceiverThread?.interrupt()
+        } catch (_: Exception) {
+        }
         readerThread = null
         writerThread = null
+        udpReceiverThread = null
         sessions.values.forEach { it.close() }
         sessions.clear()
         activeSessionCount.set(0)
+        udpNat.clear()
+        closeUdpRelay()
         outboundPackets.clear()
         executor.shutdownNow()
         try {
@@ -133,18 +146,57 @@ class Tun2SocksEngine(
     }
 
     private fun handlePacket(buffer: ByteBuffer) {
-        val ip = Packet.parseIp4(buffer) ?: return
-        when (ip.protocol) {
-            Packet.PROTO_TCP.toInt() -> handleTcp(buffer, ip)
-            Packet.PROTO_UDP.toInt() -> handleUdp(buffer, ip)
+        when (Packet.ipVersion(buffer)) {
+            4 -> {
+                val ip = Packet.parseIp4(buffer) ?: return
+                when (ip.protocol) {
+                    Packet.PROTO_TCP.toInt() -> handleTcp4(buffer, ip)
+                    Packet.PROTO_UDP.toInt() -> handleUdp4(buffer, ip)
+                }
+            }
+            6 -> {
+                val ip = Packet.parseIp6(buffer) ?: return
+                when (ip.nextHeader) {
+                    Packet.PROTO_TCP.toInt() -> handleTcp6(buffer, ip)
+                    Packet.PROTO_UDP.toInt() -> handleUdp6(buffer, ip)
+                }
+            }
         }
     }
 
-    private fun handleTcp(buffer: ByteBuffer, ip: Packet.Ip4) {
-        val tcp = Packet.parseTcp(buffer, ip) ?: return
-        val key = key(ip.source, tcp.sourcePort, ip.destination, tcp.destPort)
+    // region IPv4 TCP
 
-        // Client SYN (new connection)
+    private fun handleTcp4(buffer: ByteBuffer, ip: Packet.Ip4) {
+        val tcp = Packet.parseTcp(buffer, ip) ?: return
+        handleTcpCommon(
+            buffer = buffer,
+            tcp = tcp,
+            clientIp = ip.source,
+            remoteIp = ip.destination,
+            ipv6 = false,
+        )
+    }
+
+    private fun handleTcp6(buffer: ByteBuffer, ip: Packet.Ip6) {
+        val tcp = Packet.parseTcp(buffer, ip) ?: return
+        handleTcpCommon(
+            buffer = buffer,
+            tcp = tcp,
+            clientIp = ip.source,
+            remoteIp = ip.destination,
+            ipv6 = true,
+        )
+    }
+
+    private fun handleTcpCommon(
+        buffer: ByteBuffer,
+        tcp: Packet.Tcp,
+        clientIp: InetAddress,
+        remoteIp: InetAddress,
+        ipv6: Boolean,
+    ) {
+        val key = key(clientIp, tcp.sourcePort, remoteIp, tcp.destPort)
+
         if (tcp.flags and Packet.SYN != 0 && tcp.flags and Packet.ACK == 0) {
             if (sessions.containsKey(key)) return
             if (activeSessionCount.get() >= maxSessions) {
@@ -153,11 +205,12 @@ class Tun2SocksEngine(
             }
             val session =
                 TcpSession(
-                    clientIp = ip.source,
+                    clientIp = clientIp,
                     clientPort = tcp.sourcePort,
-                    remoteIp = ip.destination,
+                    remoteIp = remoteIp,
                     remotePort = tcp.destPort,
                     clientIsn = tcp.seq,
+                    ipv6 = ipv6,
                 )
             sessions[key] = session
             activeSessionCount.incrementAndGet()
@@ -172,7 +225,6 @@ class Tun2SocksEngine(
             return
         }
 
-        // Complete handshake on client ACK after our SYN-ACK.
         if (!session.handshakeComplete && tcp.flags and Packet.ACK != 0) {
             if (tcp.ack == session.serverSeq) {
                 session.handshakeComplete = true
@@ -180,7 +232,6 @@ class Tun2SocksEngine(
         }
 
         if (tcp.payloadLength > 0 && session.handshakeComplete && session.socket != null) {
-            // Drop retransmitted segments that are entirely before clientNextSeq.
             val payloadEnd = tcp.seq + tcp.payloadLength
             if (payloadEnd <= session.clientNextSeq) {
                 enqueueAck(session)
@@ -209,7 +260,6 @@ class Tun2SocksEngine(
         }
 
         if (tcp.flags and Packet.FIN != 0) {
-            // ACK FIN then tear down.
             session.clientNextSeq = tcp.seq + 1
             enqueueAck(session)
             removeSession(key, session)
@@ -234,13 +284,9 @@ class Tun2SocksEngine(
             session.serverSeq = Random.nextInt().toLong() and 0xffffffffL
             session.clientNextSeq = session.clientIsn + 1
 
-            // SYN-ACK to client
             enqueuePacket(
-                Packet.buildIp4Tcp(
-                    source = session.remoteIp,
-                    destination = session.clientIp,
-                    sourcePort = session.remotePort,
-                    destPort = session.clientPort,
+                buildTcpPacket(
+                    session = session,
                     seq = session.serverSeq,
                     ack = session.clientNextSeq,
                     flags = Packet.SYN or Packet.ACK,
@@ -248,7 +294,6 @@ class Tun2SocksEngine(
                 ),
             )
             session.serverSeq = (session.serverSeq + 1) and 0xffffffffL
-            // Mark handshake complete optimistically after SYN-ACK; client ACK hardens it.
             session.handshakeComplete = true
 
             executor.execute {
@@ -261,11 +306,8 @@ class Tun2SocksEngine(
                         if (n == 0) continue
                         val chunk = buf.copyOf(n)
                         enqueuePacket(
-                            Packet.buildIp4Tcp(
-                                source = session.remoteIp,
-                                destination = session.clientIp,
-                                sourcePort = session.remotePort,
-                                destPort = session.clientPort,
+                            buildTcpPacket(
+                                session = session,
                                 seq = session.serverSeq,
                                 ack = session.clientNextSeq,
                                 flags = Packet.PSH or Packet.ACK,
@@ -280,13 +322,10 @@ class Tun2SocksEngine(
                 }
             }
         } catch (error: Exception) {
-            Log.w(TAG, "SOCKS connect ${session.remoteIp}:${session.remotePort}: ${error.message}")
+            Log.w(TAG, "SOCKS connect ${session.remoteIp.hostAddress}:${session.remotePort}: ${error.message}")
             enqueuePacket(
-                Packet.buildIp4Tcp(
-                    source = session.remoteIp,
-                    destination = session.clientIp,
-                    sourcePort = session.remotePort,
-                    destPort = session.clientPort,
+                buildTcpPacket(
+                    session = session,
                     seq = 0,
                     ack = session.clientIsn + 1,
                     flags = Packet.RST or Packet.ACK,
@@ -297,54 +336,240 @@ class Tun2SocksEngine(
         }
     }
 
-    private fun handleUdp(buffer: ByteBuffer, ip: Packet.Ip4) {
-        val udp = Packet.parseUdp(buffer, ip) ?: return
-        if (udp.destPort != 53) return // only DNS for now
-        val payload = ByteArray(udp.payloadLength)
-        val pos = buffer.position()
-        buffer.position(udp.payloadOffset)
-        buffer.get(payload)
-        buffer.position(pos)
-
-        executor.execute {
-            try {
-                DatagramSocket().use { socket ->
-                    vpnService.protect(socket)
-                    socket.soTimeout = 5_000
-                    val request =
-                        DatagramPacket(
-                            payload,
-                            payload.size,
-                            InetSocketAddress(dnsUpstream, 53),
-                        )
-                    socket.send(request)
-                    val responseBuf = ByteArray(4096)
-                    val response = DatagramPacket(responseBuf, responseBuf.size)
-                    socket.receive(response)
-                    val bytes = response.data.copyOf(response.length)
-                    enqueuePacket(
-                        Packet.buildIp4Udp(
-                            source = ip.destination,
-                            destination = ip.source,
-                            sourcePort = 53,
-                            destPort = udp.sourcePort,
-                            payload = bytes,
-                        ),
-                    )
-                }
-            } catch (error: Exception) {
-                Log.w(TAG, "DNS forward failed: ${error.message}")
-            }
-        }
-    }
-
-    private fun enqueueAck(session: TcpSession) {
-        enqueuePacket(
+    private fun buildTcpPacket(
+        session: TcpSession,
+        seq: Long,
+        ack: Long,
+        flags: Int,
+        payload: ByteArray,
+    ): ByteArray =
+        if (session.ipv6) {
+            Packet.buildIp6Tcp(
+                source = session.remoteIp,
+                destination = session.clientIp,
+                sourcePort = session.remotePort,
+                destPort = session.clientPort,
+                seq = seq,
+                ack = ack,
+                flags = flags,
+                payload = payload,
+            )
+        } else {
             Packet.buildIp4Tcp(
                 source = session.remoteIp,
                 destination = session.clientIp,
                 sourcePort = session.remotePort,
                 destPort = session.clientPort,
+                seq = seq,
+                ack = ack,
+                flags = flags,
+                payload = payload,
+            )
+        }
+
+    // endregion
+
+    // region UDP
+
+    private fun handleUdp4(buffer: ByteBuffer, ip: Packet.Ip4) {
+        val udp = Packet.parseUdp(buffer, ip) ?: return
+        forwardUdp(
+            buffer = buffer,
+            udp = udp,
+            clientIp = ip.source,
+            remoteIp = ip.destination,
+            ipv6 = false,
+        )
+    }
+
+    private fun handleUdp6(buffer: ByteBuffer, ip: Packet.Ip6) {
+        val udp = Packet.parseUdp(buffer, ip) ?: return
+        forwardUdp(
+            buffer = buffer,
+            udp = udp,
+            clientIp = ip.source,
+            remoteIp = ip.destination,
+            ipv6 = true,
+        )
+    }
+
+    private fun forwardUdp(
+        buffer: ByteBuffer,
+        udp: Packet.Udp,
+        clientIp: InetAddress,
+        remoteIp: InetAddress,
+        ipv6: Boolean,
+    ) {
+        if (udp.payloadLength < 0) return
+        val payload = ByteArray(udp.payloadLength.coerceAtLeast(0))
+        if (payload.isNotEmpty()) {
+            val pos = buffer.position()
+            buffer.position(udp.payloadOffset)
+            buffer.get(payload)
+            buffer.position(pos)
+        }
+
+        if (!udpNat.observeOutbound(clientIp, udp.sourcePort, remoteIp, udp.destPort, ipv6)) {
+            Log.w(TAG, "UDP flow limit $maxUdpFlows reached; drop")
+            return
+        }
+
+        val relay = ensureUdpRelay()
+        if (relay != null) {
+            try {
+                relay.send(remoteIp, udp.destPort, payload)
+            } catch (error: Exception) {
+                Log.w(TAG, "UDP via SOCKS failed: ${error.message}")
+                // DNS fallback when associate path breaks mid-flight
+                if (udp.destPort == 53 && !ipv6) {
+                    executor.execute {
+                        forwardDnsDirect(clientIp, udp.sourcePort, remoteIp, payload)
+                    }
+                }
+            }
+            return
+        }
+
+        // No SOCKS UDP: keep DNS working so name resolution is not hard-down.
+        if (udp.destPort == 53 && !ipv6) {
+            executor.execute {
+                forwardDnsDirect(clientIp, udp.sourcePort, remoteIp, payload)
+            }
+        }
+    }
+
+    private fun ensureUdpRelay(): Socks5UdpRelay? {
+        val existing = udpRelay
+        if (existing != null && existing.isOpen) return existing
+        synchronized(udpRelayLock) {
+            val again = udpRelay
+            if (again != null && again.isOpen) return again
+            return try {
+                val relay =
+                    Socks5UdpRelay.open(
+                        proxyHost = socksHost,
+                        proxyPort = socksPort,
+                        protect = { socket: Socket -> vpnService.protect(socket) },
+                        protectDatagram = { ds: DatagramSocket -> vpnService.protect(ds) },
+                    )
+                udpRelay = relay
+                startUdpReceiver(relay)
+                Log.i(TAG, "SOCKS5 UDP ASSOCIATE ready")
+                relay
+            } catch (error: Exception) {
+                Log.w(TAG, "SOCKS5 UDP ASSOCIATE failed: ${error.message}")
+                null
+            }
+        }
+    }
+
+    private fun startUdpReceiver(relay: Socks5UdpRelay) {
+        udpReceiverThread?.interrupt()
+        udpReceiverThread =
+            Thread(
+                {
+                    while (running.get() && relay.isOpen) {
+                        val datagram =
+                            try {
+                                relay.receive(200)
+                            } catch (_: Exception) {
+                                break
+                            } ?: continue
+                        handleSocksUdpInbound(datagram)
+                    }
+                },
+                "viasix-tun-udp-rx",
+            ).also {
+                it.isDaemon = true
+                it.start()
+            }
+    }
+
+    private fun handleSocksUdpInbound(datagram: Socks5UdpFraming.Datagram) {
+        val client =
+            udpNat.lookupInbound(datagram.remote, datagram.remotePort) ?: run {
+                // No NAT hit: ignore (orphan reply)
+                return
+            }
+        val packet =
+            if (client.ipv6) {
+                Packet.buildIp6Udp(
+                    source = datagram.remote,
+                    destination = client.ip,
+                    sourcePort = datagram.remotePort,
+                    destPort = client.port,
+                    payload = datagram.payload,
+                )
+            } else {
+                Packet.buildIp4Udp(
+                    source = datagram.remote,
+                    destination = client.ip,
+                    sourcePort = datagram.remotePort,
+                    destPort = client.port,
+                    payload = datagram.payload,
+                )
+            }
+        enqueuePacket(packet)
+    }
+
+    private fun forwardDnsDirect(
+        clientIp: InetAddress,
+        clientPort: Int,
+        dnsServer: InetAddress,
+        payload: ByteArray,
+    ) {
+        try {
+            DatagramSocket().use { socket ->
+                vpnService.protect(socket)
+                socket.soTimeout = 5_000
+                val target =
+                    if (dnsServer.isAnyLocalAddress || dnsServer.hostAddress == "0.0.0.0") {
+                        dnsUpstream
+                    } else {
+                        dnsServer
+                    }
+                val request =
+                    DatagramPacket(
+                        payload,
+                        payload.size,
+                        InetSocketAddress(target, 53),
+                    )
+                socket.send(request)
+                val responseBuf = ByteArray(4096)
+                val response = DatagramPacket(responseBuf, responseBuf.size)
+                socket.receive(response)
+                val bytes = response.data.copyOf(response.length)
+                enqueuePacket(
+                    Packet.buildIp4Udp(
+                        source = dnsServer,
+                        destination = clientIp,
+                        sourcePort = 53,
+                        destPort = clientPort,
+                        payload = bytes,
+                    ),
+                )
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "DNS direct forward failed: ${error.message}")
+        }
+    }
+
+    private fun closeUdpRelay() {
+        synchronized(udpRelayLock) {
+            try {
+                udpRelay?.close()
+            } catch (_: Exception) {
+            }
+            udpRelay = null
+        }
+    }
+
+    // endregion
+
+    private fun enqueueAck(session: TcpSession) {
+        enqueuePacket(
+            buildTcpPacket(
+                session = session,
                 seq = session.serverSeq,
                 ack = session.clientNextSeq,
                 flags = Packet.ACK,
@@ -356,7 +581,6 @@ class Tun2SocksEngine(
     private fun enqueuePacket(packet: ByteArray) {
         if (!running.get()) return
         if (!outboundPackets.offer(packet)) {
-            // Drop oldest to make room under pressure.
             outboundPackets.poll()
             outboundPackets.offer(packet)
         }
@@ -382,6 +606,7 @@ class Tun2SocksEngine(
         val remoteIp: InetAddress,
         val remotePort: Int,
         val clientIsn: Long,
+        val ipv6: Boolean = false,
     ) {
         @Volatile var socket: Socket? = null
         @Volatile var serverSeq: Long = 0

@@ -31,9 +31,10 @@ import kotlin.concurrent.thread
 /**
  * Full-path Android network access:
  * 1) Project profile → start user-space mihomo (mixed/SOCKS on loopback)
- * 2) Establish VPN with default routes
+ * 2) Establish VPN with default routes (IPv4 + IPv6 when full tunnel)
  * 3) Exclude this app UID from the VPN (prevents routing loops for mihomo)
- * 4) Userspace IPv4 TCP→SOCKS + DNS forwarder (Tun2SocksEngine)
+ * 4) Userspace IPv4/IPv6 TCP→SOCKS CONNECT + general UDP→SOCKS UDP ASSOCIATE
+ *    ([Tun2SocksEngine]); DNS/53 falls back to protected DatagramSocket if ASSOCIATE fails
  *
  * Supports restart with new profile/node without leaving a half-live stack.
  * Emits a circular event log into SharedPreferences for the UI log pane.
@@ -186,7 +187,7 @@ class ViaSixVpnService : VpnService() {
                     "全量隧道 · mixed :$MIXED_PORT · 控制器预热中"
                 },
             )
-            appendEvent("全量隧道已建立（TCP→SOCKS + DNS）", "success")
+            appendEvent("全量隧道已建立（TCP/UDP IPv4/IPv6 → SOCKS）", "success")
         } else {
             updateNotification(
                 if (health.ok) {
