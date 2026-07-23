@@ -12,7 +12,7 @@ class TcpSendWindowTest {
 
         assertTrue(window.update(acknowledgement = 100L, advertisedWindow = 1_000, nextSequence = 100L))
         assertEquals(1_000, window.awaitAllowance(maxBytes = 16_384, timeoutMs = 0L))
-        assertTrue(window.recordSent(sequence = 100L, payloadLength = 600))
+        assertTrue(window.recordSent(sequence = 100L, sequenceLength = 600))
         assertEquals(400, window.awaitAllowance(maxBytes = 16_384, timeoutMs = 0L))
         assertTrue(window.update(acknowledgement = 700L, advertisedWindow = 1_000, nextSequence = 700L))
         assertEquals(1_000, window.awaitAllowance(maxBytes = 16_384, timeoutMs = 0L))
@@ -39,7 +39,7 @@ class TcpSendWindowTest {
                 nextSequence = 0xffff_ff00L,
             ),
         )
-        assertTrue(window.recordSent(sequence = 0xffff_ff00L, payloadLength = 256))
+        assertTrue(window.recordSent(sequence = 0xffff_ff00L, sequenceLength = 256))
         assertEquals(768, window.awaitAllowance(maxBytes = 1_024, timeoutMs = 0L))
     }
 
@@ -48,7 +48,7 @@ class TcpSendWindowTest {
         val window = TcpSendWindow()
 
         assertTrue(window.update(acknowledgement = 100L, advertisedWindow = 1_000, nextSequence = 100L))
-        assertTrue(window.recordSent(sequence = 100L, payloadLength = 300))
+        assertTrue(window.recordSent(sequence = 100L, sequenceLength = 300))
         assertTrue(window.update(acknowledgement = 400L, advertisedWindow = 1_000, nextSequence = 100L))
         assertEquals(1_000, window.awaitAllowance(maxBytes = 1_024, timeoutMs = 0L))
     }
@@ -58,8 +58,8 @@ class TcpSendWindowTest {
         val window = TcpSendWindow()
 
         assertTrue(window.update(acknowledgement = 1_000L, advertisedWindow = 2_000, nextSequence = 1_000L))
-        assertFalse(window.recordSent(sequence = 1_001L, payloadLength = 100))
-        assertTrue(window.recordSent(sequence = 1_000L, payloadLength = 100))
+        assertFalse(window.recordSent(sequence = 1_001L, sequenceLength = 100))
+        assertTrue(window.recordSent(sequence = 1_000L, sequenceLength = 100))
         assertTrue(window.update(acknowledgement = 1_050L, advertisedWindow = 2_000, nextSequence = 1_100L))
         assertFalse(window.update(acknowledgement = 1_025L, advertisedWindow = 2_000, nextSequence = 1_100L))
         assertEquals(1_950, window.awaitAllowance(maxBytes = 2_000, timeoutMs = 0L))

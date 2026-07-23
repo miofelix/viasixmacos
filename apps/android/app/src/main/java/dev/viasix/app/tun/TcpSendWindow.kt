@@ -40,12 +40,12 @@ class TcpSendWindow {
 
     fun recordSent(
         sequence: Long,
-        payloadLength: Int,
+        sequenceLength: Int,
     ): Boolean =
         synchronized(monitor) {
-            if (cancelled || !initialized || payloadLength <= 0) return@synchronized false
+            if (cancelled || !initialized || sequenceLength <= 0) return@synchronized false
             if (sequence != sentSequence) return@synchronized false
-            sentSequence = TcpSequence.advance(sentSequence, payloadLength = payloadLength)
+            sentSequence = TcpSequence.advance(sentSequence, payloadLength = sequenceLength)
             true
         }
 

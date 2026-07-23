@@ -275,9 +275,20 @@ class Tun2SocksEngine(
                     acknowledgement = tcp.ack,
                     nowMs = monotonicTimeMs(),
                 )
+                if (
+                    session.closeState.acknowledgeServerFin(tcp.ack) &&
+                        session.closeState.isFullyClosed
+                ) {
+                    removeSession(key, session)
+                    return
+                }
             }
         }
 
+        if (tcp.payloadLength > 0 && session.closeState.hasClientFin) {
+            enqueueAck(session)
+            return
+        }
         if (tcp.payloadLength > 0 && session.handshake.isComplete && session.socket != null) {
             val skip =
                 TcpSequence.consumedPayloadPrefix(
@@ -307,22 +318,24 @@ class Tun2SocksEngine(
                 } catch (error: Exception) {
                     Log.w(TAG, "tcp write failed: ${error.message}")
                     removeSession(key, session)
+                    return
                 }
             }
         }
 
         if (tcp.flags and Packet.FIN != 0) {
             val finSequence = TcpSequence.advance(tcp.seq, payloadLength = tcp.payloadLength)
-            if (finSequence == session.clientNextSeq && !session.clientFinReceived) {
+            if (finSequence == session.clientNextSeq && session.closeState.markClientFin()) {
                 session.clientNextSeq = TcpSequence.advance(finSequence, fin = true)
-                session.clientFinReceived = true
                 enqueueAck(session)
                 try {
                     session.socket?.shutdownOutput()
                 } catch (error: Exception) {
                     Log.w(TAG, "tcp half-close failed: ${error.message}")
                     removeSession(key, session)
+                    return
                 }
+                if (session.closeState.isFullyClosed) removeSession(key, session)
             } else {
                 enqueueAck(session)
             }
@@ -407,7 +420,7 @@ class Tun2SocksEngine(
                             session.retransmissions.cancel()
                             break
                         }
-                        if (!session.sendWindow.recordSent(sequence, payloadLength = n)) {
+                        if (!session.sendWindow.recordSent(sequence, sequenceLength = n)) {
                             session.retransmissions.discard(reservation)
                             session.retransmissions.cancel()
                             break
@@ -430,24 +443,20 @@ class Tun2SocksEngine(
                     val drained =
                         current &&
                             session.retransmissions.awaitEmpty(RETRANSMISSION_DRAIN_TIMEOUT_MS)
-                    if (drained && running.get() && sessions[key] === session && !session.serverFinSent) {
-                        session.serverFinSent = true
-                        if (
-                            enqueuePacket(
-                                buildTcpPacket(
-                                    session = session,
-                                    seq = session.serverSeq,
-                                    ack = session.clientNextSeq,
-                                    flags = Packet.FIN or Packet.ACK,
-                                    payload = ByteArray(0),
-                                ),
-                                lossless = true,
-                            )
-                        ) {
-                            session.serverSeq = TcpSequence.advance(session.serverSeq, fin = true)
-                        }
+                    val finAllowed =
+                        drained &&
+                            session.sendWindow.awaitAllowance(
+                                maxBytes = 1,
+                                timeoutMs = SERVER_FIN_WINDOW_TIMEOUT_MS,
+                            ) > 0
+                    val finRetained =
+                        finAllowed &&
+                            running.get() &&
+                            sessions[key] === session &&
+                            enqueueServerFin(session)
+                    if (!finRetained) {
+                        removeSession(key, session)
                     }
-                    removeSession(key, session)
                 }
             }
         } catch (error: Exception) {
@@ -512,6 +521,43 @@ class Tun2SocksEngine(
             ),
             lossless = true,
         )
+
+    private fun enqueueServerFin(session: TcpSession): Boolean {
+        val sequence = session.serverSeq
+        val sequenceEnd = TcpSequence.advance(sequence, fin = true)
+        val flags = Packet.FIN or Packet.ACK
+        val payload = ByteArray(0)
+        val packet =
+            buildTcpPacket(
+                session = session,
+                seq = sequence,
+                ack = session.clientNextSeq,
+                flags = flags,
+                payload = payload,
+            )
+        val reservation =
+            session.retransmissions.reserve(
+                sequence = sequence,
+                flags = flags,
+                payload = payload,
+            ) ?: return false
+        val nowMs = monotonicTimeMs()
+        if (!session.closeState.markServerFin(sequenceEnd, nowMs)) {
+            session.retransmissions.discard(reservation)
+            return false
+        }
+        if (!session.sendWindow.recordSent(sequence, sequenceLength = 1)) {
+            session.retransmissions.cancel()
+            return false
+        }
+        session.serverSeq = sequenceEnd
+        if (!enqueuePacket(packet, lossless = true)) {
+            session.retransmissions.cancel()
+            return false
+        }
+        session.retransmissions.markQueued(reservation, monotonicTimeMs())
+        return true
+    }
 
     // endregion
 
@@ -813,6 +859,13 @@ class Tun2SocksEngine(
                 }
                 null -> Unit
             }
+            if (
+                sessions[key] === session &&
+                    session.closeState.isExpired(nowMs, SERVER_HALF_CLOSE_TIMEOUT_MS)
+            ) {
+                Log.w(TAG, "TCP half-close timed out for $key")
+                removeSession(key, session)
+            }
         }
     }
 
@@ -866,11 +919,10 @@ class Tun2SocksEngine(
         @Volatile var serverIsn: Long = 0
         @Volatile var serverSeq: Long = 0
         @Volatile var clientNextSeq: Long = 0
-        @Volatile var clientFinReceived: Boolean = false
-        @Volatile var serverFinSent: Boolean = false
         val handshake = TcpHandshakeGate()
         val sendWindow = TcpSendWindow()
         val retransmissions = TcpRetransmissionQueue()
+        val closeState = TcpCloseState()
 
         fun close() {
             handshake.cancel()
@@ -923,6 +975,8 @@ class Tun2SocksEngine(
         private const val WINDOW_WAIT_POLL_MS = 1_000L
         private const val RETRANSMISSION_SCAN_MS = 200L
         private const val RETRANSMISSION_DRAIN_TIMEOUT_MS = 35_000L
+        private const val SERVER_FIN_WINDOW_TIMEOUT_MS = 30_000L
+        private const val SERVER_HALF_CLOSE_TIMEOUT_MS = 60_000L
 
         private fun monotonicTimeMs(): Long = System.nanoTime() / 1_000_000L
     }

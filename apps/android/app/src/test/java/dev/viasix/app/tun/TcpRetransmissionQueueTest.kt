@@ -76,6 +76,24 @@ class TcpRetransmissionQueueTest {
         assertNull(queue.reserve(52L, Packet.ACK, byteArrayOf(3, 4, 5)))
     }
 
+    @Test
+    fun finConsumesSequenceSpaceAndIsRetainedUntilAcknowledged() {
+        val queue = queue()
+        val reservation =
+            queue.reserve(
+                sequence = 0xffff_ffffL,
+                flags = Packet.FIN or Packet.ACK,
+                payload = ByteArray(0),
+            )!!
+        queue.markQueued(reservation, nowMs = 0L)
+
+        val due = queue.pollDue(nowMs = 1_000L) as TcpRetransmissionQueue.PollResult.Retransmit
+        assertEquals(0xffff_ffffL, due.sequence)
+        assertEquals(Packet.FIN or Packet.ACK, due.flags)
+        assertTrue(queue.acknowledge(acknowledgement = 0L, nowMs = 1_001L))
+        assertTrue(queue.awaitEmpty(timeoutMs = 0L))
+    }
+
     private fun queue(
         maxRetransmissions: Int = 5,
         maxRetainedBytes: Int = 16,
