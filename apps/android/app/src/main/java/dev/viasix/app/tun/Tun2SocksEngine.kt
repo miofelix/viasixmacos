@@ -292,7 +292,10 @@ class Tun2SocksEngine(
     ) {
         val key = key(clientIp, tcp.sourcePort, remoteIp, tcp.destPort)
 
-        if (tcp.flags and Packet.SYN != 0 && tcp.flags and Packet.ACK == 0) {
+        if (
+            tcp.flags and Packet.SYN != 0 &&
+                tcp.flags and (Packet.ACK or Packet.RST or Packet.FIN) == 0
+        ) {
             val existing = sessions[key]
             if (existing != null) {
                 if (!existing.handshake.isComplete && existing.socket != null) {
@@ -301,7 +304,8 @@ class Tun2SocksEngine(
                 return
             }
             if (activeSessionCount.get() >= maxSessions) {
-                Log.w(TAG, "session limit $maxSessions reached; drop SYN")
+                Log.w(TAG, "session limit $maxSessions reached; reset SYN")
+                enqueueClosedStateReset(tcp, clientIp, remoteIp, ipv6)
                 return
             }
             val session =
@@ -323,7 +327,11 @@ class Tun2SocksEngine(
             return
         }
 
-        val session = sessions[key] ?: return
+        val session = sessions[key]
+        if (session == null) {
+            enqueueClosedStateReset(tcp, clientIp, remoteIp, ipv6)
+            return
+        }
 
         if (tcp.flags and Packet.RST != 0) {
             removeSession(key, session)
@@ -628,6 +636,40 @@ class Tun2SocksEngine(
             lossless = true,
         )
         removeSession(key, session)
+    }
+
+    private fun enqueueClosedStateReset(
+        tcp: Packet.Tcp,
+        clientIp: InetAddress,
+        remoteIp: InetAddress,
+        ipv6: Boolean,
+    ): Boolean {
+        val reset = TcpClosedStateReset.forSegment(tcp) ?: return false
+        val packet =
+            if (ipv6) {
+                Packet.buildIp6Tcp(
+                    source = remoteIp,
+                    destination = clientIp,
+                    sourcePort = tcp.destPort,
+                    destPort = tcp.sourcePort,
+                    seq = reset.sequence,
+                    ack = reset.acknowledgement,
+                    flags = reset.flags,
+                    payload = ByteArray(0),
+                )
+            } else {
+                Packet.buildIp4Tcp(
+                    source = remoteIp,
+                    destination = clientIp,
+                    sourcePort = tcp.destPort,
+                    destPort = tcp.sourcePort,
+                    seq = reset.sequence,
+                    ack = reset.acknowledgement,
+                    flags = reset.flags,
+                    payload = ByteArray(0),
+                )
+            }
+        return enqueuePacket(packet, lossless = true)
     }
 
     private fun buildTcpPacket(
