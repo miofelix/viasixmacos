@@ -6,6 +6,7 @@ import dev.viasix.app.net.ExitIPDetectionMode
 import dev.viasix.app.net.ExitIPInfo
 import dev.viasix.app.prefs.SessionPrefs
 import dev.viasix.app.runtime.RuntimeComponentsState
+import dev.viasix.app.session.BatteryOptimizationState
 import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.session.NotificationPermissionState
 import dev.viasix.app.session.ProfileDraftGate
@@ -126,6 +127,7 @@ data class SessionUiState(
     val fullTunnel: Boolean = true,
     val notificationPermission: NotificationPermissionState = NotificationPermissionState(),
     val vpnPermission: VpnPermissionState = VpnPermissionState(),
+    val batteryOptimization: BatteryOptimizationState = BatteryOptimizationState(),
     val runtimeComponents: RuntimeComponentsState = RuntimeComponentsState(),
     val runtime: RuntimeSnapshot = RuntimeSnapshot(),
     /** UI connection lifecycle; reconciled with [runtime.running] each poll. */

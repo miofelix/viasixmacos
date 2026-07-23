@@ -61,6 +61,7 @@ fun SettingsScreen(
     onRepairRuntimeComponent: (RuntimeComponentId) -> Unit = {},
     onManageNotificationPermission: () -> Unit = {},
     onManageVpnPermission: () -> Unit = {},
+    onManageBatteryOptimization: () -> Unit = {},
 ) {
     val colors = LocalViaSixColors.current
     val uriHandler = LocalUriHandler.current
@@ -205,6 +206,46 @@ fun SettingsScreen(
                             },
                         )
                     }
+                }
+            }
+
+            SurfaceCard {
+                val battery = state.batteryOptimization
+                CardHeader(
+                    title = "后台运行",
+                    icon = Icons.Outlined.Settings,
+                    tone = if (battery.exempt) AppTone.Positive else AppTone.Warning,
+                )
+                HorizontalDivider(color = colors.surfaceBorder)
+                CompactInfoRow("电池优化", battery.statusLabel)
+                Text(
+                    text =
+                        if (battery.exempt) {
+                            "ViaSix 不受系统电池优化限制，更适合长期连接和始终开启 VPN。"
+                        } else {
+                            "部分设备可能在后台回收前台 VPN；如需长期连接，可在系统中将 ViaSix 设为不受限制。"
+                        },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier =
+                        Modifier.padding(
+                            start = VisualStyle.spacing16,
+                            end = VisualStyle.spacing16,
+                            bottom = VisualStyle.spacing8,
+                        ),
+                )
+                OutlinedButton(
+                    onClick = onManageBatteryOptimization,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = VisualStyle.spacing16,
+                                end = VisualStyle.spacing16,
+                                bottom = VisualStyle.spacing12,
+                            ),
+                ) {
+                    Text("打开电池优化设置")
                 }
             }
 

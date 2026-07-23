@@ -31,6 +31,10 @@ class SettingsResidualCopyTest {
             text.contains("VPN 权限") && text.contains("始终开启 VPN"),
         )
         assertTrue(
+            "Settings should expose battery optimization guidance for long-running VPN",
+            text.contains("电池优化") && text.contains("长期连接"),
+        )
+        assertTrue(
             "Version should come from BuildConfig, not a hard-coded string",
             text.contains("BuildConfig.VERSION_NAME"),
         )

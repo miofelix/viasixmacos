@@ -9,6 +9,7 @@ import android.net.VpnService
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -32,6 +33,7 @@ import dev.viasix.app.prefs.SessionPrefsStore
 import dev.viasix.app.runtime.RuntimeComponentCondition
 import dev.viasix.app.runtime.RuntimeComponentId
 import dev.viasix.app.runtime.RuntimeComponentInfo
+import dev.viasix.app.session.BatteryOptimizationState
 import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.session.NotificationPermissionFlow
 import dev.viasix.app.session.NotificationPermissionState
@@ -80,6 +82,7 @@ class MainActivity : ComponentActivity() {
     private var onNotificationPermissionResult: ((granted: Boolean, pendingReason: String?) -> Unit)? = null
     private var onRefreshNotificationPermission: (() -> Unit)? = null
     private var onRefreshVpnPermission: (() -> Unit)? = null
+    private var onRefreshBatteryOptimization: (() -> Unit)? = null
     private var onLaunchIntent: ((Intent) -> Unit)? = null
 
     private val vpnPermission =
@@ -147,6 +150,7 @@ class MainActivity : ComponentActivity() {
                         wasRequested = initialPrefs.notificationPermissionRequested,
                     ),
                 vpnPermission = currentVpnPermissionState(),
+                batteryOptimization = currentBatteryOptimizationState(),
                 runtime = initialRuntime.toUiSnapshot(),
                 connectionPhase =
                     ConnectionPhase.restore(
@@ -224,6 +228,12 @@ class MainActivity : ComponentActivity() {
             onRefreshVpnPermission = {
                 logOnly {
                     it.copy(vpnPermission = currentVpnPermissionState())
+                }
+            }
+
+            onRefreshBatteryOptimization = {
+                logOnly {
+                    it.copy(batteryOptimization = currentBatteryOptimizationState())
                 }
             }
 
@@ -1171,6 +1181,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            fun manageBatteryOptimization() {
+                openBatteryOptimizationSettings()
+            }
+
             ViaSixApp(
                 state = state,
                 selectedSection = selectedSection,
@@ -1248,6 +1262,7 @@ class MainActivity : ComponentActivity() {
                 onRepairRuntimeComponent = ::repairRuntimeComponent,
                 onManageNotificationPermission = ::manageNotificationPermission,
                 onManageVpnPermission = ::manageVpnPermission,
+                onManageBatteryOptimization = ::manageBatteryOptimization,
                 onRoutingModeChange = ::patchRoutingMode,
                 onFullTunnelChange = { full ->
                     if (state.connectionPhase.isActiveOrTransitioning) {
@@ -1292,6 +1307,7 @@ class MainActivity : ComponentActivity() {
                                         wasRequested = resetPrefs.notificationPermissionRequested,
                                     ),
                                 vpnPermission = currentVpnPermissionState(),
+                                batteryOptimization = currentBatteryOptimizationState(),
                                 runtimeComponents = state.runtimeComponents,
                                 runtime = currentRuntime.toUiSnapshot(),
                                 connectionPhase =
@@ -1307,6 +1323,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         onRefreshNotificationPermission?.invoke()
         onRefreshVpnPermission?.invoke()
+        onRefreshBatteryOptimization?.invoke()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -1348,6 +1365,26 @@ class MainActivity : ComponentActivity() {
 
     private fun currentVpnPermissionState(): VpnPermissionState =
         VpnPermissionState(granted = VpnService.prepare(this) == null)
+
+    private fun currentBatteryOptimizationState(): BatteryOptimizationState {
+        val powerManager = getSystemService(PowerManager::class.java)
+        return BatteryOptimizationState(
+            exempt = powerManager.isIgnoringBatteryOptimizations(packageName),
+        )
+    }
+
+    private fun openBatteryOptimizationSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        } catch (_: Exception) {
+            startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }
+    }
 
     private fun openSystemVpnSettings() {
         try {

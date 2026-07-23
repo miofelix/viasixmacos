@@ -86,6 +86,7 @@ fun ViaSixApp(
     onRepairRuntimeComponent: (RuntimeComponentId) -> Unit = {},
     onManageNotificationPermission: () -> Unit = {},
     onManageVpnPermission: () -> Unit = {},
+    onManageBatteryOptimization: () -> Unit = {},
     onRoutingModeChange: (RoutingMode) -> Unit,
     onFullTunnelChange: (Boolean) -> Unit,
     onStart: () -> Unit,
@@ -230,6 +231,7 @@ fun ViaSixApp(
                                     onRepairRuntimeComponent = onRepairRuntimeComponent,
                                     onManageNotificationPermission = onManageNotificationPermission,
                                     onManageVpnPermission = onManageVpnPermission,
+                                    onManageBatteryOptimization = onManageBatteryOptimization,
                                 )
                         }
                     }
