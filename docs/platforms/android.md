@@ -33,7 +33,8 @@ Android 功能对齐以 **macOS** 为准。Windows 端仍在完善中，**不得
 | `TrafficStatsView` | 速率（累计差分）+ 曲线 + 内存 + 连接数 |
 | 出口 IP 检测 | `ExitIPDetector`（端点/模式/地理 enrichment 对齐） |
 | 配置延迟测试 | `ControllerClient.proxyDelay` |
-| `NodesView` / CFST | IPv6 校验、候选库、IP 源模式、测速参数面板、起停、结果排序、当前节点测速、应用/应用并重连 |
+| `NodesView` / CFST | IPv6 校验、候选库、IP 源、参数校验与面板、起停、结果排序、当前节点测速、应用/应用并重连 |
+| Overview「测试节点」 | 首页对选中 IPv6 的配置测速（macOS configuration test） |
 | `ProfilesView` | 摘要解析、文件导入、YAML 编辑、投影预览 |
 | `LogsView` | 来源/级别过滤、搜索、排序 + VPN 事件合并 |
 | `VisualStyle` / `SurfaceCard` | `ui/theme/VisualStyle` + 组件 |
