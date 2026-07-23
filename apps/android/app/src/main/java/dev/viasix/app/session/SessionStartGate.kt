@@ -29,6 +29,7 @@ object SessionStartGate {
         dnsServer: String = DnsSettingsPolicy.DEFAULT_SERVER,
         fullTunnel: Boolean = true,
         vpnMtu: String = VpnMtuPolicy.DEFAULT.toString(),
+        ipv6RoutingMode: Ipv6RoutingMode = Ipv6RoutingMode.TUNNEL,
     ): Result {
         val summary = ProfileSummaryParser.parse(profileYaml)
         return evaluate(
@@ -40,6 +41,7 @@ object SessionStartGate {
             dnsServer,
             fullTunnel,
             vpnMtu,
+            ipv6RoutingMode,
         )
     }
 
@@ -52,6 +54,7 @@ object SessionStartGate {
         dnsServer: String = DnsSettingsPolicy.DEFAULT_SERVER,
         fullTunnel: Boolean = true,
         vpnMtu: String = VpnMtuPolicy.DEFAULT.toString(),
+        ipv6RoutingMode: Ipv6RoutingMode = Ipv6RoutingMode.TUNNEL,
     ): Result {
         if (!VpnMtuPolicy.isValid(vpnMtu)) {
             return Result.Blocked(
@@ -62,6 +65,16 @@ object SessionStartGate {
         if (fullTunnel && !DnsSettingsPolicy.isValidServer(dnsServer)) {
             return Result.Blocked(
                 message = "无法连接：请输入合法的 IPv4 或 IPv6 DNS 地址",
+                sectionWire = "settings",
+            )
+        }
+        if (
+            fullTunnel &&
+                ipv6RoutingMode != Ipv6RoutingMode.TUNNEL &&
+                ':' in (DnsSettingsPolicy.normalizeServer(dnsServer) ?: "")
+        ) {
+            return Result.Blocked(
+                message = "无法连接：${ipv6RoutingMode.label} IPv6 模式需要使用 IPv4 DNS",
                 sectionWire = "settings",
             )
         }

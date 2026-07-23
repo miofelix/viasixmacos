@@ -14,6 +14,7 @@ import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.session.DnsRoutingMode
 import dev.viasix.app.session.DnsSettingsPolicy
 import dev.viasix.app.session.DnsSettingsState
+import dev.viasix.app.session.Ipv6RoutingMode
 import dev.viasix.app.session.NotificationPermissionState
 import dev.viasix.app.session.ProfileDraftGate
 import dev.viasix.app.session.VpnMtuPolicy
@@ -135,6 +136,7 @@ data class SessionUiState(
     val vpnMtu: String = VpnMtuPolicy.DEFAULT.toString(),
     val vpnMetered: Boolean = true,
     val bypassLocalNetwork: Boolean = false,
+    val ipv6RoutingMode: Ipv6RoutingMode = Ipv6RoutingMode.TUNNEL,
     val dnsSettings: DnsSettingsState = DnsSettingsState(),
     val appRouting: AppRoutingState = AppRoutingState(),
     val notificationPermission: NotificationPermissionState = NotificationPermissionState(),
@@ -188,6 +190,7 @@ data class SessionUiState(
             vpnMtu = vpnMtu.trim(),
             vpnMetered = vpnMetered,
             bypassLocalNetwork = bypassLocalNetwork,
+            ipv6RoutingMode = ipv6RoutingMode.wire,
             dnsRoutingMode = dnsSettings.mode.wire,
             dnsServer = dnsSettings.server.trim(),
             appRoutingMode = appRouting.mode.wire,
@@ -236,6 +239,7 @@ data class SessionUiState(
                 vpnMtu = prefs.vpnMtu.trim(),
                 vpnMetered = prefs.vpnMetered,
                 bypassLocalNetwork = prefs.bypassLocalNetwork,
+                ipv6RoutingMode = Ipv6RoutingMode.parse(prefs.ipv6RoutingMode),
                 dnsSettings =
                     DnsSettingsState(
                         mode = DnsRoutingMode.parse(prefs.dnsRoutingMode),

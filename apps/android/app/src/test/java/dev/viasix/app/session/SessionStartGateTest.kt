@@ -122,6 +122,40 @@ class SessionStartGateTest {
     }
 
     @Test
+    fun nonTunnelIpv6ModesRejectIpv6Dns() {
+        for (mode in listOf(Ipv6RoutingMode.BLOCK, Ipv6RoutingMode.BYPASS)) {
+            val result =
+                SessionStartGate.evaluate(
+                    routingMode = RoutingMode.DIRECT,
+                    selectedAddress = goodNode,
+                    summary = managedSummary,
+                    dnsServer = "2606:4700:4700::1111",
+                    ipv6RoutingMode = mode,
+                )
+
+            assertTrue(result is SessionStartGate.Result.Blocked)
+            assertEquals("settings", (result as SessionStartGate.Result.Blocked).sectionWire)
+            assertTrue(result.message.contains("IPv4 DNS"))
+        }
+    }
+
+    @Test
+    fun nonTunnelIpv6ModesAllowIpv4Dns() {
+        for (mode in listOf(Ipv6RoutingMode.BLOCK, Ipv6RoutingMode.BYPASS)) {
+            val result =
+                SessionStartGate.evaluate(
+                    routingMode = RoutingMode.DIRECT,
+                    selectedAddress = goodNode,
+                    summary = managedSummary,
+                    dnsServer = "1.1.1.1",
+                    ipv6RoutingMode = mode,
+                )
+
+            assertEquals(SessionStartGate.Result.Ok, result)
+        }
+    }
+
+    @Test
     fun ruleModeBlocksWithoutIpv6() {
         val result =
             SessionStartGate.evaluate(RoutingMode.RULE, "invalid", managedSummary)

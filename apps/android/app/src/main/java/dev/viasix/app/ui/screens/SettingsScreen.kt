@@ -57,6 +57,7 @@ import dev.viasix.app.session.AppRoutingMode
 import dev.viasix.app.session.AppRoutingPolicy
 import dev.viasix.app.session.DnsRoutingMode
 import dev.viasix.app.session.DnsSettingsPolicy
+import dev.viasix.app.session.Ipv6RoutingMode
 import dev.viasix.app.session.VpnMtuPolicy
 import dev.viasix.app.state.SessionUiState
 import dev.viasix.app.ui.AppSection
@@ -92,6 +93,7 @@ fun SettingsScreen(
     onVpnMtuChange: (String) -> Unit = {},
     onVpnMeteredChange: (Boolean) -> Unit = {},
     onBypassLocalNetworkChange: (Boolean) -> Unit = {},
+    onIpv6RoutingModeChange: (Ipv6RoutingMode) -> Unit = {},
 ) {
     val colors = LocalViaSixColors.current
     val uriHandler = LocalUriHandler.current
@@ -280,6 +282,69 @@ fun SettingsScreen(
                             },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier =
+                        Modifier.padding(
+                            start = VisualStyle.spacing16,
+                            end = VisualStyle.spacing16,
+                            bottom = VisualStyle.spacing12,
+                        ),
+                )
+                HorizontalDivider(color = colors.surfaceBorder)
+                CompactInfoRow("IPv6 应用流量", state.ipv6RoutingMode.label)
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = VisualStyle.spacing16),
+                    horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+                ) {
+                    Ipv6RoutingMode.entries.forEach { mode ->
+                        if (state.ipv6RoutingMode == mode) {
+                            FilledTonalButton(
+                                onClick = { onIpv6RoutingModeChange(mode) },
+                                enabled = !tunnelLocked && state.fullTunnel,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(mode.label)
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = { onIpv6RoutingModeChange(mode) },
+                                enabled = !tunnelLocked && state.fullTunnel,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(mode.label)
+                            }
+                        }
+                    }
+                }
+                val ipv6DnsIncompatible =
+                    state.fullTunnel &&
+                        state.ipv6RoutingMode != Ipv6RoutingMode.TUNNEL &&
+                        (DnsSettingsPolicy.normalizeServer(state.dnsSettings.server) ?: "")
+                            .contains(':')
+                Text(
+                    text =
+                        when {
+                            !state.fullTunnel -> "仅全量隧道使用此设置。"
+                            ipv6DnsIncompatible ->
+                                "当前模式不会让 IPv6 DNS 进入 VPN，请改用数字 IPv4 DNS。"
+                            else -> state.ipv6RoutingMode.detail
+                        } +
+                            if (tunnelLocked) {
+                                " 运行中不可修改，请先断开。"
+                            } else if (state.fullTunnel) {
+                                " 变更在下次连接时生效。"
+                            } else {
+                                ""
+                            },
+                    style = MaterialTheme.typography.bodySmall,
+                    color =
+                        if (ipv6DnsIncompatible || state.ipv6RoutingMode == Ipv6RoutingMode.BYPASS) {
+                            colors.warning
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     modifier =
                         Modifier.padding(
                             start = VisualStyle.spacing16,

@@ -384,6 +384,7 @@ fun OverviewScreen(
                         if (state.fullTunnel) {
                             "默认路由 + TCP/UDP IPv4/IPv6→SOCKS；" +
                                 "DNS ${state.dnsSettings.mode.label} · MTU ${state.vpnMtu}" +
+                                " · IPv6 ${state.ipv6RoutingMode.label}" +
                                 if (
                                     state.bypassLocalNetwork &&
                                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
@@ -753,6 +754,12 @@ fun OverviewScreen(
                         "随 VPN 路由"
                     },
                     Icons.Outlined.Route,
+                )
+                HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
+                CompactInfoRow(
+                    "IPv6 应用流量",
+                    if (state.fullTunnel) state.ipv6RoutingMode.label else "无默认路由",
+                    Icons.Outlined.Language,
                 )
                 HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
                 CompactInfoRow(

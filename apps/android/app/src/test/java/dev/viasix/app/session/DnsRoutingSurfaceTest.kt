@@ -33,7 +33,7 @@ class DnsRoutingSurfaceTest {
         assertTrue(commands.contains("EXTRA_DNS_SERVER"))
         assertTrue(service.contains("builder.addDnsServer(dnsServer)"))
         assertTrue(service.contains("dnsAddress is Inet6Address"))
-        assertTrue(service.contains("IPv6 DNS requires an IPv6 VPN route"))
+        assertTrue(service.contains("IPv6 VPN route is required but could not be applied"))
         assertTrue(service.contains("dnsRoutingMode = dnsRoutingMode"))
         assertTrue(engine.contains("DnsRoutingMode.PROXY"))
         assertTrue(engine.contains("DnsSettingsPolicy.shouldUseProtectedDirect"))

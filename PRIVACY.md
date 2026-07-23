@@ -36,6 +36,7 @@ ViaSix 是 **全平台** 本地运行的网络客户端（macOS / Windows / Andr
 - 出口 IP / 地理信息检测所用的 HTTP(S) 服务（端点与是否经本地代理因端与用户设置而异）
 - 用户 Mihomo 配置指定的服务器、Proxy Provider、Rule Provider、DNS 和目标站点
 - Android 用户选择的 DNS 服务器；默认通过本地 mihomo/SOCKS 路径访问，用户也可显式选择受保护套接字直连
+- Android 用户若明确选择“IPv6 绕过 VPN”，应用 IPv6 流量会直接使用物理网络并可能向目标暴露设备真实 IPv6 地址；默认模式仍将 IPv6 纳入 VPN，配置失败时中止连接
 
 ViaSix 无法控制这些第三方服务的日志、隐私政策、可用性或司法管辖范围。`XIU2/CloudflareSpeedTest` 是独立第三方项目，并非 Cloudflare 官方产品。
 

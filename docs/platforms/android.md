@@ -62,6 +62,7 @@ Android 功能对齐以 **macOS** 为准。Windows 端仍在完善中，**不得
 - VPN MTU：设置页可在与 macOS 一致的 1280–9000 安全范围内调整，默认 1500；参数随 Activity、磁贴与 Sticky/Always-on 系统恢复统一传递
 - VPN 计费属性：Android 10+ 可选择保持默认“按流量计费”或标记为不计费；仅影响系统后台数据策略，不改变物理网络资费，运行中锁定修改
 - 局域网绕过：Android 13+ 使用原生 `VpnService.Builder.excludeRoute` 排除 IPv4/IPv6 私网、回环、链路本地、组播与广播目标；默认关闭，所选 DNS 以更具体的 VPN 主机路由保留，系统锁定 VPN 仍可能阻止其他隧道外访问
+- IPv6 应用流量：全量隧道支持“经 VPN / 阻止 / 绕过 VPN”三态；默认经 VPN，IPv6 地址或默认路由建立失败时中止会话而不是静默旁路；阻止/绕过模式要求 IPv4 DNS，绕过模式会暴露设备真实 IPv6；HTTP 代理-only 模式显式允许 IPv6 地址族，不会因无 IPv6 VPN 路由而误阻断
 - 分应用路由：支持所有应用、绕过所选和仅代理所选三种 `VpnService.Builder` 策略；选择器仅查询具有 Launcher 入口的应用，后台型应用可手动添加包名，不申请广泛包可见权限，运行中锁定修改
 
 ## 移动端交互（参考 Clash Meta / NekoBox，语义仍对齐 macOS）

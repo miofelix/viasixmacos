@@ -28,6 +28,7 @@
 - Android：增加可配置 VPN MTU，采用与 macOS 一致的 1280–9000 安全范围，贯通普通启动、快捷磁贴与 Sticky/Always-on 恢复。
 - Android：增加 Android 10+ VPN 计费属性控制；默认保持平台行为，也可标记为不计费以减少系统对后台数据的限制。
 - Android：增加 Android 13+ 原生局域网绕过，按需排除 IPv4/IPv6 私网、链路本地、组播与广播目标，默认仍保持全量 VPN 路由。
+- Android：增加 IPv6 应用流量三态控制；默认经 VPN 且 IPv6 路由失败即中止，另提供阻止与显式绕过模式，避免静默 IPv6 旁路。
 
 ### 新增
 

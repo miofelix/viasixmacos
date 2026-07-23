@@ -45,6 +45,7 @@ import dev.viasix.app.net.ExitIPDetectionMode
 import dev.viasix.app.runtime.RuntimeComponentId
 import dev.viasix.app.session.AppRoutingMode
 import dev.viasix.app.session.DnsRoutingMode
+import dev.viasix.app.session.Ipv6RoutingMode
 import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.state.SessionUiState
 import dev.viasix.app.ui.screens.LogsScreen
@@ -98,6 +99,7 @@ fun ViaSixApp(
     onVpnMtuChange: (String) -> Unit = {},
     onVpnMeteredChange: (Boolean) -> Unit = {},
     onBypassLocalNetworkChange: (Boolean) -> Unit = {},
+    onIpv6RoutingModeChange: (Ipv6RoutingMode) -> Unit = {},
     onRoutingModeChange: (RoutingMode) -> Unit,
     onFullTunnelChange: (Boolean) -> Unit,
     onStart: () -> Unit,
@@ -252,6 +254,7 @@ fun ViaSixApp(
                                     onVpnMtuChange = onVpnMtuChange,
                                     onVpnMeteredChange = onVpnMeteredChange,
                                     onBypassLocalNetworkChange = onBypassLocalNetworkChange,
+                                    onIpv6RoutingModeChange = onIpv6RoutingModeChange,
                                 )
                         }
                     }

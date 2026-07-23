@@ -28,14 +28,15 @@ object VpnSessionCommands {
     fun evaluateStart(prefs: SessionPrefs): SessionStartGate.Result {
         val mode = RoutingMode.parse(prefs.routingMode) ?: RoutingMode.RULE
         return SessionStartGate.evaluate(
-            mode,
-            prefs.selectedAddress,
-            prefs.profileYaml,
-            AppRoutingMode.parse(prefs.appRoutingMode),
-            prefs.selectedAppPackages,
-            prefs.dnsServer,
-            prefs.fullTunnel,
-            prefs.vpnMtu,
+            routingMode = mode,
+            selectedAddress = prefs.selectedAddress,
+            profileYaml = prefs.profileYaml,
+            appRoutingMode = AppRoutingMode.parse(prefs.appRoutingMode),
+            selectedAppPackages = prefs.selectedAppPackages,
+            dnsServer = prefs.dnsServer,
+            fullTunnel = prefs.fullTunnel,
+            vpnMtu = prefs.vpnMtu,
+            ipv6RoutingMode = Ipv6RoutingMode.parse(prefs.ipv6RoutingMode),
         )
     }
 
@@ -56,6 +57,7 @@ object VpnSessionCommands {
                 ViaSixVpnService.EXTRA_BYPASS_LOCAL_NETWORK,
                 prefs.bypassLocalNetwork,
             )
+            .putExtra(ViaSixVpnService.EXTRA_IPV6_ROUTING_MODE, prefs.ipv6RoutingMode)
             .putExtra(ViaSixVpnService.EXTRA_DNS_ROUTING_MODE, prefs.dnsRoutingMode)
             .putExtra(ViaSixVpnService.EXTRA_DNS_SERVER, prefs.dnsServer)
             .putExtra(ViaSixVpnService.EXTRA_APP_ROUTING_MODE, prefs.appRoutingMode)

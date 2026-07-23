@@ -12,6 +12,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.service.quicksettings.TileService
+import android.system.OsConstants
 import android.util.Log
 import dev.viasix.app.MainActivity
 import dev.viasix.app.R
@@ -24,6 +25,7 @@ import dev.viasix.app.session.AppRoutingMode
 import dev.viasix.app.session.AppRoutingPolicy
 import dev.viasix.app.session.DnsRoutingMode
 import dev.viasix.app.session.DnsSettingsPolicy
+import dev.viasix.app.session.Ipv6RoutingMode
 import dev.viasix.app.session.LocalNetworkBypassPolicy
 import dev.viasix.app.session.RuntimeProcessIdentity
 import dev.viasix.app.session.RuntimeStackFailure
@@ -108,6 +110,11 @@ class ViaSixVpnService : VpnService() {
                 EXTRA_BYPASS_LOCAL_NETWORK,
                 restoredPrefs?.bypassLocalNetwork ?: false,
             ) ?: restoredPrefs?.bypassLocalNetwork ?: false
+        val ipv6RoutingMode =
+            Ipv6RoutingMode.parse(
+                intent?.getStringExtra(EXTRA_IPV6_ROUTING_MODE)
+                    ?: restoredPrefs?.ipv6RoutingMode,
+            )
         val dnsRoutingMode =
             DnsRoutingMode.parse(
                 intent?.getStringExtra(EXTRA_DNS_ROUTING_MODE)
@@ -136,6 +143,7 @@ class ViaSixVpnService : VpnService() {
             "启动请求（$reason） mode=${mode.wire} fullTunnel=$fullTunnel mtu=$vpnMtuInput " +
                 "metered=$vpnMetered " +
                 "bypassLocal=$bypassLocalNetwork " +
+                "ipv6=${ipv6RoutingMode.wire} " +
                 "appRouting=${appRoutingMode.wire} apps=${selectedAppPackages.size}",
             "info",
         )
@@ -158,6 +166,7 @@ class ViaSixVpnService : VpnService() {
                     vpnMtuInput,
                     vpnMetered,
                     bypassLocalNetwork,
+                    ipv6RoutingMode,
                     dnsRoutingMode,
                     dnsServerInput,
                     appRoutingMode,
@@ -183,6 +192,7 @@ class ViaSixVpnService : VpnService() {
         vpnMtuInput: String,
         vpnMetered: Boolean,
         bypassLocalNetwork: Boolean,
+        ipv6RoutingMode: Ipv6RoutingMode,
         dnsRoutingMode: DnsRoutingMode,
         dnsServerInput: String,
         appRoutingMode: AppRoutingMode,
@@ -199,6 +209,15 @@ class ViaSixVpnService : VpnService() {
         }
         val dnsServer = normalizedDnsServer ?: DnsSettingsPolicy.DEFAULT_SERVER
         val dnsAddress = InetAddress.getByName(dnsServer)
+        if (
+            fullTunnel &&
+                ipv6RoutingMode != Ipv6RoutingMode.TUNNEL &&
+                dnsAddress is Inet6Address
+        ) {
+            throw IllegalArgumentException(
+                "${ipv6RoutingMode.label} IPv6 mode requires an IPv4 DNS server",
+            )
+        }
         val secret = UUID.randomUUID().toString().replace("-", "")
         val options =
             ProjectOptions(
@@ -269,36 +288,38 @@ class ViaSixVpnService : VpnService() {
                 enabled = bypassLocalNetwork && dnsAddress !is Inet6Address,
                 dnsAddress = dnsAddress,
             )
-            var ipv6RouteApplied = false
-            try {
-                builder.addAddress("fd00:10:10::2", 128)
-                builder.addRoute("::", 0)
-                ipv6RouteApplied = true
-                if (dnsAddress is Inet6Address) {
-                    builder.addDnsServer(dnsServer)
-                }
-            } catch (error: Exception) {
-                if (dnsAddress is Inet6Address) {
-                    throw IllegalStateException(
-                        "IPv6 DNS requires an IPv6 VPN route: ${error.message}",
-                        error,
+            when (ipv6RoutingMode) {
+                Ipv6RoutingMode.TUNNEL -> {
+                    try {
+                        builder.addAddress("fd00:10:10::2", 128)
+                        builder.addRoute("::", 0)
+                        if (dnsAddress is Inet6Address) {
+                            builder.addDnsServer(dnsServer)
+                        }
+                    } catch (error: Exception) {
+                        throw IllegalStateException(
+                            "IPv6 VPN route is required but could not be applied: ${error.message}",
+                            error,
+                        )
+                    }
+                    applyLocalNetworkBypass(
+                        builder = builder,
+                        enabled = bypassLocalNetwork,
+                        prefixes = LocalNetworkBypassPolicy.IPV6_PREFIXES,
+                    )
+                    preserveDnsVpnRoute(
+                        builder = builder,
+                        enabled = bypassLocalNetwork && dnsAddress is Inet6Address,
+                        dnsAddress = dnsAddress,
                     )
                 }
-                Log.w(TAG, "IPv6 route not applied: ${error.message}")
-                appendEvent("IPv6 默认路由未应用：${error.message}", "warning")
+                Ipv6RoutingMode.BLOCK -> Unit
+                Ipv6RoutingMode.BYPASS -> builder.allowFamily(OsConstants.AF_INET6)
             }
-            if (ipv6RouteApplied) {
-                applyLocalNetworkBypass(
-                    builder = builder,
-                    enabled = bypassLocalNetwork,
-                    prefixes = LocalNetworkBypassPolicy.IPV6_PREFIXES,
-                )
-                preserveDnsVpnRoute(
-                    builder = builder,
-                    enabled = bypassLocalNetwork && dnsAddress is Inet6Address,
-                    dnsAddress = dnsAddress,
-                )
-            }
+        } else {
+            // HTTP proxy-only publishes metadata without a default route; do not let the
+            // VpnService default address-family policy accidentally block device IPv6.
+            builder.allowFamily(OsConstants.AF_INET6)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -324,6 +345,9 @@ class ViaSixVpnService : VpnService() {
         }
         if (bypassLocalNetwork && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             appendEvent("局域网绕过：私网、链路本地与组播流量不进入 VPN", "info")
+        }
+        if (fullTunnel) {
+            appendEvent("IPv6 应用流量：${ipv6RoutingMode.label}", "info")
         }
 
         if (fullTunnel) {
@@ -666,6 +690,7 @@ class ViaSixVpnService : VpnService() {
         const val EXTRA_VPN_MTU = "vpn_mtu"
         const val EXTRA_VPN_METERED = "vpn_metered"
         const val EXTRA_BYPASS_LOCAL_NETWORK = "bypass_local_network"
+        const val EXTRA_IPV6_ROUTING_MODE = "ipv6_routing_mode"
         const val EXTRA_DNS_ROUTING_MODE = "dns_routing_mode"
         const val EXTRA_DNS_SERVER = "dns_server"
         const val EXTRA_APP_ROUTING_MODE = "app_routing_mode"

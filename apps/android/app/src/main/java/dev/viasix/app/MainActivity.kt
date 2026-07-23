@@ -39,6 +39,7 @@ import dev.viasix.app.session.BatteryOptimizationState
 import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.session.DnsRoutingMode
 import dev.viasix.app.session.InstalledAppsRepository
+import dev.viasix.app.session.Ipv6RoutingMode
 import dev.viasix.app.session.NotificationPermissionFlow
 import dev.viasix.app.session.NotificationPermissionState
 import dev.viasix.app.session.POST_NOTIFICATIONS_PERMISSION
@@ -452,14 +453,15 @@ class MainActivity : ComponentActivity() {
                 when (
                     val gate =
                         SessionStartGate.evaluate(
-                            state.routingMode,
-                            state.selectedAddress,
-                            state.profileSummary,
-                            state.appRouting.mode,
-                            state.appRouting.selectedPackages,
-                            state.dnsSettings.server,
-                            state.fullTunnel,
-                            state.vpnMtu,
+                            routingMode = state.routingMode,
+                            selectedAddress = state.selectedAddress,
+                            summary = state.profileSummary,
+                            appRoutingMode = state.appRouting.mode,
+                            selectedAppPackages = state.appRouting.selectedPackages,
+                            dnsServer = state.dnsSettings.server,
+                            fullTunnel = state.fullTunnel,
+                            vpnMtu = state.vpnMtu,
+                            ipv6RoutingMode = state.ipv6RoutingMode,
                         )
                 ) {
                     is SessionStartGate.Result.Blocked -> {
@@ -1300,6 +1302,11 @@ class MainActivity : ComponentActivity() {
                 update { it.copy(bypassLocalNetwork = enabled) }
             }
 
+            fun changeIpv6RoutingMode(mode: Ipv6RoutingMode) {
+                if (state.connectionPhase.isActiveOrTransitioning) return
+                update { it.copy(ipv6RoutingMode = mode) }
+            }
+
             ViaSixApp(
                 state = state,
                 selectedSection = selectedSection,
@@ -1387,6 +1394,7 @@ class MainActivity : ComponentActivity() {
                 onVpnMtuChange = ::changeVpnMtu,
                 onVpnMeteredChange = ::changeVpnMetered,
                 onBypassLocalNetworkChange = ::changeBypassLocalNetwork,
+                onIpv6RoutingModeChange = ::changeIpv6RoutingMode,
                 onRoutingModeChange = ::patchRoutingMode,
                 onFullTunnelChange = { full ->
                     if (state.connectionPhase.isActiveOrTransitioning) {
