@@ -30,7 +30,7 @@ ViaSix **全平台**产品中的 Android 端（移动网络接入语义与桌面
 | `TrafficStatsView` | 速率（累计差分）+ 曲线 + 内存 + 连接数 |
 | 出口 IP 检测 | `ExitIPDetector`（端点/模式/地理 enrichment 对齐） |
 | 配置延迟测试 | `ControllerClient.proxyDelay` |
-| `NodesView` / CFST | IPv6 校验、候选库、CFST 测速起停与结果表、应用/应用并重连 |
+| `NodesView` / CFST | IPv6 校验、候选库、CFST 测速起停、结果排序、当前节点测速、应用/应用并重连 |
 | `ProfilesView` | 摘要解析、文件导入、YAML 编辑、投影预览 |
 | `LogsView` | 来源/级别过滤、搜索、排序 + VPN 事件合并 |
 | `VisualStyle` / `SurfaceCard` | `ui/theme/VisualStyle` + 组件 |
@@ -41,7 +41,7 @@ ViaSix **全平台**产品中的 Android 端（移动网络接入语义与桌面
 - `ViaSixVpnService`：重启栈（节点应用并重连）、环形事件日志
 - `ProfileSummaryParser` / `Ipv6Address` / `ByteRateFormatter` / `SpeedTestResultParser`：`:core` 可测纯逻辑
 - 会话偏好扩展：候选节点、出口检测端点与模式、测速 IP 源
-- CFST：`CfstInstaller`（assets → filesDir）+ `CfstRunner`（可取消）+ Nodes UI
+- CFST：`CfstInstaller`（assets → filesDir）+ `CfstRunner`（可取消）+ `NodeResultSorting` + 当前节点测速 + Nodes/Settings UI
 
 ## 验证
 
