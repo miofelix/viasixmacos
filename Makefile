@@ -19,6 +19,7 @@ CONTRACTS_DIR := contracts
 	android-skeleton \
 	android-test \
 	android-assemble \
+	android-assemble-release \
 	projection-test \
 	shared-test \
 	contracts-check \
@@ -39,6 +40,7 @@ help:
 	@echo "  make android-skeleton  - verify Android app tree"
 	@echo "  make android-test      - JVM contract projection tests (:core)"
 	@echo "  make android-assemble  - assemble debug APK (requires Android SDK)"
+	@echo "  make android-assemble-release - signed release APK (needs signing/)"
 	@echo "  make projection-test   - all platforms contracts fixtures only"
 	@echo "  make shared-test       - packages/viasix-mihomo-config tests"
 	@echo "  make check             - contracts + macOS + windows-test + android-test"
@@ -118,11 +120,20 @@ android-test:
 	cd "$(ANDROID_DIR)" && gradle :core:test :app:test --no-daemon
 
 android-assemble:
-	@test -s "$(ANDROID_DIR)/app/src/main/assets/mihomo/mihomo-arm64" || \
-		(echo "error: missing mihomo-arm64 — run: cd apps/android && node scripts/fetch-mihomo.mjs" >&2; exit 1)
+	@test -s "$(ANDROID_DIR)/app/src/main/jniLibs/arm64-v8a/libmihomo.so" || \
+		(echo "error: missing libmihomo.so — run: cd apps/android && node scripts/fetch-mihomo.mjs" >&2; exit 1)
 	@test -s "$(ANDROID_DIR)/app/src/main/jniLibs/arm64-v8a/libcfst.so" || \
 		(echo "error: missing libcfst.so — run: cd apps/android && node scripts/fetch-cfst.mjs" >&2; exit 1)
 	cd "$(ANDROID_DIR)" && gradle :app:assembleDebug --no-daemon
+
+android-assemble-release:
+	@test -s "$(ANDROID_DIR)/app/src/main/jniLibs/arm64-v8a/libmihomo.so" || \
+		(echo "error: missing libmihomo.so — run: cd apps/android && node scripts/fetch-mihomo.mjs" >&2; exit 1)
+	@test -s "$(ANDROID_DIR)/app/src/main/jniLibs/arm64-v8a/libcfst.so" || \
+		(echo "error: missing libcfst.so — run: cd apps/android && node scripts/fetch-cfst.mjs" >&2; exit 1)
+	@test -f signing/android/keystore.properties || \
+		(echo "error: missing signing/android/keystore.properties — see signing/README.md" >&2; exit 1)
+	cd "$(ANDROID_DIR)" && gradle :app:assembleRelease --no-daemon
 
 shared-test:
 	cargo test --manifest-path packages/viasix-mihomo-config/Cargo.toml

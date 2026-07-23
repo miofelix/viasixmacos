@@ -1,7 +1,19 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+// Release keystore lives at monorepo signing/android/ (see signing/README.md).
+// Private material is gitignored; local keystore.properties is required for signed APK.
+val keystorePropertiesFile =
+    rootProject.file("../../signing/android/keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
@@ -12,13 +24,33 @@ android {
         applicationId = "dev.viasix.app"
         minSdk = 26
         targetSdk = 35
+        // First formal Android release (platform-independent versioning).
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0"
+    }
+
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                val storePath = keystoreProperties.getProperty("storeFile")
+                    ?: error("signing/android/keystore.properties missing storeFile")
+                storeFile = file(storePath)
+                storePassword = keystoreProperties.getProperty("storePassword")
+                    ?: error("signing/android/keystore.properties missing storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                    ?: error("signing/android/keystore.properties missing keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                    ?: error("signing/android/keystore.properties missing keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

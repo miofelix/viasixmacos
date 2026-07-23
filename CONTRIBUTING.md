@@ -79,7 +79,7 @@ Pull Request 应说明：
 ## 需要同步更新的内容
 
 - 更新组件版本：各端 Runtime 清单/脚本、测试、`THIRD_PARTY_NOTICES.md` 和发布说明。
-- 更新应用版本：对应平台清单（如 `apps/macos/Packaging/Info.plist`、`apps/windows` 版本字段）、`CHANGELOG.md`、发布产物名称和 Git tag。
+- 更新应用版本：**各端独立**。只 bump 本端清单（如 `apps/macos/Packaging/Info.plist`、`apps/windows` 三文件、`apps/android` 的 `versionName`/`versionCode`），在 `CHANGELOG.md` 写入 `## [macos|android|windows/X.Y.Z]`，并用对应平台 tag（`macos/vX.Y.Z` 等）。详见 `signing/README.md` 与各端 `Docs/RELEASING.md`。
 - 更新用户流程或界面文案：根 `README.md`、各端用户/平台文档及相关截图或帮助内容。
 - 更新存储、网络端点或遥测行为：`PRIVACY.md` 和安全说明。
 - 更新跨端配置语义：`contracts/schemas`、`contracts/fixtures` 与各端测试。

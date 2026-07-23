@@ -1,142 +1,60 @@
 # 变更日志
 
-本项目的重要变化记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)的意图；正式发布前仍需由维护者确认版本策略。
+本项目的重要变化记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)的意图。
+
+**各端客户端版本独立发布**，变更条目按平台版本号分段：`macos/X.Y.Z`、`android/X.Y.Z`、`windows/X.Y.Z`。历史无平台前缀的 `[1.0.0]` 视为早期 macOS 发布记录。
 
 ## [未发布]
 
+### 新增
+
+- Windows：Tauri 2 壳、投影引擎、系统代理、CFST、Mihomo TUN/Wintun、NSIS CI 与会话偏好等 MVP 能力仍在独立发布前累积（见后续 `windows/*` 版本）。
+
 ### 变更
 
-- 文档：明确 ViaSix 为 **全平台** 产品（macOS / Windows / Android / Linux），而非仅 macOS；根 README 以平台状态矩阵为入口。
-- 文档：路线图增加 **阶段 4 — Linux 桌面**（Tauri，复用 Windows 栈；当前未开发），并新增 `docs/platforms/linux.md`。
-- 文档：同步更新 `PRIVACY` / `SECURITY` / `CONTRIBUTING`、架构完成边界与各平台说明中的定位表述。
-- 文档：Android 从 MVP 标记为 **生产可用**（五分区对齐 macOS；全量隧道 TCP/UDP IPv4/IPv6）；native hev 列为可选增强。
-- Android：全量隧道由「仅 IPv4 TCP + DNS/53」升级为 SOCKS5 CONNECT（TCP）+ UDP ASSOCIATE（通用 UDP，含 QUIC）及 IPv6 转发。
-- Android：参考 Clash Meta / NekoBox 增加快捷设置磁贴、首页连接主控、配置剪贴板导入、通知栏实时上下行速率（语义仍以 macOS 为准）。
-- Android：导航壳适配手机、横屏/折叠屏和平板窗口，按宽度在底部栏、导航轨与 macOS 风格上下文侧栏间切换。
-- Android：以 macOS IPv6 地址标记补齐自适应启动图标、圆形图标、Android 13 主题图标，以及专用磁贴/通知图标。
-- Android：连接配置改为安全草稿工作流，导入/编辑不再立即覆盖可用配置；支持校验后应用、还原、仅保存及运行中应用并重连。
-- Android：前台 VPN 通知增加一键断开动作，并采用低打扰、仅首次提醒的持续会话通知行为。
-- Android：补齐 Android 13+ 会话通知运行时授权；首次连接按需询问，拒绝后继续 VPN 且不反复弹窗，设置页可再次授权或打开系统通知设置。
-- Android：补齐会话恢复与单实例回流；旋转/进程重建后立即恢复当前分区和 VPN 运行态，系统授权中的启动动作不丢失，磁贴与通知可复用现有 Activity。
-- Android：运行组件管理对齐 macOS 的缺失/损坏区分；校验 AArch64 ELF 格式、架构与执行权限，并支持 mihomo、CFST 独立原子修复/重装及运行中互锁。
-- Android：补齐 Android 12+ 数据提取与旧版 Auto Backup 排除规则；继续禁用云备份和设备迁移，避免配置 YAML、候选节点、控制器密钥及运行状态离开设备。
-- Android：强化 VPN 会话监督与系统恢复；运行状态绑定进程，Sticky 重启复用已保存配置，并在 mihomo/TUN 异常退出或 VPN 权限被撤销时自动收敛。
-- Android：设置页增加 VPN 授权状态、独立授权操作和系统 VPN 设置入口，便于配置“始终开启 VPN”，从系统设置返回后会自动刷新。
-- Android：设置页增加电池优化状态与系统入口，为长期连接和 Always-on VPN 提供后台稳定性指引，且不申请直接豁免权限。
-- Android：增加 Clash/NekoBox 风格分应用路由，支持所有应用、绕过所选和仅代理所选三种模式，可搜索启动器应用或手动添加后台型应用包名；无需广泛包可见权限。
-- Android：全量隧道 DNS 默认改为经 mihomo/SOCKS 转发，避免固定 UDP/53 直连；设置页支持显式直连模式及自定义数字 IPv4/IPv6 DNS 服务器。
-- Android：增加可配置 VPN MTU，采用与 macOS 一致的 1280–9000 安全范围，贯通普通启动、快捷磁贴与 Sticky/Always-on 恢复。
-- Android：增加 Android 10+ VPN 计费属性控制；默认保持平台行为，也可标记为不计费以减少系统对后台数据的限制。
-- Android：增加 Android 13+ 原生局域网绕过，按需排除 IPv4/IPv6 私网、链路本地、组播与广播目标，默认仍保持全量 VPN 路由。
-- Android：增加 IPv6 应用流量三态控制；默认经 VPN 且 IPv6 路由失败即中止，另提供阻止与显式绕过模式，避免静默 IPv6 旁路。
-- Android：DNS 直连模式补齐 TCP/53 回退；TCP 套接字在连接用户指定 DNS 前先由 `VpnService.protect` 排除，现与 UDP/53 语义一致。
-- Android：监听非 VPN 默认网络并通过 `setUnderlyingNetworks` 显式绑定 Wi-Fi、蜂窝或以太网；切换期间忽略旧网络迟到回调，并在首页、设置与会话日志展示当前状态。
-- Android：向系统 VPN 面板注册配置入口；从 Always-on/VPN 设置触发“配置”时，无论冷启动或已有 Activity 都直接回到 ViaSix 设置分区。
+- 文档：明确 ViaSix 为 **全平台** 产品（macOS / Windows / Android / Linux）；路线图含 Linux 桌面规划；同步 `PRIVACY` / `SECURITY` / `CONTRIBUTING` 与平台说明。
+
+## [android/1.0.0] - 2026-07-23
+
+Android 首个正式版（`versionName` 1.0.0 / `versionCode` 1）。`applicationId`：`dev.viasix.app`。最低系统 Android 8.0（API 26）；正式 APK 架构 arm64-v8a。
 
 ### 新增
 
-- Monorepo 布局：`contracts/`、`apps/macos|windows|android`、`server/`、`docs/architecture`；跨端契约与平台骨架就位。
-- 跨端投影契约用例（`contracts/fixtures/mihomo-config/cases`）及 macOS `ContractFixtureTests` 对齐校验。
-- Windows MVP：`apps/windows` Tauri 2 壳、Rust 投影引擎（contracts 对齐）、用户态 Mihomo 启停与基础 UI。
-- Windows：系统代理启停（注册表快照恢复）与出口 IP 检测。
-- Windows：CloudflareSpeedTest（CFST）拉取、测速运行与结果表。
-- Android MVP：Gradle `:core` 投影（contracts 对齐）、Compose UI、`VpnService` 骨架。
-- 跨端 `make projection-test`：macOS + Windows + Android 契约用例一键校验；Android mihomo 资产拉取脚本占位。
-- Android：从 assets 安装 mihomo、VpnService 内启停内核，并通过 `setHttpProxy` 发布 mixed 端口。
-- Android：全量隧道用户态转发（IPv4 TCP→mihomo SOCKS，DNS `protect` 出站），可切换仅 HTTP 代理模式。
-- Windows：NSIS CI 流水线、sidecar 资源打包路径修复、发布说明 `apps/windows/Docs/RELEASING.md`。
-- 共享：`packages/mihomo-config` 契约校验脚本；`make contracts-check` 集成；tag draft Release 工作流。
-- Android：全量隧道转发加固（会话上限、写出队列、TCP 重传去重）。
-- Windows：会话偏好持久化（profile / IPv6 / 模式 / 系统代理 / 测速参数）与版本号展示。
-- Windows：版本对齐检查脚本（package.json / Cargo.toml / tauri.conf）。
-- Android：会话偏好持久化（profile / IPv6 / 模式 / 全量隧道开关）。
-- Windows：启动时写入 external-controller、提供 Controller 健康探测；虚拟网卡 API 失败关闭骨架与规划文档。
-- Windows：首页实时流量（上下行速率与会话累计，轮询 controller `/connections`）。
-- Android：启动后探测 controller 健康，并在 UI 轮询会话累计流量。
-- Windows：Mihomo TUN + Wintun 虚拟网卡路径（`fetch-wintun`、启用后重启内核）；共享 crate `packages/viasix-mihomo-config`。
-- 首页新增实时流量统计：上下行速率、近 10 分钟流量曲线、会话累计上传/下载与 Mihomo 内存占用。
-- 连接运行中菜单栏显示两行上下行速率；菜单内同步展示速率摘要。
-- 通过 Mihomo external-controller 的 `/traffic`、`/memory` 与 `/connections`（仅 totals）WebSocket 订阅采集数据，断线自动重连。
-- 首页将 IPv6 入口与公网出口合并为「IP 信息」卡片，并新增「应用信息」卡片（版本、系统、运行方式、GitHub 链接）。
+- 生产可用 Android 客户端：Kotlin + Compose + `VpnService`，五分区信息架构对齐 macOS（首页 / IPv6 优选 / 连接配置 / 日志 / 设置）。
+- 跨端 contracts 投影（`:core`）与 monorepo fixture 对齐；`make projection-test` / `gradle :core:test`。
+- 用户态 mihomo（`libmihomo.so`）启停、mixed 端口与 controller 健康探测。
+- 全量隧道：IPv4/IPv6 TCP（SOCKS5 CONNECT）+ 通用 UDP（UDP ASSOCIATE，含 QUIC）及 DNS 转发；可选仅 HTTP 代理模式。
+- CloudflareSpeedTest（`libcfst.so`）IPv6 优选：参数面板、结果排序、应用/应用并重连、进程级单实例 runner。
+- 连接配置安全草稿：导入/编辑不立即覆盖；校验后应用、还原、仅保存、运行中应用并重连；剪贴板 YAML 导入。
+- 会话偏好与 runtime 四态（stopped/starting/running/stopping）；Sticky / Always-on 恢复；磁贴与通知回流。
+- 快捷设置磁贴、前台会话通知（速率与一键断开）、Android 13+ 通知授权流程。
+- 分应用路由（全部 / 绕过所选 / 仅代理所选）；VPN MTU、计费属性、局域网绕过、IPv6 三态、底层网络切换。
+- 设置页：VPN 授权、电池优化指引、运行组件诊断与独立修复、关于信息。
+- 品牌自适应图标与主题图标；自适应导航壳（底栏 / 导航轨 / 侧栏）。
+- 正式 release 签名配置（`signing/android/`）与发布说明 `apps/android/Docs/RELEASING.md`。
 
 ### 变更
 
-- 首页调整卡片顺序：代理模式与网络设置移至流量统计上方。
+- 文档：Android 从 MVP 标记为 **生产可用**；全量隧道由早期「仅 IPv4 TCP + DNS/53」扩展为完整 TCP/UDP IPv4/IPv6。
+- 运行组件、日志、代理模式切换、流量采样等行为对齐 macOS 语义（平台差异：无系统代理 / 无菜单栏）。
 
 ### 修复
 
-- 修复 Android 10+ 启动 CFST 时即使已设置执行位仍返回 `Permission denied` 的问题；CFST 不再从应用可写的 `filesDir` 执行，而是以 `jniLibs/arm64-v8a/libcfst.so` 随 APK 安装并从系统可执行的 `nativeLibraryDir` 启动，构建同时强制原生库解包并保留该 ELF，IPv6 列表与测速结果仍留在应用私有数据目录。
-- 修复 Android 日志页默认把最新记录放在顶部、无法暂停实时滚动且点击清空立即执行的问题，并修复清空只影响当前 Activity 内存、旋转或进程重建后 VPN runtime 环形事件会再次导入的问题。日志页现对齐 macOS 默认按时间正序展示并自动跟随底部最新记录，提供显式暂停/恢复跟随与顺序切换；清空前显示不可撤销确认，并把当时最新 VPN 事件 ID 作为单调游标持久化到 runtime preferences，后续 Activity 重建只导入游标之后的新事件。
-- 修复 Android `CfstRunner` 只在单个 Activity 实例内限制并发且“停止”会在主线程等待进程最多两秒的问题；旋转或重建 Activity 会取消旧 Compose 协程，却可能留下仍在运行的 CFST 子进程，新 Activity 随后可再启动一个 runner 并共同删除/写入同一 `result.csv`。runner 现通过进程级 owner 原子保证全应用最多一个测速任务，任意新实例都能向当前 owner 请求取消；取消入口只设置标记并发送终止信号，等待与必要的强制回收留在后台运行线程，Activity 销毁时会主动请求收敛，避免孤儿测速进程跨重建存活。
-- 修复 Android 运行组件互锁只存在于设置页按钮，mihomo 修复期间仍可从首页启动 VPN、CFST 修复期间仍可从节点页或首页开始测速的问题；若目标缺失或损坏，启动路径与强制修复还会同时使用同一个固定 `.tmp` 文件而互相删除或替换。mihomo 与 CFST 的安装入口现分别在进程内串行化，覆盖 Activity、VPN service 与修复流程；首页连接、首页当前节点测试、节点页两种测速入口及对应处理器也会在目标组件修复期间禁用并给出明确状态，形成 UI 防误触与 installer 最终仲裁两层保护。
-- 修复 Android 运行中代理模式切换可并发调用 `PATCH /configs`，快速连续点选时较早请求可能最后完成并把 mihomo 留在旧模式，同时连接启动/停止过渡期仍允许修改、异步任务还从可变 UI 状态读取 controller 端口的问题。代理模式控件现对齐 macOS 采用单飞交互：运行中请求完成前禁用再次切换，starting/stopping 阶段锁定控件并显示原因；请求从同一份 runtime 会话身份读取端口与 secret，返回后复核会话再写日志，会话变化或失败时保留已保存模式供下次连接生效。
-- 修复 Android Activity 中 controller 异步采样只按“是否运行”或检测路由判断结果归属的问题；旧会话的流量采样、出口 IP 检测或代理延迟测试若在重连后迟到返回，可能覆盖新会话状态并把前后两代速率历史混合。runtime 现提供仅供进程内比较的会话身份 key（进程、controller secret、启动时间与端口），流量采样在阻塞调用后重新读取 runtime 并只接纳同一身份的结果，身份变化会清空采样历史；出口检测与延迟测试也会在写回前复核会话，延迟测试同时复核当前代理节点，旧结果只记录为已忽略。
-- 修复 Android VPN 环形事件日志直接用 `System.currentTimeMillis()` 作为去重 ID；同一毫秒内的迟到事件或设备时钟回拨后产生的记录，可能不大于 Activity 已导入游标而被永久跳过。服务现持久化严格递增事件序列，并在升级时以现有事件最大 ID 和墙上时钟共同初始化；事件数组与序列游标在同一次偏好编辑中发布，确保会话时间线不会因校时或快速连续状态变化漏项。
-- 修复 Android runtime 只持久化 `running` 布尔值，重连拆栈期间仍暴露旧 `running=true`、controller secret 与启动时间的问题；Activity 轮询会把“连接中”错误改回“已连接”，冷启动无法恢复过渡态，快捷磁贴也不能区分连接、运行和断开。runtime 现对齐 macOS `ProxyCorePhase` 持久化 `stopped / starting / running / stopping`：重启在拆栈前清除旧凭据并发布 `starting`，整栈健康后才发布 `running`，关停先发布 `stopping` 再收敛为 `stopped`；Activity、进程恢复与磁贴共享同一权威 phase，旧版本布尔偏好仍可兼容读取，跨进程残留过渡态会被拒绝。
-- 修复 Android 在 VPN 启动或重连尚未完成时直接忽略后续启动 Intent 的问题；Activity 快速应用新配置、磁贴与 Sticky/Always-on 恢复等入口并发时，UI 可能显示最新设置已提交，但实际连接仍停留在较早参数。服务现通过单 worker 的 latest-wins gate 合并请求：当前启动安全收敛，尚未处理的请求只保留最新一份并随后顺序重启；worker 空闲切换与新提交原子化，停止会清除待处理请求而不会在关停后复活。
-- 修复 Android 会话重启时旧流量监督线程仅靠共享布尔值与 `interrupt()` 停止；线程若正阻塞在 controller HTTP 采样中，新的会话会把布尔值重新设为 true，使旧线程继续使用旧 secret/full-tunnel 参数更新通知、污染共享速率历史，甚至误关新会话。监督循环现采用单调 generation gate，每次停止或重启永久淘汰旧代际，异常关停只能由当前代际原子 claim；每代使用独立 `TrafficSampler`，迟到采样在任何外部副作用前都会再次校验代际。
-- 修复 Android VPN 启动最终发布运行态前只复核 mihomo 进程，没有复核刚启动的 `Tun2SocksEngine`；若 TUN reader/writer 或 UDP reactor 在异步启动窗口内立即退出，服务仍可能短暂写入 `running=true` 并展示连接成功。启动现复用统一的 `RuntimeStackHealth`，在 TUN 启动后及运行态发布前同时校验 mihomo 与可选 TUN，引擎已失效时直接回滚整栈。
-- 修复 Android 共享 UDP relay reactor 因 `Selector` 层异常而退出时只在内部清理资源，却不把故障传播给 `Tun2SocksEngine`，导致 VPN 继续显示运行、TCP 仍可用但所有通用 UDP 永久失效的问题；reactor 现区分显式关闭与意外线程终止，后者在完成 relay 清理后通知引擎关闭运行健康门，由既有 service supervisor 统一 fail-closed 结束会话。
-- 修复 Android VPN 停止时仅清空 TUN 出站队列，正在等待空位的 lossless TCP producer 会被 `clear` 释放容量后重新入队并返回成功，导致停止后残留报文与虚假发送成功的问题；队列现采用不可逆 cancelled 状态，取消会清空现有报文并唤醒等待者，所有 producer 在入队前后复核取消状态并按对象身份撤回竞态入队，后续 TCP/UDP 报文均不能复活已停止队列。
-- 修复 Android TUN 出站队列虽标记 TCP 为 lossless，但队列已被可丢 UDP 数据报填满时仍只等待空位、不会主动让 UDP 腾位的问题；writer 暂停超过等待上限时，关键 TCP SYN/data/FIN/RST 可能入队失败而 UDP 反被保留。所有 producer 现通过同一入队锁仲裁：lossless 报文先直接入队，满时原子淘汰一个 droppable 并立即占位，只有队列全为 lossless 时才执行原有有界等待；新 UDP 仍只能替换旧 UDP，不能淘汰 TCP。
-- 修复 Android 主动淘汰、替换或关闭 SOCKS5 UDP relay 时只关闭 socket/channel，却没有从共享 `UdpRelayReactor` 的 registrations map 显式注销的问题；关闭 channel 后其 SelectionKey 可能直接从 selector 消失，旧 registration 因而一直残留到 VPN 整体停止并随 relay 代际持续累积。reactor 现提供竞态安全的 unregister：抑制主动关闭回调、取消已有 key、同步移除 map/清空发送队列并关闭 relay，尚在 pending 注册或与故障回收并发时也保持幂等。
-- 修复 Android TCP 重传队列在报文真正进入 TUN 出站队列前就消耗 attempt，短暂背压导致 enqueue 失败时，未发送的重传仍会进入指数退避并可能累计耗尽、错误复位健康会话的问题；每次到期或快速重传现携带内部保留 ID，入队失败会仅在同一最老段与 attempt 尚未被 ACK/并发更新时原子回滚计数，并把截止时间恢复为立即可重试，成功入队后才保留本次 attempt。
-- 修复 Android TCP 把所有“累计 ACK 未推进”的空段都计为重复 ACK，连续的合法客户端窗口更新也可能累计到三次并误触发快速重传的问题；重传队列现以 ACK 号与展开后的 advertised window 共同维护上一输入基线，窗口变化会清零重复计数，空闲期没有保留段时也会刷新基线，只有两者都不变的第三个真正重复 ACK 才重传最老未确认段。
-- 修复 Android TCP 对客户端接收窗口的更新只校验累计 ACK、不比较携带窗口的段序号，网络重排后的旧重复 ACK 可用过期值覆盖较新的窗口，甚至把已重新打开的下行发送窗口写回 0 而长期停读远端的问题；`TcpSendWindow` 现维护 RFC 9293 的 `SND.WL1/SND.WL2`，旧段仍可推进合法累计 ACK，但只有更新的 `SEG.SEQ`，或相同序号下不更旧的 `SEG.ACK`，才能替换 advertised window，比较同样支持 32 位回绕。
-- 修复 Android TCP 发出 SYN-ACK 后只依赖客户端重复 SYN 才会重发，首次 SYN-ACK 单向丢包时握手恢复完全受客户端策略支配的问题；现将 SYN 作为一个序号保留进既有指数退避重传队列，在 10 秒握手期限内约 1、3、7 秒主动重发稳定的服务端 ISN，并在每次重传中保持接口 MSS 与协商后的 Window Scale 选项，合法第三次 ACK 会立即释放该保留项。
-- 修复 Android TCP 虽已动态广告客户端上行接收窗口，入站普通段与 RST 的序号可接受性仍固定按 65,535 字节判断的问题；现为每个输入段获取同一份队列窗口快照并在 ACK、payload、FIN 处理前复用，零窗口仅接受 `SEQ=RCV.NXT` 的空段，persist probe 会回当前 ACK 而不推进任何状态，非精确 RST 也不会在零窗口错误触发 challenge ACK。
-- 修复 Android TCP 客户端上行队列已经达到字节数或段数上限时仍固定广告 65,535 字节接收窗口，客户端会持续发送/重传而不能进入标准零窗口等待，队列恢复后也没有窗口更新通知的问题；所有会话 TCP 包现按队列实时剩余容量发布 0–65,535 窗口，拒绝 payload 不推进 ACK，writer 仅在窗口从 0 重新打开时设置待通知标记，由共享维护线程顺序补发 ACK，写出背压时保留标记重试以避免跨线程新旧窗口倒序。
-- 修复 Android TCP 忽略客户端 SYN 的 Window Scale 选项，协商缩放后仍把后续 16 位 advertised window 当作未缩放值，现代高速链路下行在途量被错误限制在 65,535 字节的问题；现解析并去重 kind 3、按 RFC 7323 将过大 shift 限制为 14，客户端提供选项时在 SYN-ACK 发布服务端 shift 0，后续窗口按客户端 shift 展开，同时以 131,070 字节重传缓存容量封顶实际在途数据，避免扩大窗口后撞满保留队列而误关会话。
-- 修复 Android TCP 在验证客户端段序号是否落入接收窗口之前就处理 ACK，窗口外或完全陈旧的数据段仍可推进服务端确认并释放重传缓存，同时同步态还接受缺少 ACK 标志的 payload/FIN 的问题；现按 RFC 9293 使用统一的 65,535 字节窗口先验证零长度段或数据/FIN 首尾是否重叠，拒绝段只回当前 ACK 并停止全部状态推进，窗口与序号回绕测试覆盖 IPv4/IPv6 共用路径。
-- 修复 Android TCP 对已存在会话收到任意序号的 RST 都立即关闭，陈旧或窗口外复位可错误终止健康连接的问题；同步态 RST 现仅在 socket 与序号状态完整发布后按 RFC 5961 校验客户端下一期望序号，精确命中才关闭，65,535 字节接收窗口内的非精确值触发既有每会话限速 challenge ACK，窗口外、回退序号或尚在建连的 RST 静默丢弃，序号回绕同样安全。
-- 修复 Android TCP 已建立会话静默吞掉重复纯 SYN，而 SYN+ACK 仍可能落入发送窗口、payload 与 FIN 处理路径的问题；同步态现按 RFC 5961 对意外 SYN 回送每会话单调时钟限速的 challenge ACK，握手未完成时稳定重发原 SYN-ACK，并在两种情况下都立即停止该段的后续数据处理，避免异常控制位推进流状态或形成 ACK 放大。
-- 修复 Android TCP 握手只校验 ACK 值，错误客户端序号、携带 SYN 的 ACK 也能提前放行下行 reader，且远端 socket 尚未建立时伪造 `ACK=0` 可能错误拒绝会话的问题；握手门现同时要求 socket 已发布、`SEQ=clientNextSeq`、`ACK=serverSeq`、ACK 标志存在且无 SYN/RST，并以 pending/completed/cancelled 原子三态保证取消后不可复活，同时仍允许第三次握手携带合法 payload/FIN。
-- 修复 Android 用户态 TCP 在会话不存在或达到会话上限时静默丢弃 SYN、ACK 与数据段，应用只能等待自身超时的问题；CLOSED 状态现按 RFC 9293 生成无状态 RST，带 ACK 的输入使用 `SEQ=SEG.ACK`，其余输入确认包含 SYN/FIN 的完整段长度，同时保持 32 位序号回绕安全且绝不响应 RST。
-- 修复 Android `Tun2SocksEngine.stop()` 只中断线程却不等待退出，且 SOCKS CONNECT、UDP ASSOCIATE、直连 DNS 等尚未发布的阻塞 socket 无法由会话表关闭，停止后可能继续存活到 5–10 秒网络超时的问题；建立中资源现进入并发安全的关闭注册表，停止会先关闭 TUN fd 与全部 in-flight I/O，再有界等待 reader、writer、维护线程和 worker pool 收敛，并禁止已停止实例被误重启。
-- 修复 Android TCP 下行重传耗尽或服务端半关闭超时后只静默删除会话，客户端仍会等待到自身超时的问题；异常收敛现主动发送 `RST|ACK`，并使用客户端最新确认的服务端序号而非固定 `SEQ=0`，避免现代 TCP 栈因复位序号不在接收窗口而忽略通知。
-- 修复 Android TUN reader 仍直接向非阻塞 SOCKS5 UDP `DatagramChannel` 写入，发送缓冲短暂不可写时会关闭整个 relay 并触发 ASSOCIATE 重连风暴的问题；UDP 发送现也进入同一 Selector reactor，每 relay 采用按数据报数和字节数双重有界队列，`OP_WRITE` 就绪后公平排空，队列饱和只丢当前数据报而不破坏关联。
-- 修复 Android TCP 发送窗口等待和上行 writer 队列轮询使用 `System.currentTimeMillis()`，设备校时或墙上时钟跳变可能导致等待被意外延长或提前超时的问题；传输层有界等待现统一改用 `System.nanoTime()` 计算纳秒级剩余时间，与重传、半关闭和 UDP relay 生命周期一致。
-- 修复 Android 把 SOCKS 远端正常 EOF 与下行读异常视为同一路径，并在发送服务端 FIN 前错误等待客户端上行队列最多 35 秒的问题；TCP 两个半关闭方向现彼此独立，正常 EOF 只等待本方向未确认数据后回送 FIN，读异常或内部下行失败则向客户端发送 RST 并立即释放会话。
-- 修复 Android 用户态 TCP 握手忽略客户端 SYN 的 MSS 选项，且 SYN-ACK 不发布自身 MSS，较小路径 MTU 下仍可能生成对端无法接收的段、无 MSS 时也未采用协议默认值的问题；TCP 选项解析现安全遍历 EOL/NOP/变长选项并严格校验 MSS，ViaSix 在 SYN-ACK 中发布接口 MSS，下行按接口上限与客户端 MSS 的较小值切分，缺省使用 IPv4 536 / IPv6 1220。
-- 修复 Android TCP 下行固定一次读取 16 KiB 并封装为单个 IPv4/IPv6 报文、可能远超用户配置的 VPN MTU 且 IPv4 仍设置 DF 的问题；转发引擎现接收会话实际 MTU，并分别扣除 20/40 字节 IP 头与 20 字节 TCP 头，把 SOCKS 下行切成不超过虚拟接口 MTU 的段。
-- 修复 Android TUN 写线程在虚拟网卡 fd 写入失败后继续吞包且仍报告运行中，以及转发引擎在 `start()` 中途失败、尚未发布给 `VpnService` 时无法由外层回收部分资源的问题；TUN 读写任一方向退出现统一 fail-closed，启动异常会在原地关闭 reactor、线程池和已打开描述符后再向上抛出。
-- 修复 Android 每条 SOCKS5 UDP ASSOCIATE 都永久占用一个通用 I/O worker、并发 UDP 端点可能挤占 TCP/DNS 转发容量的问题；UDP relay 现改用非阻塞 `DatagramChannel`，由单个 daemon `Selector` reactor 多路复用全部回包，单轮有界排空并每 5 秒探测控制 TCP，关停时统一回收已注册和待注册 relay。
-- 修复 Android TCP 会话在代理连接完成后立即占用一个 I/O worker 等待客户端 ACK，并为每条连接永久保留独立上行 writer，导致 64 线程上限在半开或空闲连接下过早耗尽的问题；下行 reader 现仅在有效握手 ACK 后单飞启动，握手超时由共享维护线程回收，上行 writer 仅在队列/FIN 需要时启动并在空闲 1 秒后退出，退出竞态会检查待处理数据并安全重启。
-- 修复 Android SOCKS5 UDP framing 接受非零 RSV、零目标端口和越界 `length`，且可在构造超过单个 UDP 数据报上限的 frame 后才由 socket 报错的问题；编码现前置校验端口与 65,535 字节总长，解码严格拒绝保留字段、分片、零端口、截断和调用方越界长度。
-- 修复 Android 显式直连 DNS/UDP 使用未连接 socket、可能接受非目标来源数据报，忽略 `VpnService.protect` 失败，并用 4096 字节缓冲静默截断较大 EDNS 响应的问题；每查询 socket 现先保护再连接到指定上游，仅接受该地址/端口的回包，保护失败立即关闭，响应容量扩展到完整 UDP 数据报上限。
-- 修复 Android SOCKS5 UDP ASSOCIATE 的控制 TCP 被代理重启/关闭后，本地 UDP socket 仍显示可写、活跃流量持续续期失效 relay 并永久黑洞的问题；UDP 接收超时现探测控制连接 EOF 并立即淘汰代际，UDP socket 同时连接到代理报告的 relay 地址以仅接收可信端点回包，且严格校验 ASSOCIATE 保留字、域名与可解析地址。
-- 修复 Android TCP SOCKS5 CONNECT 只有连接超时、代理在 greeting/CONNECT 响应阶段停滞时可永久占住连接 worker，以及 EOF、写入或畸形响应异常未统一关闭 socket 的问题；握手现受独立 10 秒读超时约束，成功后恢复普通阻塞读取，所有失败路径可靠关闭资源并校验版本、保留字、地址类型与目标参数。
-- 修复 Android TUN 使用无上限 cached worker pool、在 TCP 建连/双向转发、UDP relay 与直连 DNS 突发时可能持续创建线程的问题；阻塞任务现拆分为最多 16 个连接 worker 与 64 个 I/O worker，采用无隐式积压的即时拒绝策略，并在 TCP、UDP、DNS 各拒绝路径主动发送复位或释放会话、relay、permit。
-- 修复 Android TUN 解析只检查 IPv4/IPv6 与 TCP/UDP 长度、不验证校验和的问题；现拒绝损坏的 IPv4 头、TCP、非零 IPv4 UDP 与 IPv6 UDP 报文，IPv4 UDP 允许 RFC 768 的零校验和，所有回包构造器生成有效传输层校验和并拒绝超出 16 位长度字段的地址族/负载组合。
-- 修复 Android SOCKS5 UDP ASSOCIATE 建立与空闲回收/发送失败并发时，晚完成的 relay 可能脱离映射泄漏，或旧清理误关同端点新 relay 的问题；每个 relay 代际现以实例条件移除并原子发布/关闭，过期回调与重新注册串行化，控制 TCP 在连接前完成 VPN 保护，所有握手失败路径都会关闭已创建 socket。
-- 修复 Android SOCKS5 UDP ASSOCIATE 仅在下一包 UDP 到来时顺便清理、无后续流量时空闲 socket 会保留到 VPN 停止的问题；共享维护线程现每 5 秒主动回收超过 60 秒未活动的 relay，过期判断使用单调时钟，并避免清理流程二次删除刚重新活跃的端点。
-- 修复 Android TCP 下行丢包只能等待 RTO、连续重复 ACK 无法及时恢复的问题；当前三次有效纯重复 ACK 会触发一次有界快速重传，ACK 推进后重置计数，同一序列不会因 ACK 洪峰重复放大。
-- 修复 Android TUN reader 直接向远端 TCP socket `write/flush`、在慢远端或内核背压时阻塞整个隧道读线程的问题；客户端上行 payload 现进入每会话 64 KiB 有界队列，由独立 writer 顺序排空，队列满时保留旧 ACK 促使客户端重传，FIN 等待排队数据真正写完后再执行 `shutdownOutput`。
-- 修复 Android IPv4 分片在没有重组器时可能被误交给 TCP/UDP 解析的问题；现拒绝 `MF`、非零 fragment offset 与保留标志，避免首片残缺 payload 或非首片字节污染用户态流连接。
-- 修复 Android 远端 FIN 发出后立即销毁 TCP 会话、导致 FIN 丢失无法重传及双方半关闭未完成的问题；FIN 现占用序列空间并纳入未确认段缓存，等待客户端 ACK，双方 FIN 完成后关闭，迟迟不完成的半关闭在 60 秒后回收，客户端 FIN 后的非法 payload 不再写入 SOCKS。
-- 修复 Android IPv6 转发只识别固定 40 字节头、把常见扩展头后的 TCP/UDP 流量直接丢弃的问题；现有界遍历 Hop-by-Hop、Routing、Destination Options、AH 与原子 Fragment，按真实上层偏移解析，并拒绝截断、超过 8 层或需要 IP 重组的分片链。
-- 修复 Android 显式直连 DNS/UDP 在查询突发或上游超时时可无界占用 cached worker 线程与 socket 文件描述符的问题；直连查询现设 32 个 in-flight 硬上限，超限在创建资源前丢弃，且正常、异常与任务拒绝路径均可靠归还幂等 permit。
-- 修复 Android TCP 下行数据只发送一次、短连接远端 EOF 后立即释放会话导致丢包无法恢复的问题；未确认段现按会话有界保留，以共享定时器和指数退避重传，支持累计/部分 ACK 与序列号回绕，并在数据确认后再发送 FIN，重试耗尽时主动收敛会话。
-- 修复 Android TCP 下行忽略客户端 advertised window、在零窗口或未确认数据占满窗口后仍继续读取远端 socket 的问题；ACK 现以回绕安全的已发送边界推进确认序列，拒绝确认未发送数据与倒退确认，并在发送队列可见前原子登记序列以避免快速 ACK 竞态。
-- 修复 Android TUN 解析接受超出实际帧长度的 IPv4/IPv6、TCP 或 UDP 声明，可能触发缓冲区异常并让读线程静默死亡的问题；畸形帧现被丢弃，读线程退出必定更新监督状态。
-- 修复 Android TCP 会话在发出 SYN-ACK 后未等待客户端 ACK 就提前完成握手，以及重复 SYN 无法恢复的问题；远端下行现等待有效 ACK，握手超时自动清理，并稳定重发同一 SYN-ACK。
-- 修复 Android TUN 出站队列在 UDP 洪峰或慢设备写入时可能淘汰 TCP 数据段的问题；TCP SYN、数据、FIN 与 RST 现使用有界无损队列并向远端读取施加背压，可丢数据报只能替换其他可丢项。
-- 修复 Android 用户态 TCP 转发把乱序段写入 SOCKS、32 位序列号回绕判断错误，以及远端 EOF 未向应用发送 FIN 导致连接悬挂的问题；客户端 FIN 现按半关闭语义处理。
-- 修复 Android 全量隧道使用平台默认非阻塞 TUN fd 时，`FileChannel.read` 可能因 `EAGAIN` 退出转发线程的问题；全量隧道现显式使用阻塞描述符。
-- 修复 Android 在 VPN 启动中取消时，后台线程仍可能在停止清理后创建 mihomo、VPN 接口或流量监督线程的问题；启动现按资源阶段检查取消，并仅在整条栈就绪后发布运行态。
-- 修复 Android 运行中的出口 IP 检测因 ViaSix 自身 UID 绕过 VPN 而误报物理出口的问题；主查询与地理补全现显式通过本地 mixed HTTP 代理，并校验 IPv4/IPv6 结果地址族。
-- 修复 Android 在 VPN 运行或切换阶段仍可重置会话偏好、导致当前连接与后续 Sticky/Always-on 恢复配置分叉的问题。
-- 修复 Android Always-on VPN 通过无 ViaSix 参数的系统 Intent 启动时误用空配置的问题；系统启动现恢复最后保存的有效会话参数。
-- 修复 Android 日志时钟在应用运行期间切换系统区域设置后仍沿用旧 Locale 的问题。
-- 修复 Android 14+ 快捷设置磁贴从折叠面板打开应用的兼容路径，并避免 API 26–28 访问 API 29 字幕接口；应用主题现覆盖 `minSdk 26`。
-- 修复当前节点不可达时被误报为 CFST 未生成内部 CSV 文件的问题，并记录单节点测速的具体诊断信息。
-- 修复本地代理启动过程中取消时可能留下僵尸进程、导致无法再次启动的问题。
-- 修复退出失败后流量统计不会恢复、代理仍运行时界面停在“连接中”的问题。
-- 修复流量监控 stop/start 竞态：节点切换或重启后可能永久丢失实时流量。
-- 修复可执行文件就绪检测接受符号链接、但启动时被拒绝的不一致问题。
-- 修复 TUN 会话恢复成功后未重新进入运行状态与流量监控的问题。
-- 首页启动中可取消连接，与菜单栏行为一致。
-- 当前节点结果匹配支持等价 IPv6 写法（压缩/展开）。
+- 覆盖 VPN 生命周期、TUN/TCP/UDP 用户态转发、SOCKS5、DNS、会话监督、磁贴兼容、CFST 执行权限与组件互锁等大量稳定性问题（详见发布前 monorepo 提交历史；本版本为上述修复的首个正式打包基线）。
+
+## [macos/1.0.0] - 2026-07-23
+
+macOS 首个 **平台独立** 正式版（`CFBundleShortVersionString` 1.0.0 / `CFBundleVersion` 1）。Tag：`macos/v1.0.0`。最低系统 macOS 14。产物架构以实际打包机为准（本发布线默认 arm64）。
+
+### 新增
+
+- 在 monorepo 布局下以平台 tag 独立发布；功能范围与历史条目 [1.0.0] 一致。
+- 原生 SwiftUI 客户端、系统代理、特权 TUN helper、IPv6 优选、实时流量与菜单栏控制等（见 [1.0.0]）。
+
+### 说明
+
+- 完整功能与修复列表见下方 `## [1.0.0] - 2026-07-22`。
+- 对外 Gatekeeper 分发需 Developer ID + 公证；无证书时仅能提供 ad-hoc 签名包供受控安装。
 
 ## [1.0.0] - 2026-07-22
 

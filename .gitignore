@@ -16,6 +16,13 @@ xcuserdata/
 *.p12
 *.mobileprovision
 *.provisionprofile
+signing/**/*.jks
+signing/**/*.keystore
+signing/**/keystore.properties
+# Public certificate export is OK to commit for fingerprint verification
+!signing/**/*.cer
+!signing/**/*.example
+!signing/**/README.md
 
 # Local runtime payloads and generated data
 .runtime/

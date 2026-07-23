@@ -2,7 +2,9 @@
 
 ViaSix **全平台**产品中的 Android 端。跨端总览见根 [README](../../README.md)。
 
-**状态：生产可用**（contracts 投影 + VpnService 全量隧道 TCP/UDP IPv4/IPv6 + 五分区 UI，对齐 macOS 语义；无系统代理 / 无菜单栏为平台差异）
+**状态：生产可用** · **正式版 `1.0.0`**（contracts 投影 + VpnService 全量隧道 TCP/UDP IPv4/IPv6 + 五分区 UI，对齐 macOS 语义；无系统代理 / 无菜单栏为平台差异）
+
+发布流程见 [Docs/RELEASING.md](Docs/RELEASING.md)；签名材料见 monorepo [`signing/README.md`](../../signing/README.md)。
 
 ## 模块
 
