@@ -2,6 +2,7 @@ package dev.viasix.app.session
 
 import dev.viasix.app.mihomo.TrafficSnapshot
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -34,5 +35,39 @@ class SessionRuntimeStatusTest {
         assertEquals(42L, snapshot.startedAtMillis)
         assertEquals(traffic, snapshot.traffic)
         assertTrue(snapshot.secretPresent)
+    }
+
+    @Test
+    fun staleRunningStateFromAnotherProcessIsRejected() {
+        val stale =
+            SessionRuntimeStatus(
+                running = true,
+                health = "ok",
+                secret = "secret",
+                mihomoVersion = "v1.2.3",
+                startedAtMillis = 42L,
+                eventsJson = "[event]",
+                processToken = "old-process",
+            ).forProcess(currentProcessToken = "current-process")
+
+        assertFalse(stale.running)
+        assertEquals("stopped", stale.health)
+        assertEquals("", stale.secret)
+        assertEquals(null, stale.mihomoVersion)
+        assertEquals(null, stale.startedAtMillis)
+        assertEquals("[event]", stale.eventsJson)
+        assertEquals("", stale.processToken)
+    }
+
+    @Test
+    fun runningStateOwnedByCurrentProcessIsPreserved() {
+        val current =
+            SessionRuntimeStatus(
+                running = true,
+                secret = "secret",
+                processToken = "current-process",
+            )
+
+        assertEquals(current, current.forProcess(currentProcessToken = "current-process"))
     }
 }

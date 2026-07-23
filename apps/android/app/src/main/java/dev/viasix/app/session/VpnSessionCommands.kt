@@ -17,10 +17,13 @@ object VpnSessionCommands {
 
     fun loadPrefs(context: Context): SessionPrefs = SessionPrefsStore(context).load()
 
-    fun isRuntimeRunning(context: Context): Boolean =
-        context
-            .getSharedPreferences(ViaSixVpnService.RUNTIME_PREFS, Context.MODE_PRIVATE)
-            .getBoolean(ViaSixVpnService.KEY_RUNNING, false)
+    fun isRuntimeRunning(context: Context): Boolean {
+        val prefs =
+            context.getSharedPreferences(ViaSixVpnService.RUNTIME_PREFS, Context.MODE_PRIVATE)
+        val owner = prefs.getString(ViaSixVpnService.KEY_PROCESS_TOKEN, "")
+        return prefs.getBoolean(ViaSixVpnService.KEY_RUNNING, false) &&
+            owner == RuntimeProcessIdentity.token
+    }
 
     fun evaluateStart(prefs: SessionPrefs): SessionStartGate.Result {
         val mode = RoutingMode.parse(prefs.routingMode) ?: RoutingMode.RULE

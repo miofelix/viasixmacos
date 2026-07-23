@@ -18,6 +18,10 @@ import dev.viasix.app.mihomo.ControllerClient
 import dev.viasix.app.mihomo.MihomoInstaller
 import dev.viasix.app.mihomo.MihomoProcess
 import dev.viasix.app.mihomo.TrafficSampler
+import dev.viasix.app.prefs.SessionPrefsStore
+import dev.viasix.app.session.RuntimeProcessIdentity
+import dev.viasix.app.session.RuntimeStackFailure
+import dev.viasix.app.session.RuntimeStackHealth
 import dev.viasix.app.tile.ViaSixTileService
 import dev.viasix.app.tun.Tun2SocksEngine
 import dev.viasix.core.formatting.ByteRateFormatter
@@ -51,6 +55,7 @@ class ViaSixVpnService : VpnService() {
     private var mihomo: MihomoProcess? = null
     private var tunEngine: Tun2SocksEngine? = null
     private val starting = AtomicBoolean(false)
+    private val shuttingDown = AtomicBoolean(false)
     private val trafficSampler = TrafficSampler(maxHistory = 30)
     private val trafficLoopRunning = AtomicBoolean(false)
     private var trafficThread: Thread? = null
@@ -62,13 +67,22 @@ class ViaSixVpnService : VpnService() {
             shutdownAll("stopped by user", stopService = true)
             return START_NOT_STICKY
         }
+        if (shuttingDown.get()) return START_NOT_STICKY
 
-        val profile = intent?.getStringExtra(EXTRA_PROFILE).orEmpty()
-        val selectedIp = intent?.getStringExtra(EXTRA_SELECTED_IP)
-        val modeWire = intent?.getStringExtra(EXTRA_MODE) ?: "rule"
+        val restoredPrefs = if (intent == null) SessionPrefsStore(this).load() else null
+        val profile = intent?.getStringExtra(EXTRA_PROFILE) ?: restoredPrefs?.profileYaml.orEmpty()
+        val selectedIp =
+            intent?.getStringExtra(EXTRA_SELECTED_IP) ?: restoredPrefs?.selectedAddress
+        val modeWire = intent?.getStringExtra(EXTRA_MODE) ?: restoredPrefs?.routingMode ?: "rule"
         val mode = RoutingMode.parse(modeWire) ?: RoutingMode.RULE
-        val fullTunnel = intent?.getBooleanExtra(EXTRA_FULL_TUNNEL, true) ?: true
-        val reason = intent?.getStringExtra(EXTRA_REASON).orEmpty().ifBlank { "start" }
+        val fullTunnel =
+            intent?.getBooleanExtra(EXTRA_FULL_TUNNEL, restoredPrefs?.fullTunnel ?: true)
+                ?: restoredPrefs?.fullTunnel
+                ?: true
+        val reason =
+            intent?.getStringExtra(EXTRA_REASON).orEmpty().ifBlank {
+                if (intent == null) "system-restart" else "start"
+            }
 
         startForeground(NOTIFICATION_ID, buildNotification("Starting ViaSix…"))
         appendEvent("启动请求（$reason） mode=${mode.wire} fullTunnel=$fullTunnel", "info")
@@ -210,18 +224,37 @@ class ViaSixVpnService : VpnService() {
             appendEvent("HTTP 代理 VPN 会话已建立（无默认路由）", "success")
         }
         activeSecret = secret
-        startTrafficNotificationLoop(secret)
+        startTrafficNotificationLoop(secret, fullTunnel)
         Log.i(TAG, "stack ready fullTunnel=$fullTunnel health=${health.message}")
     }
 
     /** Clash-style live rates in the ongoing VPN notification. */
-    private fun startTrafficNotificationLoop(secret: String) {
+    private fun startTrafficNotificationLoop(
+        secret: String,
+        fullTunnel: Boolean,
+    ) {
         stopTrafficNotificationLoop()
         trafficSampler.reset()
         trafficLoopRunning.set(true)
         trafficThread =
             thread(name = "viasix-vpn-traffic", isDaemon = true) {
                 while (trafficLoopRunning.get()) {
+                    val failure =
+                        RuntimeStackHealth.failure(
+                            mihomoRunning = mihomo?.isRunning == true,
+                            fullTunnel = fullTunnel,
+                            tunnelRunning = tunEngine?.isRunning == true,
+                        )
+                    if (failure != null) {
+                        val component =
+                            when (failure) {
+                                RuntimeStackFailure.MIHOMO_EXITED -> "mihomo"
+                                RuntimeStackFailure.TUNNEL_EXITED -> "TUN 转发"
+                            }
+                        appendEvent("$component 异常退出，正在结束会话", "error")
+                        shutdownAll("$component exited unexpectedly", stopService = true)
+                        break
+                    }
                     try {
                         val snap = trafficSampler.sample("127.0.0.1", CONTROLLER_PORT, secret)
                         if (snap.live) {
@@ -258,6 +291,12 @@ class ViaSixVpnService : VpnService() {
         super.onDestroy()
     }
 
+    override fun onRevoke() {
+        appendEvent("系统撤销 VPN 权限", "warning")
+        shutdownAll("vpn permission revoked", stopService = true)
+        super.onRevoke()
+    }
+
     /** Stop engines/process but keep the service if a restart is about to begin. */
     private fun stopStackOnly(reason: String) {
         Log.i(TAG, "stop stack: $reason")
@@ -283,6 +322,7 @@ class ViaSixVpnService : VpnService() {
     }
 
     private fun shutdownAll(reason: String, stopService: Boolean) {
+        if (!shuttingDown.compareAndSet(false, true)) return
         Log.i(TAG, "shutdown: $reason")
         stopStackOnly(reason)
         writeRuntimeStatus(
@@ -315,6 +355,7 @@ class ViaSixVpnService : VpnService() {
             .putInt(KEY_MIXED_PORT, MIXED_PORT)
             .putString(KEY_VERSION, version.orEmpty())
             .putLong(KEY_STARTED_AT, startedAt ?: 0L)
+            .putString(KEY_PROCESS_TOKEN, if (running) RuntimeProcessIdentity.token else "")
             .apply()
         notifyTileRefresh()
     }
@@ -331,6 +372,7 @@ class ViaSixVpnService : VpnService() {
         }
     }
 
+    @Synchronized
     private fun appendEvent(message: String, level: String) {
         try {
             val prefs = getSharedPreferences(RUNTIME_PREFS, MODE_PRIVATE)
@@ -436,6 +478,7 @@ class ViaSixVpnService : VpnService() {
         const val KEY_VERSION = "version"
         const val KEY_STARTED_AT = "startedAt"
         const val KEY_EVENTS = "events"
+        const val KEY_PROCESS_TOKEN = "processToken"
 
         private const val CHANNEL_ID = "viasix_vpn"
         private const val NOTIFICATION_ID = 42

@@ -42,6 +42,10 @@ class Tun2SocksEngine(
     private val associateFailBackoffMs: Long = 5_000L,
 ) {
     private val running = AtomicBoolean(false)
+
+    val isRunning: Boolean
+        get() = running.get()
+
     private val sessions = ConcurrentHashMap<String, TcpSession>()
     private val activeSessionCount = AtomicInteger(0)
     private val udpClients = UdpClientEndpointTable(maxEntries = maxUdpClients)

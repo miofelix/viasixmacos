@@ -40,6 +40,11 @@ class SessionRecoverySurfaceTest {
         assertTrue(tile.contains("Intent.FLAG_ACTIVITY_SINGLE_TOP"))
         assertTrue(service.contains("Intent.FLAG_ACTIVITY_CLEAR_TOP"))
         assertTrue(service.contains("Intent.FLAG_ACTIVITY_SINGLE_TOP"))
+        assertTrue(service.contains("SessionPrefsStore(this).load()"))
+        assertTrue(service.contains("\"system-restart\""))
+        assertTrue(service.contains("override fun onRevoke"))
+        assertTrue(service.contains("RuntimeStackHealth.failure"))
+        assertTrue(service.contains("RuntimeProcessIdentity.token"))
         assertTrue(prefs.contains(".put(\"selectedSection\", selectedSection)"))
         assertTrue(prefs.contains("o.optString(\"selectedSection\", \"overview\")"))
     }
