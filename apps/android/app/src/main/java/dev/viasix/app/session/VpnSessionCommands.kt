@@ -33,6 +33,8 @@ object VpnSessionCommands {
             prefs.profileYaml,
             AppRoutingMode.parse(prefs.appRoutingMode),
             prefs.selectedAppPackages,
+            prefs.dnsServer,
+            prefs.fullTunnel,
         )
     }
 
@@ -47,6 +49,8 @@ object VpnSessionCommands {
             .putExtra(ViaSixVpnService.EXTRA_SELECTED_IP, prefs.selectedAddress)
             .putExtra(ViaSixVpnService.EXTRA_MODE, prefs.routingMode)
             .putExtra(ViaSixVpnService.EXTRA_FULL_TUNNEL, prefs.fullTunnel)
+            .putExtra(ViaSixVpnService.EXTRA_DNS_ROUTING_MODE, prefs.dnsRoutingMode)
+            .putExtra(ViaSixVpnService.EXTRA_DNS_SERVER, prefs.dnsServer)
             .putExtra(ViaSixVpnService.EXTRA_APP_ROUTING_MODE, prefs.appRoutingMode)
             .putStringArrayListExtra(
                 ViaSixVpnService.EXTRA_SELECTED_APP_PACKAGES,

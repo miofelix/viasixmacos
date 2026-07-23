@@ -75,6 +75,35 @@ class SessionStartGateTest {
     }
 
     @Test
+    fun invalidDnsServerIsBlockedInSettings() {
+        val result =
+            SessionStartGate.evaluate(
+                RoutingMode.DIRECT,
+                selectedAddress = goodNode,
+                summary = managedSummary,
+                dnsServer = "dns.example.com",
+            )
+
+        assertTrue(result is SessionStartGate.Result.Blocked)
+        assertEquals("settings", (result as SessionStartGate.Result.Blocked).sectionWire)
+        assertTrue(result.message.contains("DNS"))
+    }
+
+    @Test
+    fun proxyOnlyModeDoesNotRequireTunDnsSettings() {
+        val result =
+            SessionStartGate.evaluate(
+                RoutingMode.DIRECT,
+                selectedAddress = goodNode,
+                summary = managedSummary,
+                dnsServer = "not-used.example",
+                fullTunnel = false,
+            )
+
+        assertEquals(SessionStartGate.Result.Ok, result)
+    }
+
+    @Test
     fun ruleModeBlocksWithoutIpv6() {
         val result =
             SessionStartGate.evaluate(RoutingMode.RULE, "invalid", managedSummary)

@@ -718,6 +718,12 @@ fun OverviewScreen(
                     },
                     Icons.Outlined.Apps,
                 )
+                HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
+                CompactInfoRow(
+                    "DNS",
+                    "${state.dnsSettings.mode.label} · ${state.dnsSettings.server}",
+                    Icons.Outlined.Language,
+                )
                 Spacer(Modifier.height(VisualStyle.spacing12))
             }
 

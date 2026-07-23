@@ -51,6 +51,8 @@ import dev.viasix.app.runtime.RuntimeComponentId
 import dev.viasix.app.runtime.RuntimeComponentInfo
 import dev.viasix.app.session.AppRoutingMode
 import dev.viasix.app.session.AppRoutingPolicy
+import dev.viasix.app.session.DnsRoutingMode
+import dev.viasix.app.session.DnsSettingsPolicy
 import dev.viasix.app.state.SessionUiState
 import dev.viasix.app.ui.AppSection
 import dev.viasix.app.ui.displayName
@@ -80,6 +82,8 @@ fun SettingsScreen(
     onToggleAppRoutingPackage: (String) -> Unit = {},
     onClearSelectedAppPackages: () -> Unit = {},
     onRefreshInstalledApps: () -> Unit = {},
+    onDnsRoutingModeChange: (DnsRoutingMode) -> Unit = {},
+    onDnsServerChange: (String) -> Unit = {},
 ) {
     val colors = LocalViaSixColors.current
     val uriHandler = LocalUriHandler.current
@@ -110,7 +114,7 @@ fun SettingsScreen(
                 HorizontalDivider(color = colors.surfaceBorder)
                 SettingRow(
                     title = "全量隧道",
-                    detail = "默认路由 + 用户态 TCP/UDP（IPv4/IPv6→SOCKS；DNS 独立 protect）",
+                    detail = "默认路由 + 用户态 TCP/UDP（IPv4/IPv6→SOCKS；DNS 可经代理或直连）",
                     icon = Icons.Outlined.VpnKey,
                 ) {
                     Switch(
@@ -130,6 +134,72 @@ fun SettingsScreen(
                             },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier =
+                        Modifier.padding(
+                            start = VisualStyle.spacing16,
+                            end = VisualStyle.spacing16,
+                            bottom = VisualStyle.spacing12,
+                        ),
+                )
+                HorizontalDivider(color = colors.surfaceBorder)
+                CompactInfoRow("DNS 路由", state.dnsSettings.mode.label)
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = VisualStyle.spacing16),
+                    horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+                ) {
+                    DnsRoutingMode.entries.forEach { mode ->
+                        if (state.dnsSettings.mode == mode) {
+                            FilledTonalButton(
+                                onClick = { onDnsRoutingModeChange(mode) },
+                                enabled = !tunnelLocked,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(mode.label)
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = { onDnsRoutingModeChange(mode) },
+                                enabled = !tunnelLocked,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(mode.label)
+                            }
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = state.dnsSettings.server,
+                    onValueChange = onDnsServerChange,
+                    label = { Text("DNS 服务器（数字 IP）") },
+                    isError = !DnsSettingsPolicy.isValidServer(state.dnsSettings.server),
+                    enabled = !tunnelLocked,
+                    singleLine = true,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = VisualStyle.spacing16,
+                                end = VisualStyle.spacing16,
+                                top = VisualStyle.spacing8,
+                            ),
+                )
+                Text(
+                    text =
+                        if (DnsSettingsPolicy.isValidServer(state.dnsSettings.server)) {
+                            state.dnsSettings.mode.detail + " 仅全量隧道使用此设置。"
+                        } else {
+                            "请输入合法的数字 IPv4 或 IPv6 地址。"
+                        },
+                    style = MaterialTheme.typography.bodySmall,
+                    color =
+                        if (DnsSettingsPolicy.isValidServer(state.dnsSettings.server)) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            colors.warning
+                        },
                     modifier =
                         Modifier.padding(
                             start = VisualStyle.spacing16,

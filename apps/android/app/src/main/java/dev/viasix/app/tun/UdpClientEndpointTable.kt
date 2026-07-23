@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Demux is **per client (ip, port)**, not per remote: each client endpoint gets its own
  * associate socket so concurrent flows to the same remote (e.g. two QUIC to CDN:443)
- * cannot steal each other's replies. DNS (port 53) does not use this table.
+ * cannot steal each other's replies. Proxied DNS uses the same per-client isolation.
  */
 internal class UdpClientEndpointTable(
     private val maxEntries: Int = 256,

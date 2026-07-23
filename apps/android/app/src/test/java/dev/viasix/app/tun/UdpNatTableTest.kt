@@ -9,8 +9,8 @@ import java.net.InetAddress
  * Regression: production demux must NOT reverse-NAT solely by remote host:port
  * (last-writer-wins). Two local ports talking to the same remote must remain distinct.
  *
- * DNS concurrent safety is enforced by the engine always using per-query protect
- * sockets for port 53; general UDP uses per-client ASSOCIATE ([UdpClientEndpointTable]).
+ * DNS in proxy mode and general UDP use per-client ASSOCIATE
+ * ([UdpClientEndpointTable]); explicit direct DNS uses per-query protected sockets.
  */
 class UdpDemuxContractTest {
     @Test

@@ -20,6 +20,7 @@ ViaSix 是 **全平台** 本地运行的网络客户端（macOS / Windows / Andr
 - Mihomo 服务器配置、本机代理设置、生成的运行配置、Provider 缓存与系统代理恢复快照（桌面端）
 - ViaSix 管理的第三方运行组件
 - 会话偏好（代理模式、分区记忆、本地端口等）
+- Android 全量隧道的 DNS 路由方式与用户填写的数字 DNS 服务器地址
 - Android 分应用路由所选择的应用包名；应用选择器仅在本机查询具有启动器入口的应用，不上传应用列表
 
 代理配置可能包含 UUID、域名、端口、密钥或其他敏感信息。ViaSix 将应用数据目录限制为当前用户（或应用沙箱）访问，但磁盘备份、恶意软件、拥有同等用户权限的进程或用户主动分享仍可能暴露这些文件。
@@ -34,6 +35,7 @@ ViaSix 是 **全平台** 本地运行的网络客户端（macOS / Windows / Andr
 - CloudflareSpeedTest 的上游默认测速地址，或用户填写的自定义测速 URL（支持测速的端）
 - 出口 IP / 地理信息检测所用的 HTTP(S) 服务（端点与是否经本地代理因端与用户设置而异）
 - 用户 Mihomo 配置指定的服务器、Proxy Provider、Rule Provider、DNS 和目标站点
+- Android 用户选择的 DNS 服务器；默认通过本地 mihomo/SOCKS 路径访问，用户也可显式选择受保护套接字直连
 
 ViaSix 无法控制这些第三方服务的日志、隐私政策、可用性或司法管辖范围。`XIU2/CloudflareSpeedTest` 是独立第三方项目，并非 Cloudflare 官方产品。
 

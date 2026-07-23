@@ -11,6 +11,9 @@ import dev.viasix.app.session.AppRoutingPolicy
 import dev.viasix.app.session.AppRoutingState
 import dev.viasix.app.session.BatteryOptimizationState
 import dev.viasix.app.session.ConnectionPhase
+import dev.viasix.app.session.DnsRoutingMode
+import dev.viasix.app.session.DnsSettingsPolicy
+import dev.viasix.app.session.DnsSettingsState
 import dev.viasix.app.session.NotificationPermissionState
 import dev.viasix.app.session.ProfileDraftGate
 import dev.viasix.app.session.VpnPermissionState
@@ -128,6 +131,7 @@ data class SessionUiState(
     val candidateAddresses: List<String> = emptyList(),
     val routingMode: RoutingMode = RoutingMode.RULE,
     val fullTunnel: Boolean = true,
+    val dnsSettings: DnsSettingsState = DnsSettingsState(),
     val appRouting: AppRoutingState = AppRoutingState(),
     val notificationPermission: NotificationPermissionState = NotificationPermissionState(),
     val vpnPermission: VpnPermissionState = VpnPermissionState(),
@@ -177,6 +181,8 @@ data class SessionUiState(
             selectedAddress = selectedAddress,
             routingMode = routingMode.wire,
             fullTunnel = fullTunnel,
+            dnsRoutingMode = dnsSettings.mode.wire,
+            dnsServer = dnsSettings.server.trim(),
             appRoutingMode = appRouting.mode.wire,
             selectedAppPackages = appRouting.selectedPackages,
             candidateAddresses = candidateAddresses,
@@ -220,6 +226,12 @@ data class SessionUiState(
                 candidateAddresses = candidates,
                 routingMode = RoutingMode.parse(prefs.routingMode) ?: RoutingMode.RULE,
                 fullTunnel = prefs.fullTunnel,
+                dnsSettings =
+                    DnsSettingsState(
+                        mode = DnsRoutingMode.parse(prefs.dnsRoutingMode),
+                        server =
+                            prefs.dnsServer.trim().ifBlank { DnsSettingsPolicy.DEFAULT_SERVER },
+                    ),
                 appRouting =
                     AppRoutingState(
                         mode = AppRoutingMode.parse(prefs.appRoutingMode),

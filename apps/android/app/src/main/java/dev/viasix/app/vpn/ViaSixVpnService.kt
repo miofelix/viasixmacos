@@ -21,6 +21,8 @@ import dev.viasix.app.mihomo.TrafficSampler
 import dev.viasix.app.prefs.SessionPrefsStore
 import dev.viasix.app.session.AppRoutingMode
 import dev.viasix.app.session.AppRoutingPolicy
+import dev.viasix.app.session.DnsRoutingMode
+import dev.viasix.app.session.DnsSettingsPolicy
 import dev.viasix.app.session.RuntimeProcessIdentity
 import dev.viasix.app.session.RuntimeStackFailure
 import dev.viasix.app.session.RuntimeStackHealth
@@ -35,6 +37,8 @@ import dev.viasix.core.projection.RoutingMode
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.InetAddress
+import java.net.Inet6Address
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -48,7 +52,7 @@ import kotlin.concurrent.thread
  * 2) Establish VPN with default routes (IPv4 + IPv6 when full tunnel)
  * 3) Exclude this app UID from the VPN (prevents routing loops for mihomo)
  * 4) Userspace IPv4/IPv6 TCP→SOCKS CONNECT + general UDP→per-client SOCKS UDP ASSOCIATE
- *    ([Tun2SocksEngine]); DNS/53 always uses protected per-query DatagramSocket
+ *    ([Tun2SocksEngine]); DNS uses SOCKS by default with an explicit protected-direct option
  *
  * Supports restart with new profile/node without leaving a half-live stack.
  * Emits a circular event log into SharedPreferences for the UI log pane.
@@ -88,6 +92,15 @@ class ViaSixVpnService : VpnService() {
             intent?.getBooleanExtra(EXTRA_FULL_TUNNEL, restoredPrefs?.fullTunnel ?: true)
                 ?: restoredPrefs?.fullTunnel
                 ?: true
+        val dnsRoutingMode =
+            DnsRoutingMode.parse(
+                intent?.getStringExtra(EXTRA_DNS_ROUTING_MODE)
+                    ?: restoredPrefs?.dnsRoutingMode,
+            )
+        val dnsServerInput =
+            intent?.getStringExtra(EXTRA_DNS_SERVER)
+                ?: restoredPrefs?.dnsServer
+                ?: DnsSettingsPolicy.DEFAULT_SERVER
         val appRoutingMode =
             AppRoutingMode.parse(
                 intent?.getStringExtra(EXTRA_APP_ROUTING_MODE)
@@ -124,6 +137,8 @@ class ViaSixVpnService : VpnService() {
                     selectedIp,
                     mode,
                     fullTunnel,
+                    dnsRoutingMode,
+                    dnsServerInput,
                     appRoutingMode,
                     selectedAppPackages,
                 )
@@ -144,9 +159,17 @@ class ViaSixVpnService : VpnService() {
         selectedIp: String?,
         mode: RoutingMode,
         fullTunnel: Boolean,
+        dnsRoutingMode: DnsRoutingMode,
+        dnsServerInput: String,
         appRoutingMode: AppRoutingMode,
         selectedAppPackages: List<String>,
     ) {
+        val normalizedDnsServer = DnsSettingsPolicy.normalizeServer(dnsServerInput)
+        if (fullTunnel && normalizedDnsServer == null) {
+            throw IllegalArgumentException("invalid DNS server: $dnsServerInput")
+        }
+        val dnsServer = normalizedDnsServer ?: DnsSettingsPolicy.DEFAULT_SERVER
+        val dnsAddress = InetAddress.getByName(dnsServer)
         val secret = UUID.randomUUID().toString().replace("-", "")
         val options =
             ProjectOptions(
@@ -197,15 +220,26 @@ class ViaSixVpnService : VpnService() {
                 .setSession("ViaSix")
                 .setMtu(1500)
                 .addAddress("10.10.0.2", 32)
-                .addDnsServer("1.1.1.1")
         applyAppRouting(builder, appRoutingMode, selectedAppPackages)
 
         if (fullTunnel) {
             builder.addRoute("0.0.0.0", 0)
+            if (dnsAddress !is Inet6Address) {
+                builder.addDnsServer(dnsServer)
+            }
             try {
                 builder.addAddress("fd00:10:10::2", 128)
                 builder.addRoute("::", 0)
+                if (dnsAddress is Inet6Address) {
+                    builder.addDnsServer(dnsServer)
+                }
             } catch (error: Exception) {
+                if (dnsAddress is Inet6Address) {
+                    throw IllegalStateException(
+                        "IPv6 DNS requires an IPv6 VPN route: ${error.message}",
+                        error,
+                    )
+                }
                 Log.w(TAG, "IPv6 route not applied: ${error.message}")
                 appendEvent("IPv6 默认路由未应用：${error.message}", "warning")
             }
@@ -233,6 +267,8 @@ class ViaSixVpnService : VpnService() {
                     tun = established,
                     socksHost = "127.0.0.1",
                     socksPort = MIXED_PORT,
+                    dnsRoutingMode = dnsRoutingMode,
+                    dnsUpstream = dnsAddress,
                 )
             engine.start()
             tunEngine = engine
@@ -244,6 +280,10 @@ class ViaSixVpnService : VpnService() {
                 },
             )
             appendEvent("全量隧道已建立（TCP/UDP IPv4/IPv6 → SOCKS）", "success")
+            appendEvent(
+                "DNS：$dnsServer · ${dnsRoutingMode.label}",
+                "info",
+            )
         } else {
             updateNotification(
                 if (health.ok) {
@@ -533,6 +573,8 @@ class ViaSixVpnService : VpnService() {
         const val EXTRA_SELECTED_IP = "selected_ip"
         const val EXTRA_MODE = "mode"
         const val EXTRA_FULL_TUNNEL = "full_tunnel"
+        const val EXTRA_DNS_ROUTING_MODE = "dns_routing_mode"
+        const val EXTRA_DNS_SERVER = "dns_server"
         const val EXTRA_APP_ROUTING_MODE = "app_routing_mode"
         const val EXTRA_SELECTED_APP_PACKAGES = "selected_app_packages"
         const val EXTRA_REASON = "reason"

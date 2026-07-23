@@ -37,6 +37,7 @@ import dev.viasix.app.session.AppRoutingMode
 import dev.viasix.app.session.AppRoutingPolicy
 import dev.viasix.app.session.BatteryOptimizationState
 import dev.viasix.app.session.ConnectionPhase
+import dev.viasix.app.session.DnsRoutingMode
 import dev.viasix.app.session.InstalledAppsRepository
 import dev.viasix.app.session.NotificationPermissionFlow
 import dev.viasix.app.session.NotificationPermissionState
@@ -456,6 +457,8 @@ class MainActivity : ComponentActivity() {
                             state.profileSummary,
                             state.appRouting.mode,
                             state.appRouting.selectedPackages,
+                            state.dnsSettings.server,
+                            state.fullTunnel,
                         )
                 ) {
                     is SessionStartGate.Result.Blocked -> {
@@ -1271,6 +1274,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            fun changeDnsRoutingMode(mode: DnsRoutingMode) {
+                if (state.connectionPhase.isActiveOrTransitioning) return
+                update { it.copy(dnsSettings = it.dnsSettings.copy(mode = mode)) }
+            }
+
+            fun changeDnsServer(server: String) {
+                if (state.connectionPhase.isActiveOrTransitioning) return
+                update { it.copy(dnsSettings = it.dnsSettings.copy(server = server)) }
+            }
+
             ViaSixApp(
                 state = state,
                 selectedSection = selectedSection,
@@ -1353,6 +1366,8 @@ class MainActivity : ComponentActivity() {
                 onToggleAppRoutingPackage = ::toggleAppRoutingPackage,
                 onClearSelectedAppPackages = ::clearSelectedAppPackages,
                 onRefreshInstalledApps = ::refreshInstalledApps,
+                onDnsRoutingModeChange = ::changeDnsRoutingMode,
+                onDnsServerChange = ::changeDnsServer,
                 onRoutingModeChange = ::patchRoutingMode,
                 onFullTunnelChange = { full ->
                     if (state.connectionPhase.isActiveOrTransitioning) {

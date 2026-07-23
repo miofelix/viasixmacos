@@ -3,6 +3,8 @@ package dev.viasix.app.tun
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import dev.viasix.app.session.DnsRoutingMode
+import dev.viasix.app.session.DnsSettingsPolicy
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.DatagramPacket
@@ -26,7 +28,7 @@ import kotlin.random.Random
  * Userspace IPv4/IPv6 forwarder for full-tunnel mode:
  * - TCP → SOCKS5 CONNECT (mihomo mixed port)
  * - UDP general → SOCKS5 UDP ASSOCIATE **per local client endpoint** (correct demux)
- * - UDP/53 (DNS) → always protected per-query DatagramSocket (concurrent-safe)
+ * - UDP/53 (DNS) → SOCKS5 by default, or protected per-query direct sockets when requested
  *
  * ASSOCIATE open runs on the worker pool (never blocks the TUN reader). Failures are
  * negative-cached so retries do not stall packet processing.
@@ -36,6 +38,7 @@ class Tun2SocksEngine(
     private val tun: ParcelFileDescriptor,
     private val socksHost: String,
     private val socksPort: Int,
+    private val dnsRoutingMode: DnsRoutingMode = DnsRoutingMode.PROXY,
     private val dnsUpstream: InetAddress = InetAddress.getByName("1.1.1.1"),
     private val maxSessions: Int = 256,
     private val maxUdpClients: Int = 256,
@@ -409,9 +412,9 @@ class Tun2SocksEngine(
             buffer.position(pos)
         }
 
-        // DNS: always per-query protected sockets so concurrent A/B queries demux correctly.
-        // Never share a single SOCKS reverse-NAT keyed only by remote:53.
-        if (udp.destPort == 53) {
+        // Explicit direct DNS keeps per-query protected sockets for concurrent demux.
+        // Proxy DNS falls through to the per-client SOCKS5 UDP ASSOCIATE path below.
+        if (DnsSettingsPolicy.shouldUseProtectedDirect(udp.destPort, dnsRoutingMode)) {
             executor.execute {
                 forwardDnsDirect(clientIp, udp.sourcePort, remoteIp, payload, ipv6)
             }

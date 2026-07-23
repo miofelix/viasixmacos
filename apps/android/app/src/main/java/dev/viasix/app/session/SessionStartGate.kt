@@ -26,6 +26,8 @@ object SessionStartGate {
         profileYaml: String,
         appRoutingMode: AppRoutingMode = AppRoutingMode.ALL,
         selectedAppPackages: Collection<String> = emptyList(),
+        dnsServer: String = DnsSettingsPolicy.DEFAULT_SERVER,
+        fullTunnel: Boolean = true,
     ): Result {
         val summary = ProfileSummaryParser.parse(profileYaml)
         return evaluate(
@@ -34,6 +36,8 @@ object SessionStartGate {
             summary,
             appRoutingMode,
             selectedAppPackages,
+            dnsServer,
+            fullTunnel,
         )
     }
 
@@ -43,7 +47,15 @@ object SessionStartGate {
         summary: ProfileSummary,
         appRoutingMode: AppRoutingMode = AppRoutingMode.ALL,
         selectedAppPackages: Collection<String> = emptyList(),
+        dnsServer: String = DnsSettingsPolicy.DEFAULT_SERVER,
+        fullTunnel: Boolean = true,
     ): Result {
+        if (fullTunnel && !DnsSettingsPolicy.isValidServer(dnsServer)) {
+            return Result.Blocked(
+                message = "无法连接：请输入合法的 IPv4 或 IPv6 DNS 地址",
+                sectionWire = "settings",
+            )
+        }
         if (
             appRoutingMode == AppRoutingMode.ONLY_SELECTED &&
                 selectedAppPackages.none(AppRoutingPolicy::isValidPackageName)

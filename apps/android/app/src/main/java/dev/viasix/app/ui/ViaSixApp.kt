@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import dev.viasix.app.net.ExitIPDetectionMode
 import dev.viasix.app.runtime.RuntimeComponentId
 import dev.viasix.app.session.AppRoutingMode
+import dev.viasix.app.session.DnsRoutingMode
 import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.state.SessionUiState
 import dev.viasix.app.ui.screens.LogsScreen
@@ -92,6 +93,8 @@ fun ViaSixApp(
     onToggleAppRoutingPackage: (String) -> Unit = {},
     onClearSelectedAppPackages: () -> Unit = {},
     onRefreshInstalledApps: () -> Unit = {},
+    onDnsRoutingModeChange: (DnsRoutingMode) -> Unit = {},
+    onDnsServerChange: (String) -> Unit = {},
     onRoutingModeChange: (RoutingMode) -> Unit,
     onFullTunnelChange: (Boolean) -> Unit,
     onStart: () -> Unit,
@@ -241,6 +244,8 @@ fun ViaSixApp(
                                     onToggleAppRoutingPackage = onToggleAppRoutingPackage,
                                     onClearSelectedAppPackages = onClearSelectedAppPackages,
                                     onRefreshInstalledApps = onRefreshInstalledApps,
+                                    onDnsRoutingModeChange = onDnsRoutingModeChange,
+                                    onDnsServerChange = onDnsServerChange,
                                 )
                         }
                     }
