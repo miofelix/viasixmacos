@@ -66,6 +66,7 @@ class Tun2SocksEngine(
         Executors.newSingleThreadScheduledExecutor { r ->
             Thread(r, "viasix-tun-maintenance").apply { isDaemon = true }
         }
+    private val udpRelayReactor = UdpRelayReactor()
     private lateinit var inChannel: FileChannel
     private lateinit var outStream: FileOutputStream
 
@@ -73,6 +74,7 @@ class Tun2SocksEngine(
         if (!running.compareAndSet(false, true)) return
         inChannel = FileInputStream(tun.fileDescriptor).channel
         outStream = FileOutputStream(tun.fileDescriptor)
+        udpRelayReactor.start()
         maintenanceExecutor.scheduleWithFixedDelay(
             {
                 try {
@@ -167,6 +169,7 @@ class Tun2SocksEngine(
         sessions.clear()
         activeSessionCount.set(0)
         closeAllUdpRelays()
+        udpRelayReactor.close()
         udpClients.clear()
         outboundPackets.clear()
         maintenanceExecutor.shutdownNow()
@@ -829,7 +832,7 @@ class Tun2SocksEngine(
             if (!clientRelay.publishRelay(relay)) return
             installed = true
             clientRelay.failedUntilMs.set(0L)
-            startUdpReceiver(clientRelay, relay)
+            registerUdpReceiver(clientRelay, relay)
             // Drain datagrams queued during open.
             while (true) {
                 val pending = clientRelay.pollPending() ?: break
@@ -857,17 +860,18 @@ class Tun2SocksEngine(
         }
     }
 
-    private fun startUdpReceiver(clientRelay: UdpClientRelay, relay: Socks5UdpRelay) {
-        if (!ioWorkers.execute {
-            val endpoint = clientRelay.endpoint
-            try {
-                while (running.get() && relay.isOpen) {
-                    val datagram =
-                        try {
-                            relay.receive(200)
-                        } catch (_: Exception) {
-                            break
-                        } ?: continue
+    private fun registerUdpReceiver(clientRelay: UdpClientRelay, relay: Socks5UdpRelay) {
+        val endpoint = clientRelay.endpoint
+        if (
+            !udpRelayReactor.register(
+                relay = relay,
+                onDatagram = { datagram ->
+                    if (
+                        udpRelays[endpoint.key()] !== clientRelay ||
+                            clientRelay.isClosed
+                    ) {
+                        return@register
+                    }
                     // Demux is implicit: this relay only carries traffic for [endpoint].
                     enqueuePacket(
                         if (endpoint.ipv6) {
@@ -889,12 +893,11 @@ class Tun2SocksEngine(
                         },
                     )
                     udpClients.noteActivity(endpoint)
-                }
-            } finally {
-                closeUdpRelay(clientRelay)
-            }
-        }) {
-            throw RejectedExecutionException("UDP relay receiver capacity reached")
+                },
+                onClosed = { closeUdpRelay(clientRelay) },
+            )
+        ) {
+            throw RejectedExecutionException("UDP relay reactor unavailable")
         }
     }
 

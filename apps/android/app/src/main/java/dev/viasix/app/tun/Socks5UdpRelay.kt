@@ -1,13 +1,15 @@
 package dev.viasix.app.tun
 
 import java.io.IOException
-import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.nio.ByteBuffer
+import java.nio.channels.DatagramChannel
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.LockSupport
 
 /**
  * Long-lived SOCKS5 UDP ASSOCIATE relay against a mixed/SOCKS port (e.g. mihomo).
@@ -15,39 +17,57 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal class Socks5UdpRelay private constructor(
     private val control: Socket,
-    private val udp: DatagramSocket,
-    private val relayAddress: InetSocketAddress,
+    private val udp: DatagramChannel,
 ) : AutoCloseable {
     private val open = AtomicBoolean(true)
+    private val receiveBuffer = ByteBuffer.allocate(MAX_PACKET_BYTES)
 
     val isOpen: Boolean
-        get() = open.get() && !control.isClosed && !udp.isClosed
+        get() = open.get() && !control.isClosed && udp.isOpen
+
+    internal val selectableChannel: DatagramChannel
+        get() = udp
 
     fun send(remote: InetAddress, remotePort: Int, payload: ByteArray) {
         if (!isOpen) throw IOException("UDP relay closed")
         val framed = Socks5UdpFraming.wrap(remote, remotePort, payload)
-        val packet = DatagramPacket(framed, framed.size, relayAddress)
-        udp.send(packet)
+        val sent = udp.write(ByteBuffer.wrap(framed))
+        if (sent != framed.size) throw IOException("SOCKS5 UDP relay send would block")
     }
 
     /**
-     * Blocking receive with optional timeout (ms). Returns null on timeout.
+     * Poll one available relay datagram without blocking.
      */
-    fun receive(timeoutMs: Int = 200): Socks5UdpFraming.Datagram? {
+    internal fun receiveNow(): Socks5UdpFraming.Datagram? {
         if (!isOpen) return null
-        udp.soTimeout = timeoutMs
-        val buf = ByteArray(65535)
-        val packet = DatagramPacket(buf, buf.size)
-        return try {
-            udp.receive(packet)
-            Socks5UdpFraming.unwrap(packet.data, packet.length)
-        } catch (_: SocketTimeoutException) {
-            if (!controlConnectionAlive()) {
-                close()
-                throw IOException("SOCKS5 UDP control connection closed")
-            }
-            null
+        return synchronized(receiveBuffer) {
+            receiveBuffer.clear()
+            val length = udp.read(receiveBuffer)
+            if (length <= 0) return@synchronized null
+            Socks5UdpFraming.unwrap(receiveBuffer.array(), length)
         }
+    }
+
+    /** Compatibility helper for bounded waits in lifecycle tests. */
+    fun receive(timeoutMs: Int = 200): Socks5UdpFraming.Datagram? {
+        val deadline = System.nanoTime() + timeoutMs.coerceAtLeast(0).toLong() * 1_000_000L
+        while (isOpen) {
+            receiveNow()?.let { return it }
+            if (System.nanoTime() >= deadline) {
+                if (!probeControlConnection()) {
+                    throw IOException("SOCKS5 UDP control connection closed")
+                }
+                return null
+            }
+            LockSupport.parkNanos(RECEIVE_POLL_NANOS)
+        }
+        return null
+    }
+
+    internal fun probeControlConnection(): Boolean {
+        val alive = controlConnectionAlive()
+        if (!alive) close()
+        return alive
     }
 
     /** SOCKS5 sends no control payload after ASSOCIATE, so timeout means alive and EOF means dead. */
@@ -100,7 +120,7 @@ internal class Socks5UdpRelay private constructor(
             protectDatagram: ((DatagramSocket) -> Boolean)? = null,
         ): Socks5UdpRelay {
             val control = Socket()
-            var udp: DatagramSocket? = null
+            var udp: DatagramChannel? = null
             try {
                 control.tcpNoDelay = true
                 control.soTimeout = connectTimeoutMs
@@ -150,14 +170,17 @@ internal class Socks5UdpRelay private constructor(
                     throw IOException("SOCKS5 UDP relay address could not be resolved")
                 }
 
-                val datagram = DatagramSocket()
+                val datagram = DatagramChannel.open()
                 udp = datagram
-                if (protectDatagram?.invoke(datagram) == false) {
+                datagram.bind(null)
+                val datagramSocket = datagram.socket()
+                if (protectDatagram?.invoke(datagramSocket) == false) {
                     throw IOException("VpnService.protect(SOCKS5 UDP socket) failed")
                 }
                 datagram.connect(relayAddress)
+                datagram.configureBlocking(false)
                 control.soTimeout = 0
-                return Socks5UdpRelay(control, datagram, relayAddress).also { udp = null }
+                return Socks5UdpRelay(control, datagram).also { udp = null }
             } catch (error: Exception) {
                 try {
                     udp?.close()
@@ -217,5 +240,7 @@ internal class Socks5UdpRelay private constructor(
         }
 
         private const val CONTROL_PROBE_TIMEOUT_MS = 1
+        private const val MAX_PACKET_BYTES = 65_535
+        private const val RECEIVE_POLL_NANOS = 1_000_000L
     }
 }
