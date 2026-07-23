@@ -32,3 +32,26 @@ if (unique.size !== 1) {
   process.exit(1);
 }
 console.log(`version align OK: ${pkg}`);
+
+// RC.EXE / tauri-winres require a classic ICO 3.00 resource. A PNG renamed to
+// .ico fails on Windows runners with "resource file is not in 3.00 format".
+const icoPath = path.join(root, "src-tauri/icons/icon.ico");
+const ico = fs.readFileSync(icoPath);
+if (ico.length >= 8 && ico[0] === 0x89 && ico.subarray(1, 4).toString("ascii") === "PNG") {
+  console.error(`${icoPath}: is a PNG, not an ICO (Windows RC.EXE will fail)`);
+  process.exit(1);
+}
+if (
+  ico.length < 6 ||
+  ico.readUInt16LE(0) !== 0 ||
+  ico.readUInt16LE(2) !== 1 ||
+  ico.readUInt16LE(4) < 1
+) {
+  console.error(
+    `${icoPath}: missing ICO 3.00 header (reserved=0, type=1, count>=1)`,
+  );
+  process.exit(1);
+}
+console.log(
+  `icon.ico OK (ICO type=1, ${ico.readUInt16LE(4)} image(s), ${ico.length} bytes)`,
+);
