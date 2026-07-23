@@ -19,8 +19,12 @@ class SettingsResidualCopyTest {
             text.contains("生产级 tun2socks") || text.contains("完整 UDP·IPv6 转发仍在路线图"),
         )
         assertTrue(
-            "Settings should describe shipped TCP/UDP tunnel or optional hev residual",
-            text.contains("TCP/UDP") && text.contains("native hev"),
+            "Settings full-tunnel detail should describe shipped TCP/UDP path",
+            text.contains("TCP/UDP"),
+        )
+        assertTrue(
+            "Settings should expose component install action",
+            text.contains("检查并安装组件"),
         )
         assertTrue(
             "Version should come from BuildConfig, not a hard-coded string",

@@ -3,8 +3,8 @@ package dev.viasix.app.cfst
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import dev.viasix.app.runtime.RuntimeBinaryInstall
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
 
 /**
@@ -12,7 +12,7 @@ import java.io.IOException
  * app private files directory (same pattern as [dev.viasix.app.mihomo.MihomoInstaller]).
  *
  * Ships arm64 only (`cfst/cfst-arm64` from `scripts/fetch-cfst.mjs`, linux_arm64
- * upstream). Callers should surface a clear error on unsupported ABIs.
+ * upstream, statically linked). Callers should surface a clear error on unsupported ABIs.
  */
 object CfstInstaller {
     private const val TAG = "CfstInstaller"
@@ -27,6 +27,14 @@ object CfstInstaller {
         val abiSupported: Boolean,
     )
 
+    data class Status(
+        val binary: File?,
+        val ipv6List: File?,
+        val ready: Boolean,
+        val abiSupported: Boolean,
+        val message: String,
+    )
+
     fun installIfNeeded(context: Context): InstallResult {
         val destDir = File(context.filesDir, "cfst")
         if (!destDir.exists() && !destDir.mkdirs()) {
@@ -37,47 +45,57 @@ object CfstInstaller {
         val ipv6List = File(destDir, IPV6_LIST_NAME)
         val abiSupported = isArm64()
 
-        val needsBinary =
-            !binary.isFile || !binary.canExecute() || binary.length() == 0L
-        if (needsBinary) {
-            Log.i(TAG, "Installing CFST from assets/$ASSET_BINARY_ARM64 -> ${binary.absolutePath}")
-            try {
-                context.assets.open(ASSET_BINARY_ARM64).use { input ->
-                    FileOutputStream(binary).use { output -> input.copyTo(output) }
-                }
-            } catch (error: Exception) {
-                throw IOException(
-                    "CFST asset missing ($ASSET_BINARY_ARM64). Run: node apps/android/scripts/fetch-cfst.mjs",
-                    error,
-                )
-            }
-            binary.setReadable(true, false)
-            binary.setExecutable(true, false)
-            if (!binary.canExecute()) {
-                Log.w(TAG, "cfst may not be marked executable")
-            }
-        }
-
-        val needsList = !ipv6List.isFile || ipv6List.length() == 0L
-        if (needsList) {
-            Log.i(TAG, "Installing ipv6 list from assets/$ASSET_IPV6_LIST")
-            try {
-                context.assets.open(ASSET_IPV6_LIST).use { input ->
-                    FileOutputStream(ipv6List).use { output -> input.copyTo(output) }
-                }
-            } catch (error: Exception) {
-                throw IOException(
-                    "CFST ipv6 list asset missing ($ASSET_IPV6_LIST)",
-                    error,
-                )
-            }
-        }
+        RuntimeBinaryInstall.installAssetBinary(
+            context = context,
+            assetPath = ASSET_BINARY_ARM64,
+            dest = binary,
+            missingHint =
+                "CFST asset missing ($ASSET_BINARY_ARM64). Rebuild after: node apps/android/scripts/fetch-cfst.mjs",
+        )
+        RuntimeBinaryInstall.installAssetFile(
+            context = context,
+            assetPath = ASSET_IPV6_LIST,
+            dest = ipv6List,
+            missingHint = "CFST ipv6 list asset missing ($ASSET_IPV6_LIST)",
+        )
 
         return InstallResult(
             binary = binary,
             ipv6List = ipv6List,
             abiSupported = abiSupported,
         )
+    }
+
+    fun ensureInstalled(context: Context): Status {
+        val abi = isArm64()
+        return try {
+            val result = installIfNeeded(context)
+            val ready =
+                RuntimeBinaryInstall.isPresent(result.binary) &&
+                    RuntimeBinaryInstall.isPresent(result.ipv6List)
+            Status(
+                binary = result.binary,
+                ipv6List = result.ipv6List,
+                ready = ready,
+                abiSupported = abi,
+                message =
+                    when {
+                        !abi -> "设备 ABI 非 arm64，当前仅打包 arm64 CFST"
+                        ready ->
+                            "已就绪（${result.binary.length() / 1024} KB，列表 ${result.ipv6List.length()} B）"
+                        else -> "安装后文件不完整"
+                    },
+            )
+        } catch (error: Exception) {
+            Log.w(TAG, "ensureInstalled: ${error.message}")
+            Status(
+                binary = null,
+                ipv6List = null,
+                ready = false,
+                abiSupported = abi,
+                message = error.message ?: "CFST 安装失败",
+            )
+        }
     }
 
     fun isArm64(): Boolean {

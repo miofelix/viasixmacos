@@ -19,6 +19,7 @@ import dev.viasix.app.cfst.CfstInstaller
 import dev.viasix.app.cfst.CfstRunOutcome
 import dev.viasix.app.cfst.CfstRunner
 import dev.viasix.app.mihomo.ControllerClient
+import dev.viasix.app.mihomo.MihomoInstaller
 import dev.viasix.app.mihomo.TrafficSampler
 import dev.viasix.app.mihomo.TrafficSnapshot
 import dev.viasix.app.net.ExitIPDetectionMode
@@ -659,33 +660,34 @@ class MainActivity : ComponentActivity() {
             }
 
             fun refreshCfstStatus() {
+                // Installs/probes both sidecars (mihomo + CFST) for Settings「检查并安装组件」.
                 scope.launch {
-                    val ready =
+                    val (mihomoStatus, cfstStatus) =
                         withContext(Dispatchers.IO) {
-                            try {
-                                val install = CfstInstaller.installIfNeeded(this@MainActivity)
-                                install.binary.isFile && install.binary.length() > 0L
-                            } catch (_: Exception) {
-                                false
-                            }
+                            MihomoInstaller.ensureInstalled(this@MainActivity) to
+                                CfstInstaller.ensureInstalled(this@MainActivity)
                         }
+                    val ready = cfstStatus.ready
                     update {
                         it.copy(
                             speedTest =
                                 it.speedTest.copy(
                                     binaryReady = ready,
-                                    message =
-                                        if (ready) {
-                                            "CFST 已就绪（arm64）"
-                                        } else {
-                                            "未找到 CFST，请运行 node scripts/fetch-cfst.mjs"
-                                        },
+                                    message = cfstStatus.message,
                                 ),
-                        ).appendLog(
-                            if (ready) "CFST 组件就绪" else "CFST 组件缺失",
-                            if (ready) LogLevel.Success else LogLevel.Warning,
-                            LogSource.System,
                         )
+                            .appendLog(
+                                "mihomo：${mihomoStatus.message}",
+                                if (mihomoStatus.ready) LogLevel.Success else LogLevel.Error,
+                                LogSource.System,
+                                asNotice = !mihomoStatus.ready,
+                            )
+                            .appendLog(
+                                "CFST：${cfstStatus.message}",
+                                if (cfstStatus.ready) LogLevel.Success else LogLevel.Error,
+                                LogSource.System,
+                                asNotice = !cfstStatus.ready,
+                            )
                     }
                 }
             }

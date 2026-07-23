@@ -174,14 +174,23 @@ fun SettingsScreen(
             SurfaceCard {
                 CardHeader(title = "运行组件", icon = Icons.Outlined.Settings, tone = AppTone.Neutral)
                 HorizontalDivider(color = colors.surfaceBorder)
-                CompactInfoRow("内核", state.runtime.mihomoVersion ?: "mihomo（assets → filesDir）")
+                CompactInfoRow(
+                    "内核 mihomo",
+                    state.runtime.mihomoVersion
+                        ?: if (state.runtime.running) {
+                            "运行中"
+                        } else {
+                            "未连接时点下方检查安装"
+                        },
+                )
                 HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
                 CompactInfoRow(
-                    "CFST",
+                    "CFST 测速",
                     when {
                         state.speedTest.isRunning -> "测速运行中"
-                        state.speedTest.binaryReady -> "已就绪（arm64）"
-                        else -> "未安装 / 需 fetch-cfst"
+                        state.speedTest.binaryReady -> state.speedTest.message.ifBlank { "已就绪" }
+                        else ->
+                            state.speedTest.message.ifBlank { "未安装 — 点下方检查安装" }
                     },
                 )
                 HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
@@ -221,14 +230,13 @@ fun SettingsScreen(
                         enabled = !state.speedTest.isRunning,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("检查 CFST 组件")
+                        Text("检查并安装组件")
                     }
                     Text(
                         text =
-                            "mihomo / CFST 由 assets 安装到 filesDir；" +
-                                "更新：scripts/fetch-mihomo.mjs、scripts/fetch-cfst.mjs（仅 arm64）。" +
-                                "全量隧道已转发 TCP/UDP（IPv4/IPv6→SOCKS；DNS protect）；" +
-                                "可选增强：native hev/tun2socks。",
+                            "从 APK assets 解压 mihomo / CFST 到应用私有目录（仅 arm64）。" +
+                                "若提示缺失，需用带组件的 APK 重装（构建前 fetch-mihomo / fetch-cfst）。" +
+                                "不会清除会话偏好或 VPN 权限。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
