@@ -7,7 +7,6 @@ import dev.viasix.app.session.DnsRoutingMode
 import dev.viasix.app.session.DnsSettingsPolicy
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -872,49 +871,41 @@ class Tun2SocksEngine(
         ipv6: Boolean,
     ) {
         try {
-            DatagramSocket().use { socket ->
-                vpnService.protect(socket)
-                socket.soTimeout = 5_000
-                val target =
-                    when {
-                        dnsServer.isAnyLocalAddress -> dnsUpstream
-                        dnsServer.hostAddress == "0.0.0.0" -> dnsUpstream
-                        dnsServer.hostAddress == "::" -> dnsUpstream
-                        else -> dnsServer
-                    }
-                val request =
-                    DatagramPacket(
-                        payload,
-                        payload.size,
-                        InetSocketAddress(target, 53),
+            val target =
+                when {
+                    dnsServer.isAnyLocalAddress -> dnsUpstream
+                    dnsServer.hostAddress == "0.0.0.0" -> dnsUpstream
+                    dnsServer.hostAddress == "::" -> dnsUpstream
+                    else -> dnsServer
+                }
+            val bytes =
+                ProtectedDatagramExchange.exchange(
+                    target = target,
+                    targetPort = 53,
+                    request = payload,
+                    protect = { socket -> vpnService.protect(socket) },
+                )
+            // Reply source is the DNS server the client addressed (or upstream).
+            val replySource = if (target == dnsUpstream) dnsServer else target
+            val packet =
+                if (ipv6) {
+                    Packet.buildIp6Udp(
+                        source = replySource,
+                        destination = clientIp,
+                        sourcePort = 53,
+                        destPort = clientPort,
+                        payload = bytes,
                     )
-                socket.send(request)
-                val responseBuf = ByteArray(4096)
-                val response = DatagramPacket(responseBuf, responseBuf.size)
-                socket.receive(response)
-                val bytes = response.data.copyOf(response.length)
-                // Reply source is the DNS server the client addressed (or upstream).
-                val replySource = if (target == dnsUpstream) dnsServer else target
-                val packet =
-                    if (ipv6) {
-                        Packet.buildIp6Udp(
-                            source = replySource,
-                            destination = clientIp,
-                            sourcePort = 53,
-                            destPort = clientPort,
-                            payload = bytes,
-                        )
-                    } else {
-                        Packet.buildIp4Udp(
-                            source = replySource,
-                            destination = clientIp,
-                            sourcePort = 53,
-                            destPort = clientPort,
-                            payload = bytes,
-                        )
-                    }
-                enqueuePacket(packet)
-            }
+                } else {
+                    Packet.buildIp4Udp(
+                        source = replySource,
+                        destination = clientIp,
+                        sourcePort = 53,
+                        destPort = clientPort,
+                        payload = bytes,
+                    )
+                }
+            enqueuePacket(packet)
         } catch (error: Exception) {
             Log.w(TAG, "DNS direct forward failed: ${error.message}")
         }
