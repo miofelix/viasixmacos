@@ -235,37 +235,53 @@ class Tun2SocksEngine(
         }
 
         if (tcp.payloadLength > 0 && session.handshakeComplete && session.socket != null) {
-            val payloadEnd = tcp.seq + tcp.payloadLength
-            if (payloadEnd <= session.clientNextSeq) {
+            val skip =
+                TcpSequence.consumedPayloadPrefix(
+                    segmentStart = tcp.seq,
+                    payloadLength = tcp.payloadLength,
+                    nextExpected = session.clientNextSeq,
+                )
+            if (skip == null) {
                 enqueueAck(session)
                 return
             }
-            val skip = (session.clientNextSeq - tcp.seq).coerceAtLeast(0).toInt()
             if (skip >= tcp.payloadLength) {
                 enqueueAck(session)
-                return
-            }
-
-            val payload = ByteArray(tcp.payloadLength - skip)
-            val pos = buffer.position()
-            buffer.position(tcp.payloadOffset + skip)
-            buffer.get(payload)
-            buffer.position(pos)
-            try {
-                session.socket!!.getOutputStream().write(payload)
-                session.socket!!.getOutputStream().flush()
-                session.clientNextSeq = tcp.seq + tcp.payloadLength
-                enqueueAck(session)
-            } catch (error: Exception) {
-                Log.w(TAG, "tcp write failed: ${error.message}")
-                removeSession(key, session)
+                if (tcp.flags and Packet.FIN == 0) return
+            } else {
+                val payload = ByteArray(tcp.payloadLength - skip)
+                val pos = buffer.position()
+                buffer.position(tcp.payloadOffset + skip)
+                buffer.get(payload)
+                buffer.position(pos)
+                try {
+                    session.socket!!.getOutputStream().write(payload)
+                    session.socket!!.getOutputStream().flush()
+                    session.clientNextSeq =
+                        TcpSequence.advance(tcp.seq, payloadLength = tcp.payloadLength)
+                    enqueueAck(session)
+                } catch (error: Exception) {
+                    Log.w(TAG, "tcp write failed: ${error.message}")
+                    removeSession(key, session)
+                }
             }
         }
 
         if (tcp.flags and Packet.FIN != 0) {
-            session.clientNextSeq = tcp.seq + 1
-            enqueueAck(session)
-            removeSession(key, session)
+            val finSequence = TcpSequence.advance(tcp.seq, payloadLength = tcp.payloadLength)
+            if (finSequence == session.clientNextSeq && !session.clientFinReceived) {
+                session.clientNextSeq = TcpSequence.advance(finSequence, fin = true)
+                session.clientFinReceived = true
+                enqueueAck(session)
+                try {
+                    session.socket?.shutdownOutput()
+                } catch (error: Exception) {
+                    Log.w(TAG, "tcp half-close failed: ${error.message}")
+                    removeSession(key, session)
+                }
+            } else {
+                enqueueAck(session)
+            }
         }
     }
 
@@ -299,7 +315,7 @@ class Tun2SocksEngine(
             }
             session.socket = socket
             session.serverSeq = Random.nextInt().toLong() and 0xffffffffL
-            session.clientNextSeq = session.clientIsn + 1
+            session.clientNextSeq = TcpSequence.advance(session.clientIsn, syn = true)
 
             enqueuePacket(
                 buildTcpPacket(
@@ -310,7 +326,7 @@ class Tun2SocksEngine(
                     payload = ByteArray(0),
                 ),
             )
-            session.serverSeq = (session.serverSeq + 1) and 0xffffffffL
+            session.serverSeq = TcpSequence.advance(session.serverSeq, syn = true)
             session.handshakeComplete = true
 
             executor.execute {
@@ -331,10 +347,24 @@ class Tun2SocksEngine(
                                 payload = chunk,
                             ),
                         )
-                        session.serverSeq = (session.serverSeq + n) and 0xffffffffL
+                        session.serverSeq =
+                            TcpSequence.advance(session.serverSeq, payloadLength = n)
                     }
                 } catch (_: Exception) {
                 } finally {
+                    if (running.get() && sessions[key] === session && !session.serverFinSent) {
+                        session.serverFinSent = true
+                        enqueuePacket(
+                            buildTcpPacket(
+                                session = session,
+                                seq = session.serverSeq,
+                                ack = session.clientNextSeq,
+                                flags = Packet.FIN or Packet.ACK,
+                                payload = ByteArray(0),
+                            ),
+                        )
+                        session.serverSeq = TcpSequence.advance(session.serverSeq, fin = true)
+                    }
                     removeSession(key, session)
                 }
             }
@@ -691,6 +721,8 @@ class Tun2SocksEngine(
         @Volatile var serverSeq: Long = 0
         @Volatile var clientNextSeq: Long = 0
         @Volatile var handshakeComplete: Boolean = false
+        @Volatile var clientFinReceived: Boolean = false
+        @Volatile var serverFinSent: Boolean = false
 
         fun close() {
             try {

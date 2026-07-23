@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android 用户态 TCP 转发把乱序段写入 SOCKS、32 位序列号回绕判断错误，以及远端 EOF 未向应用发送 FIN 导致连接悬挂的问题；客户端 FIN 现按半关闭语义处理。
 - 修复 Android 全量隧道使用平台默认非阻塞 TUN fd 时，`FileChannel.read` 可能因 `EAGAIN` 退出转发线程的问题；全量隧道现显式使用阻塞描述符。
 - 修复 Android 在 VPN 启动中取消时，后台线程仍可能在停止清理后创建 mihomo、VPN 接口或流量监督线程的问题；启动现按资源阶段检查取消，并仅在整条栈就绪后发布运行态。
 - 修复 Android 运行中的出口 IP 检测因 ViaSix 自身 UID 绕过 VPN 而误报物理出口的问题；主查询与地理补全现显式通过本地 mixed HTTP 代理，并校验 IPv4/IPv6 结果地址族。
