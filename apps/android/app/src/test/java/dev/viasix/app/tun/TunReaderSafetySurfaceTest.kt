@@ -22,7 +22,7 @@ class TunReaderSafetySurfaceTest {
         assertTrue(engine.contains("finally {\n                        running.set(false)"))
         assertTrue(packet.contains("totalLength > buffer.limit() - start"))
         assertTrue(packet.contains("dataOffset > l4Length"))
-        assertTrue(packet.contains("length > l4Length"))
+        assertTrue(packet.contains("length != l4Length"))
     }
 
     private fun resolve(vararg paths: String): File =

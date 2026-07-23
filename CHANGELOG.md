@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android TUN 解析只检查 IPv4/IPv6 与 TCP/UDP 长度、不验证校验和的问题；现拒绝损坏的 IPv4 头、TCP、非零 IPv4 UDP 与 IPv6 UDP 报文，IPv4 UDP 允许 RFC 768 的零校验和，所有回包构造器生成有效传输层校验和并拒绝超出 16 位长度字段的地址族/负载组合。
 - 修复 Android SOCKS5 UDP ASSOCIATE 建立与空闲回收/发送失败并发时，晚完成的 relay 可能脱离映射泄漏，或旧清理误关同端点新 relay 的问题；每个 relay 代际现以实例条件移除并原子发布/关闭，过期回调与重新注册串行化，控制 TCP 在连接前完成 VPN 保护，所有握手失败路径都会关闭已创建 socket。
 - 修复 Android SOCKS5 UDP ASSOCIATE 仅在下一包 UDP 到来时顺便清理、无后续流量时空闲 socket 会保留到 VPN 停止的问题；共享维护线程现每 5 秒主动回收超过 60 秒未活动的 relay，过期判断使用单调时钟，并避免清理流程二次删除刚重新活跃的端点。
 - 修复 Android TCP 下行丢包只能等待 RTO、连续重复 ACK 无法及时恢复的问题；当前三次有效纯重复 ACK 会触发一次有界快速重传，ACK 推进后重置计数，同一序列不会因 ACK 洪峰重复放大。

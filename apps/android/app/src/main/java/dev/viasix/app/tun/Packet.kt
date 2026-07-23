@@ -78,6 +78,7 @@ internal object Packet {
         if (ihl < IP4_HEADER_SIZE || buffer.remaining() < ihl) return null
         val totalLength = buffer.getShort(start + 2).toInt() and 0xffff
         if (totalLength < ihl || totalLength > buffer.limit() - start) return null
+        if (!checksumValid(buffer, start, ihl)) return null
         val fragmentBits = buffer.getShort(start + 6).toInt() and 0xffff
         val reservedFlag = fragmentBits and 0x8000 != 0
         val moreFragments = fragmentBits and 0x2000 != 0
@@ -177,7 +178,13 @@ internal object Packet {
             nextHeader == IPV6_DESTINATION_OPTIONS
 
     fun parseTcp(buffer: ByteBuffer, payloadOffset: Int, l4Length: Int): Tcp? {
-        if (l4Length < TCP_HEADER_SIZE || buffer.limit() - payloadOffset < l4Length) return null
+        if (
+            payloadOffset < 0 ||
+                l4Length < TCP_HEADER_SIZE ||
+                payloadOffset > buffer.limit() - l4Length
+        ) {
+            return null
+        }
         val start = payloadOffset
         val sourcePort = buffer.getShort(start).toInt() and 0xffff
         val destPort = buffer.getShort(start + 2).toInt() and 0xffff
@@ -202,29 +209,105 @@ internal object Packet {
         )
     }
 
-    fun parseTcp(buffer: ByteBuffer, ip: Ip4): Tcp? =
-        parseTcp(buffer, ip.payloadOffset, ip.totalLength - ip.headerLength)
+    fun parseTcp(buffer: ByteBuffer, ip: Ip4): Tcp? {
+        if (ip.protocol != PROTO_TCP.toInt()) return null
+        val l4Length = ip.totalLength - ip.headerLength
+        val tcp = parseTcp(buffer, ip.payloadOffset, l4Length) ?: return null
+        return if (
+            transportChecksumValid(
+                buffer,
+                ip.source.address,
+                ip.destination.address,
+                PROTO_TCP.toInt(),
+                ip.payloadOffset,
+                l4Length,
+            )
+        ) {
+            tcp
+        } else {
+            null
+        }
+    }
 
-    fun parseTcp(buffer: ByteBuffer, ip: Ip6): Tcp? =
-        parseTcp(buffer, ip.payloadOffset, ip.payloadLength)
+    fun parseTcp(buffer: ByteBuffer, ip: Ip6): Tcp? {
+        if (ip.nextHeader != PROTO_TCP.toInt()) return null
+        val tcp = parseTcp(buffer, ip.payloadOffset, ip.payloadLength) ?: return null
+        return if (
+            transportChecksumValid(
+                buffer,
+                ip.source.address,
+                ip.destination.address,
+                PROTO_TCP.toInt(),
+                ip.payloadOffset,
+                ip.payloadLength,
+            )
+        ) {
+            tcp
+        } else {
+            null
+        }
+    }
 
     fun parseUdp(buffer: ByteBuffer, payloadOffset: Int, l4Length: Int): Udp? {
-        if (l4Length < UDP_HEADER_SIZE || buffer.limit() - payloadOffset < l4Length) return null
+        if (
+            payloadOffset < 0 ||
+                l4Length < UDP_HEADER_SIZE ||
+                payloadOffset > buffer.limit() - l4Length
+        ) {
+            return null
+        }
         val start = payloadOffset
         val sourcePort = buffer.getShort(start).toInt() and 0xffff
         val destPort = buffer.getShort(start + 2).toInt() and 0xffff
         val length = buffer.getShort(start + 4).toInt() and 0xffff
-        if (length < UDP_HEADER_SIZE || length > l4Length) return null
+        if (length < UDP_HEADER_SIZE || length != l4Length) return null
         val udpPayloadOffset = start + UDP_HEADER_SIZE
         val payloadLength = length - UDP_HEADER_SIZE
         return Udp(sourcePort, destPort, length, udpPayloadOffset, payloadLength)
     }
 
-    fun parseUdp(buffer: ByteBuffer, ip: Ip4): Udp? =
-        parseUdp(buffer, ip.payloadOffset, ip.totalLength - ip.headerLength)
+    fun parseUdp(buffer: ByteBuffer, ip: Ip4): Udp? {
+        if (ip.protocol != PROTO_UDP.toInt()) return null
+        val l4Length = ip.totalLength - ip.headerLength
+        val udp = parseUdp(buffer, ip.payloadOffset, l4Length) ?: return null
+        val checksum = buffer.getShort(ip.payloadOffset + 6).toInt() and 0xffff
+        if (checksum == 0) return udp
+        return if (
+            transportChecksumValid(
+                buffer,
+                ip.source.address,
+                ip.destination.address,
+                PROTO_UDP.toInt(),
+                ip.payloadOffset,
+                l4Length,
+            )
+        ) {
+            udp
+        } else {
+            null
+        }
+    }
 
-    fun parseUdp(buffer: ByteBuffer, ip: Ip6): Udp? =
-        parseUdp(buffer, ip.payloadOffset, ip.payloadLength)
+    fun parseUdp(buffer: ByteBuffer, ip: Ip6): Udp? {
+        if (ip.nextHeader != PROTO_UDP.toInt()) return null
+        val udp = parseUdp(buffer, ip.payloadOffset, ip.payloadLength) ?: return null
+        val checksum = buffer.getShort(ip.payloadOffset + 6).toInt() and 0xffff
+        if (checksum == 0) return null
+        return if (
+            transportChecksumValid(
+                buffer,
+                ip.source.address,
+                ip.destination.address,
+                PROTO_UDP.toInt(),
+                ip.payloadOffset,
+                ip.payloadLength,
+            )
+        ) {
+            udp
+        } else {
+            null
+        }
+    }
 
     fun buildIp4Tcp(
         source: InetAddress,
@@ -236,6 +319,7 @@ internal object Packet {
         flags: Int,
         payload: ByteArray,
     ): ByteArray {
+        requireBuildFields(source, destination, 4, sourcePort, destPort, MAX_IP4_TCP_PAYLOAD, payload)
         val total = IP4_HEADER_SIZE + TCP_HEADER_SIZE + payload.size
         val buf = ByteBuffer.allocate(total).order(ByteOrder.BIG_ENDIAN)
         buf.put(0x45.toByte())
@@ -283,6 +367,7 @@ internal object Packet {
         destPort: Int,
         payload: ByteArray,
     ): ByteArray {
+        requireBuildFields(source, destination, 4, sourcePort, destPort, MAX_IP4_UDP_PAYLOAD, payload)
         val udpLen = UDP_HEADER_SIZE + payload.size
         val total = IP4_HEADER_SIZE + udpLen
         val buf = ByteBuffer.allocate(total).order(ByteOrder.BIG_ENDIAN)
@@ -303,7 +388,18 @@ internal object Packet {
         buf.put(payload)
         val bytes = buf.array()
         writeChecksum(bytes, 10, ipChecksum(bytes, 0, IP4_HEADER_SIZE))
-        // UDP checksum optional for IPv4; leave 0.
+        writeChecksum(
+            bytes,
+            IP4_HEADER_SIZE + 6,
+            transportChecksum(
+                bytes,
+                source.address,
+                destination.address,
+                PROTO_UDP.toInt(),
+                IP4_HEADER_SIZE,
+                udpLen,
+            ).let { if (it == 0) 0xffff else it },
+        )
         return bytes
     }
 
@@ -317,6 +413,7 @@ internal object Packet {
         flags: Int,
         payload: ByteArray,
     ): ByteArray {
+        requireBuildFields(source, destination, 16, sourcePort, destPort, MAX_IP6_TCP_PAYLOAD, payload)
         val l4Len = TCP_HEADER_SIZE + payload.size
         val total = IP6_HEADER_SIZE + l4Len
         val buf = ByteBuffer.allocate(total).order(ByteOrder.BIG_ENDIAN)
@@ -360,6 +457,7 @@ internal object Packet {
         destPort: Int,
         payload: ByteArray,
     ): ByteArray {
+        requireBuildFields(source, destination, 16, sourcePort, destPort, MAX_IP6_UDP_PAYLOAD, payload)
         val udpLen = UDP_HEADER_SIZE + payload.size
         val total = IP6_HEADER_SIZE + udpLen
         val buf = ByteBuffer.allocate(total).order(ByteOrder.BIG_ENDIAN)
@@ -397,16 +495,7 @@ internal object Packet {
     }
 
     private fun ipChecksum(buf: ByteArray, offset: Int, length: Int): Int {
-        var sum = 0
-        var i = offset
-        val end = offset + length
-        while (i + 1 < end) {
-            sum += ((buf[i].toInt() and 0xff) shl 8) or (buf[i + 1].toInt() and 0xff)
-            i += 2
-        }
-        if (i < end) sum += (buf[i].toInt() and 0xff) shl 8
-        while (sum ushr 16 != 0) sum = (sum and 0xffff) + (sum ushr 16)
-        return sum.inv() and 0xffff
+        return foldChecksum(addBytes(0L, buf, offset, length)).inv() and 0xffff
     }
 
     /**
@@ -420,37 +509,108 @@ internal object Packet {
         transportOffset: Int,
         transportLength: Int,
     ): Int {
-        var sum = 0
-        // pseudo-header addresses
-        var i = 0
-        while (i + 1 < src.size) {
-            sum += ((src[i].toInt() and 0xff) shl 8) or (src[i + 1].toInt() and 0xff)
-            i += 2
-        }
-        i = 0
-        while (i + 1 < dst.size) {
-            sum += ((dst[i].toInt() and 0xff) shl 8) or (dst[i + 1].toInt() and 0xff)
-            i += 2
-        }
+        var sum = pseudoHeaderSum(src, dst, protocol, transportLength)
+        sum = addBytes(sum, packet, transportOffset, transportLength)
+        return foldChecksum(sum).inv() and 0xffff
+    }
+
+    private fun checksumValid(buffer: ByteBuffer, offset: Int, length: Int): Boolean =
+        foldChecksum(addBuffer(0L, buffer, offset, length)) == 0xffff
+
+    private fun transportChecksumValid(
+        buffer: ByteBuffer,
+        src: ByteArray,
+        dst: ByteArray,
+        protocol: Int,
+        transportOffset: Int,
+        transportLength: Int,
+    ): Boolean {
+        var sum = pseudoHeaderSum(src, dst, protocol, transportLength)
+        sum = addBuffer(sum, buffer, transportOffset, transportLength)
+        return foldChecksum(sum) == 0xffff
+    }
+
+    private fun pseudoHeaderSum(
+        src: ByteArray,
+        dst: ByteArray,
+        protocol: Int,
+        transportLength: Int,
+    ): Long {
+        var sum = addBytes(0L, src, 0, src.size)
+        sum = addBytes(sum, dst, 0, dst.size)
         if (src.size == 16) {
-            // IPv6: upper-layer packet length as 32-bit big-endian
             sum += (transportLength ushr 16) and 0xffff
             sum += transportLength and 0xffff
             sum += protocol and 0xff
         } else {
-            // IPv4: zero + protocol + length (16-bit)
             sum += protocol and 0xff
             sum += transportLength
         }
-        i = transportOffset
-        val end = transportOffset + transportLength
-        while (i + 1 < end) {
-            sum += ((packet[i].toInt() and 0xff) shl 8) or (packet[i + 1].toInt() and 0xff)
-            i += 2
+        return sum
+    }
+
+    private fun addBytes(
+        initial: Long,
+        bytes: ByteArray,
+        offset: Int,
+        length: Int,
+    ): Long {
+        var sum = initial
+        var index = offset
+        val end = offset + length
+        while (index + 1 < end) {
+            sum +=
+                ((bytes[index].toInt() and 0xff) shl 8) or
+                    (bytes[index + 1].toInt() and 0xff)
+            index += 2
         }
-        if (i < end) sum += (packet[i].toInt() and 0xff) shl 8
-        while (sum ushr 16 != 0) sum = (sum and 0xffff) + (sum ushr 16)
-        return sum.inv() and 0xffff
+        if (index < end) sum += (bytes[index].toInt() and 0xff) shl 8
+        return sum
+    }
+
+    private fun addBuffer(
+        initial: Long,
+        buffer: ByteBuffer,
+        offset: Int,
+        length: Int,
+    ): Long {
+        var sum = initial
+        var index = offset
+        val end = offset + length
+        while (index + 1 < end) {
+            sum +=
+                ((buffer.get(index).toInt() and 0xff) shl 8) or
+                    (buffer.get(index + 1).toInt() and 0xff)
+            index += 2
+        }
+        if (index < end) sum += (buffer.get(index).toInt() and 0xff) shl 8
+        return sum
+    }
+
+    private fun foldChecksum(value: Long): Int {
+        var sum = value
+        while (sum ushr 16 != 0L) {
+            sum = (sum and 0xffffL) + (sum ushr 16)
+        }
+        return sum.toInt() and 0xffff
+    }
+
+    private fun requireBuildFields(
+        source: InetAddress,
+        destination: InetAddress,
+        addressBytes: Int,
+        sourcePort: Int,
+        destPort: Int,
+        maxPayload: Int,
+        payload: ByteArray,
+    ) {
+        require(source.address.size == addressBytes && destination.address.size == addressBytes) {
+            "source and destination must use the requested IP family"
+        }
+        require(sourcePort in 0..0xffff && destPort in 0..0xffff) {
+            "ports must be unsigned 16-bit values"
+        }
+        require(payload.size <= maxPayload) { "payload exceeds IP packet length" }
     }
 
     private const val IPV6_HOP_BY_HOP = 0
@@ -462,4 +622,8 @@ internal object Packet {
     private const val IPV6_FRAGMENT_HEADER_SIZE = 8
     private const val IPV6_AUTHENTICATION_MIN_SIZE = 12
     private const val MAX_IPV6_EXTENSION_HEADERS = 8
+    private const val MAX_IP4_TCP_PAYLOAD = 0xffff - IP4_HEADER_SIZE - TCP_HEADER_SIZE
+    private const val MAX_IP6_TCP_PAYLOAD = 0xffff - TCP_HEADER_SIZE
+    private const val MAX_IP4_UDP_PAYLOAD = 0xffff - IP4_HEADER_SIZE - UDP_HEADER_SIZE
+    private const val MAX_IP6_UDP_PAYLOAD = 0xffff - UDP_HEADER_SIZE
 }

@@ -42,6 +42,8 @@ class PacketCodecTest {
         buf.position(udp.payloadOffset)
         buf.get(got)
         assertArrayEquals(payload, got)
+        val csumOff = Packet.IP4_HEADER_SIZE + 6
+        assertTrue(bytes[csumOff].toInt() != 0 || bytes[csumOff + 1].toInt() != 0)
     }
 
     @Test
