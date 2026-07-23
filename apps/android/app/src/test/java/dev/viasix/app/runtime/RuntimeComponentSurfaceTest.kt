@@ -35,7 +35,9 @@ class RuntimeComponentSurfaceTest {
         assertTrue(settings.contains("RuntimeComponentId.MIHOMO"))
         assertTrue(settings.contains("RuntimeComponentId.CFST"))
         assertTrue(settings.contains("错误架构"))
-        assertTrue(settings.contains("原子替换"))
+        // Settings copy documents APK-native install; installer still uses atomic replace.
+        assertTrue(settings.contains("APK 原生库"))
+        assertTrue(settings.contains("libmihomo.so"))
         assertTrue(install.contains("StandardCopyOption.ATOMIC_MOVE"))
         assertTrue(install.contains("0b111_000_000"))
     }
