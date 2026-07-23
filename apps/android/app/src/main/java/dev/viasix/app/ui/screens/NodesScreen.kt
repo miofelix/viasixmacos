@@ -102,8 +102,11 @@ fun NodesScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(
                         horizontal = VisualStyle.pageHorizontalPadding,
+                        // Extra bottom inset so the last result-row actions (应用 / 复制)
+                        // can scroll fully above the bottom navigation bar.
                         vertical = VisualStyle.pageVerticalPadding,
-                    ),
+                    )
+                    .padding(bottom = 72.dp),
             verticalArrangement = Arrangement.spacedBy(VisualStyle.spacing12),
         ) {
             SurfaceCard {

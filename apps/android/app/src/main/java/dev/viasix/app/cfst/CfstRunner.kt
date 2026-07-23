@@ -45,13 +45,15 @@ class CfstRunner {
         workDir: File,
         parameters: SpeedTestParameters,
         onProgress: ((current: Int, total: Int, phaseHint: String?) -> Unit)? = null,
+        /** Optional Android context so HTTPing can load the system CA store. */
+        sslContext: android.content.Context? = null,
     ): CfstRunOutcome {
         if (!activeRunner.compareAndSet(null, this)) {
             return CfstRunOutcome.Failed("已有测速任务正在运行")
         }
         cancelRequested.set(false)
         return try {
-            runInner(binary, workDir, parameters, onProgress)
+            runInner(binary, workDir, parameters, onProgress, sslContext)
         } finally {
             processRef.set(null)
             activeRunner.compareAndSet(this, null)
@@ -64,6 +66,7 @@ class CfstRunner {
         workDir: File,
         parameters: SpeedTestParameters,
         onProgress: ((current: Int, total: Int, phaseHint: String?) -> Unit)?,
+        sslContext: android.content.Context?,
     ): CfstRunOutcome {
         if (!binary.isFile) {
             return CfstRunOutcome.Failed(
@@ -110,7 +113,11 @@ class CfstRunner {
                 // Go's x509 does not use the Android system trust store by default.
                 // Without this, HTTPing fails with "certificate signed by unknown authority"
                 // and CFST exits 0 without writing result.csv (0 available IPs).
-                CfstSslEnvironment.applyTo(builder.environment())
+                if (sslContext != null) {
+                    CfstSslEnvironment.applyForContext(sslContext, builder.environment())
+                } else {
+                    CfstSslEnvironment.applyTo(builder.environment())
+                }
                 builder.start()
             } catch (error: Exception) {
                 return CfstRunOutcome.Failed("无法启动 CFST：${error.message}")

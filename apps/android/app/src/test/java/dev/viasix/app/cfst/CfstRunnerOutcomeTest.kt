@@ -179,13 +179,16 @@ class CfstRunnerOutcomeTest {
     }
 
     @Test
-    fun sslEnvironmentResolvesAndroidCertDirsAndDoesNotOverrideExisting() {
+    fun sslEnvironmentPrefersApexAndDoesNotOverrideExisting() {
+        // Prefer apex when both would pass the usability check.
         assertEquals(
-            "/system/etc/security/cacerts",
+            "/apex/com.android.conscrypt/cacerts",
             CfstSslEnvironment.resolveCertDir { path ->
-                path == "/system/etc/security/cacerts"
+                path == "/apex/com.android.conscrypt/cacerts" ||
+                    path == "/system/etc/security/cacerts"
             },
         )
+        // Skip incomplete filtered system mounts (< 16 entries).
         assertEquals(
             "/apex/com.android.conscrypt/cacerts",
             CfstSslEnvironment.resolveCertDir { path ->
@@ -193,11 +196,24 @@ class CfstRunnerOutcomeTest {
             },
         )
         val env = mutableMapOf("SSL_CERT_DIR" to "/custom")
-        CfstSslEnvironment.applyTo(env, certDir = "/system/etc/security/cacerts")
+        CfstSslEnvironment.applyTo(env, certDir = "/apex/com.android.conscrypt/cacerts")
         assertEquals("/custom", env["SSL_CERT_DIR"])
 
         val empty = mutableMapOf<String, String>()
-        CfstSslEnvironment.applyTo(empty, certDir = "/system/etc/security/cacerts")
-        assertEquals("/system/etc/security/cacerts", empty["SSL_CERT_DIR"])
+        val pem =
+            kotlin.io.path.createTempFile("cacerts", ".pem").toFile().apply {
+                writeText("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n")
+            }
+        try {
+            CfstSslEnvironment.applyTo(
+                empty,
+                certDir = "/apex/com.android.conscrypt/cacerts",
+                pemFile = pem,
+            )
+            assertEquals("/apex/com.android.conscrypt/cacerts", empty["SSL_CERT_DIR"])
+            assertEquals(pem.absolutePath, empty["SSL_CERT_FILE"])
+        } finally {
+            pem.delete()
+        }
     }
 }

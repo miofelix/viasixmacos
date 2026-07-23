@@ -995,6 +995,7 @@ class MainActivity : ComponentActivity() {
                                             applySpeedProgress(current, total, phase)
                                         }
                                     },
+                                    sslContext = this@MainActivity,
                                 ) to true
                             } catch (error: Exception) {
                                 CfstRunOutcome.Failed(error.message ?: "CFST 安装失败") to false
@@ -1077,6 +1078,7 @@ class MainActivity : ComponentActivity() {
                                             applySpeedProgress(current, total, phase)
                                         }
                                     },
+                                    sslContext = this@MainActivity,
                                 ) to true
                             } catch (error: Exception) {
                                 CfstRunOutcome.Failed(error.message ?: "CFST 安装失败") to false
