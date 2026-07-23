@@ -129,6 +129,13 @@ fun NodesScreen(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    speed.parameterValidationMessage?.let { msg ->
+                        Text(
+                            msg,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.negative,
+                        )
+                    }
 
                     // 数据源 — macOS IPSourceMode picker (no IPv4)
                     Text("数据源", style = MaterialTheme.typography.titleSmall)
@@ -239,7 +246,7 @@ fun NodesScreen(
                     ) {
                         Button(
                             onClick = onStartSpeedTest,
-                            enabled = !speed.isRunning,
+                            enabled = speed.canStartSpeedTest,
                             modifier = Modifier.weight(1f),
                         ) {
                             Text(

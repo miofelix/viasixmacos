@@ -140,6 +140,8 @@ fun ViaSixApp(
                             onExitIpModeChange = onExitIpModeChange,
                             onDelayTest = onDelayTest,
                             onCopy = onCopy,
+                            onStartCurrentNodeTest = onStartCurrentNodeTest,
+                            onStopSpeedTest = onStopSpeedTest,
                         )
                     AppSection.NODES ->
                         NodesScreen(

@@ -78,6 +78,8 @@ fun OverviewScreen(
     onExitIpModeChange: (ExitIPDetectionMode) -> Unit,
     onDelayTest: () -> Unit,
     onCopy: (label: String, value: String) -> Unit,
+    onStartCurrentNodeTest: () -> Unit = {},
+    onStopSpeedTest: () -> Unit = {},
 ) {
     val colors = LocalViaSixColors.current
     val running = state.runtime.running
@@ -455,6 +457,37 @@ fun OverviewScreen(
                                 Text("复制")
                             }
                         }
+                    }
+                    // macOS Overview “测试节点” configuration CFST on selected IPv6.
+                    val nodeTestRunning =
+                        state.speedTest.isRunning && state.speedTest.isNodeTest
+                    OutlinedButton(
+                        onClick = {
+                            if (nodeTestRunning) {
+                                onStopSpeedTest()
+                            } else {
+                                onStartCurrentNodeTest()
+                            }
+                        },
+                        enabled =
+                            nodeTestRunning ||
+                                (selectedIsIpv6 && !state.speedTest.isRunning),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            when {
+                                nodeTestRunning -> "停止测试"
+                                state.speedTest.isRunning -> "测速占用中…"
+                                else -> "测试节点"
+                            },
+                        )
+                    }
+                    if (nodeTestRunning) {
+                        Text(
+                            state.speedTest.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     FilledTonalButton(
                         onClick = onDelayTest,

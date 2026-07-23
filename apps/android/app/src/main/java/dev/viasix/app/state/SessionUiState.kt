@@ -15,6 +15,7 @@ import dev.viasix.core.speedtest.NodeSortKey
 import dev.viasix.core.speedtest.SpeedTestParameters
 import dev.viasix.core.speedtest.SpeedTestResult
 import dev.viasix.core.speedtest.parameterSummary
+import dev.viasix.core.speedtest.previewValidationMessage
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -92,6 +93,17 @@ data class SpeedTestUiState(
 
     val parameterSummaryText: String
         get() = parameters.parameterSummary(ipSourceMode)
+
+    /** macOS [NodesViewState.parameterValidationMessage] for current form values. */
+    val parameterValidationMessage: String?
+        get() =
+            parameters.previewValidationMessage(
+                mode = ipSourceMode,
+                customIpFilePath = customIpFilePath,
+            )
+
+    val canStartSpeedTest: Boolean
+        get() = !isRunning && parameterValidationMessage == null
 }
 
 /**

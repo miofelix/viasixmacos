@@ -399,6 +399,12 @@ class MainActivity : ComponentActivity() {
                     }
                     return
                 }
+                state.speedTest.parameterValidationMessage?.let { msg ->
+                    update {
+                        it.appendLog(msg, LogLevel.Error, LogSource.Node)
+                    }
+                    return
+                }
                 val mode = state.speedTest.ipSourceMode
                 val baseParams = state.speedTest.parameters
                 val customFile = state.speedTest.customIpFilePath
