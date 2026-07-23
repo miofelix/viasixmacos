@@ -21,6 +21,8 @@ data class SessionPrefs(
     val selectedAddress: String = "2001:db8::1",
     val routingMode: String = "rule",
     val fullTunnel: Boolean = true,
+    val appRoutingMode: String = "all",
+    val selectedAppPackages: List<String> = emptyList(),
     val candidateAddresses: List<String> = emptyList(),
     val exitIPEndpoint: String = "https://api.myip.la/cn?json",
     val exitIPDetectionMode: String = "automatic",
@@ -37,6 +39,13 @@ data class SessionPrefs(
             .put("selectedAddress", selectedAddress)
             .put("routingMode", routingMode)
             .put("fullTunnel", fullTunnel)
+            .put("appRoutingMode", appRoutingMode)
+            .put(
+                "selectedAppPackages",
+                JSONArray().also { arr ->
+                    selectedAppPackages.forEach { arr.put(it) }
+                },
+            )
             .put(
                 "candidateAddresses",
                 JSONArray().also { arr ->
@@ -67,6 +76,14 @@ data class SessionPrefs(
                     for (i in 0 until arr.length()) {
                         val value = arr.optString(i).trim()
                         if (value.isNotEmpty()) candidates += value
+                    }
+                }
+                val selectedAppPackages = mutableListOf<String>()
+                val selectedApps = o.optJSONArray("selectedAppPackages")
+                if (selectedApps != null) {
+                    for (i in 0 until selectedApps.length()) {
+                        val packageName = selectedApps.optString(i).trim()
+                        if (packageName.isNotEmpty()) selectedAppPackages += packageName
                     }
                 }
                 val legacyMode =
@@ -101,6 +118,8 @@ data class SessionPrefs(
                     selectedAddress = o.optString("selectedAddress", "2001:db8::1"),
                     routingMode = o.optString("routingMode", "rule"),
                     fullTunnel = o.optBoolean("fullTunnel", true),
+                    appRoutingMode = o.optString("appRoutingMode", "all"),
+                    selectedAppPackages = selectedAppPackages.distinct().take(200),
                     candidateAddresses = candidates,
                     exitIPEndpoint =
                         o.optString("exitIPEndpoint", "https://api.myip.la/cn?json")

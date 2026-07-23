@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.viasix.app.net.ExitIPDetectionMode
 import dev.viasix.app.runtime.RuntimeComponentId
+import dev.viasix.app.session.AppRoutingMode
 import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.state.SessionUiState
 import dev.viasix.app.ui.screens.LogsScreen
@@ -87,6 +88,10 @@ fun ViaSixApp(
     onManageNotificationPermission: () -> Unit = {},
     onManageVpnPermission: () -> Unit = {},
     onManageBatteryOptimization: () -> Unit = {},
+    onAppRoutingModeChange: (AppRoutingMode) -> Unit = {},
+    onToggleAppRoutingPackage: (String) -> Unit = {},
+    onClearSelectedAppPackages: () -> Unit = {},
+    onRefreshInstalledApps: () -> Unit = {},
     onRoutingModeChange: (RoutingMode) -> Unit,
     onFullTunnelChange: (Boolean) -> Unit,
     onStart: () -> Unit,
@@ -232,6 +237,10 @@ fun ViaSixApp(
                                     onManageNotificationPermission = onManageNotificationPermission,
                                     onManageVpnPermission = onManageVpnPermission,
                                     onManageBatteryOptimization = onManageBatteryOptimization,
+                                    onAppRoutingModeChange = onAppRoutingModeChange,
+                                    onToggleAppRoutingPackage = onToggleAppRoutingPackage,
+                                    onClearSelectedAppPackages = onClearSelectedAppPackages,
+                                    onRefreshInstalledApps = onRefreshInstalledApps,
                                 )
                         }
                     }

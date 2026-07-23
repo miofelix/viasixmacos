@@ -15,7 +15,7 @@ object SessionStartGate {
 
         data class Blocked(
             val message: String,
-            /** Suggested UI section: "nodes" | "profiles" | null */
+            /** Suggested UI section: "nodes" | "profiles" | "settings" | null */
             val sectionWire: String? = null,
         ) : Result()
     }
@@ -24,16 +24,35 @@ object SessionStartGate {
         routingMode: RoutingMode,
         selectedAddress: String,
         profileYaml: String,
+        appRoutingMode: AppRoutingMode = AppRoutingMode.ALL,
+        selectedAppPackages: Collection<String> = emptyList(),
     ): Result {
         val summary = ProfileSummaryParser.parse(profileYaml)
-        return evaluate(routingMode, selectedAddress, summary)
+        return evaluate(
+            routingMode,
+            selectedAddress,
+            summary,
+            appRoutingMode,
+            selectedAppPackages,
+        )
     }
 
     fun evaluate(
         routingMode: RoutingMode,
         selectedAddress: String,
         summary: ProfileSummary,
+        appRoutingMode: AppRoutingMode = AppRoutingMode.ALL,
+        selectedAppPackages: Collection<String> = emptyList(),
     ): Result {
+        if (
+            appRoutingMode == AppRoutingMode.ONLY_SELECTED &&
+                selectedAppPackages.none(AppRoutingPolicy::isValidPackageName)
+        ) {
+            return Result.Blocked(
+                message = "无法连接：仅代理所选应用模式至少需要选择一个应用",
+                sectionWire = "settings",
+            )
+        }
         if (routingMode == RoutingMode.DIRECT) return Result.Ok
 
         val normalized = Ipv6Address.normalize(selectedAddress)

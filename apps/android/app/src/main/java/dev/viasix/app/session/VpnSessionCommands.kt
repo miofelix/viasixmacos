@@ -27,7 +27,13 @@ object VpnSessionCommands {
 
     fun evaluateStart(prefs: SessionPrefs): SessionStartGate.Result {
         val mode = RoutingMode.parse(prefs.routingMode) ?: RoutingMode.RULE
-        return SessionStartGate.evaluate(mode, prefs.selectedAddress, prefs.profileYaml)
+        return SessionStartGate.evaluate(
+            mode,
+            prefs.selectedAddress,
+            prefs.profileYaml,
+            AppRoutingMode.parse(prefs.appRoutingMode),
+            prefs.selectedAppPackages,
+        )
     }
 
     fun buildStartIntent(
@@ -41,6 +47,11 @@ object VpnSessionCommands {
             .putExtra(ViaSixVpnService.EXTRA_SELECTED_IP, prefs.selectedAddress)
             .putExtra(ViaSixVpnService.EXTRA_MODE, prefs.routingMode)
             .putExtra(ViaSixVpnService.EXTRA_FULL_TUNNEL, prefs.fullTunnel)
+            .putExtra(ViaSixVpnService.EXTRA_APP_ROUTING_MODE, prefs.appRoutingMode)
+            .putStringArrayListExtra(
+                ViaSixVpnService.EXTRA_SELECTED_APP_PACKAGES,
+                ArrayList(prefs.selectedAppPackages),
+            )
             .putExtra(ViaSixVpnService.EXTRA_REASON, reason)
 
     fun buildStopIntent(context: Context): Intent =

@@ -59,6 +59,7 @@ Android 功能对齐以 **macOS** 为准。Windows 端仍在完善中，**不得
 - 配置安全编辑：`profileDraft` 与已应用 `profileYaml` 分离持久化；应用前检查 `x-viasix` 并执行真实投影校验
 - CFST：`CfstInstaller` + `CfstRunner` + `IPSourceMode` / `SpeedTestParameters`（macOS 参数语义）+ `NodeResultSorting` + 当前节点测速
 - 全量隧道：`Tun2SocksEngine` — IPv4/IPv6 TCP→SOCKS5 CONNECT；通用 UDP→**每本地源端口** SOCKS5 UDP ASSOCIATE（正确并发 demux）；DNS/53 始终 per-query `protect` DatagramSocket
+- 分应用路由：支持所有应用、绕过所选和仅代理所选三种 `VpnService.Builder` 策略；选择器仅查询具有 Launcher 入口的应用，后台型应用可手动添加包名，不申请广泛包可见权限，运行中锁定修改
 
 ## 移动端交互（参考 Clash Meta / NekoBox，语义仍对齐 macOS）
 

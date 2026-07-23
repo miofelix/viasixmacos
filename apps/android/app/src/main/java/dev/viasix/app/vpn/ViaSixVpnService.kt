@@ -19,6 +19,8 @@ import dev.viasix.app.mihomo.MihomoInstaller
 import dev.viasix.app.mihomo.MihomoProcess
 import dev.viasix.app.mihomo.TrafficSampler
 import dev.viasix.app.prefs.SessionPrefsStore
+import dev.viasix.app.session.AppRoutingMode
+import dev.viasix.app.session.AppRoutingPolicy
 import dev.viasix.app.session.RuntimeProcessIdentity
 import dev.viasix.app.session.RuntimeStackFailure
 import dev.viasix.app.session.RuntimeStackHealth
@@ -86,13 +88,26 @@ class ViaSixVpnService : VpnService() {
             intent?.getBooleanExtra(EXTRA_FULL_TUNNEL, restoredPrefs?.fullTunnel ?: true)
                 ?: restoredPrefs?.fullTunnel
                 ?: true
+        val appRoutingMode =
+            AppRoutingMode.parse(
+                intent?.getStringExtra(EXTRA_APP_ROUTING_MODE)
+                    ?: restoredPrefs?.appRoutingMode,
+            )
+        val selectedAppPackages =
+            intent?.getStringArrayListExtra(EXTRA_SELECTED_APP_PACKAGES)?.toList()
+                ?: restoredPrefs?.selectedAppPackages
+                ?: emptyList()
         val reason =
             intent?.getStringExtra(EXTRA_REASON).orEmpty().ifBlank {
                 startOrigin.reason
             }
 
         startForeground(NOTIFICATION_ID, buildNotification("Starting ViaSix…"))
-        appendEvent("启动请求（$reason） mode=${mode.wire} fullTunnel=$fullTunnel", "info")
+        appendEvent(
+            "启动请求（$reason） mode=${mode.wire} fullTunnel=$fullTunnel " +
+                "appRouting=${appRoutingMode.wire} apps=${selectedAppPackages.size}",
+            "info",
+        )
 
         if (!starting.compareAndSet(false, true)) {
             appendEvent("已有启动任务进行中，忽略重复请求", "warning")
@@ -104,7 +119,14 @@ class ViaSixVpnService : VpnService() {
                 // Tear down any previous stack before applying new parameters
                 // (node apply / reconnect path).
                 stopStackOnly("restart for $reason")
-                startStack(profile, selectedIp, mode, fullTunnel)
+                startStack(
+                    profile,
+                    selectedIp,
+                    mode,
+                    fullTunnel,
+                    appRoutingMode,
+                    selectedAppPackages,
+                )
             } catch (error: Exception) {
                 Log.e(TAG, "start failed", error)
                 appendEvent("启动失败：${error.message}", "error")
@@ -122,6 +144,8 @@ class ViaSixVpnService : VpnService() {
         selectedIp: String?,
         mode: RoutingMode,
         fullTunnel: Boolean,
+        appRoutingMode: AppRoutingMode,
+        selectedAppPackages: List<String>,
     ) {
         val secret = UUID.randomUUID().toString().replace("-", "")
         val options =
@@ -174,7 +198,7 @@ class ViaSixVpnService : VpnService() {
                 .setMtu(1500)
                 .addAddress("10.10.0.2", 32)
                 .addDnsServer("1.1.1.1")
-                .addDisallowedApplication(packageName)
+        applyAppRouting(builder, appRoutingMode, selectedAppPackages)
 
         if (fullTunnel) {
             builder.addRoute("0.0.0.0", 0)
@@ -233,6 +257,42 @@ class ViaSixVpnService : VpnService() {
         activeSecret = secret
         startTrafficNotificationLoop(secret, fullTunnel)
         Log.i(TAG, "stack ready fullTunnel=$fullTunnel health=${health.message}")
+    }
+
+    private fun applyAppRouting(
+        builder: Builder,
+        mode: AppRoutingMode,
+        selectedAppPackages: List<String>,
+    ) {
+        val rules = AppRoutingPolicy.rules(mode, selectedAppPackages, packageName)
+        var allowedCount = 0
+        rules.allowedPackages.forEach { selectedPackage ->
+            try {
+                builder.addAllowedApplication(selectedPackage)
+                allowedCount += 1
+            } catch (_: android.content.pm.PackageManager.NameNotFoundException) {
+                appendEvent("已忽略不存在的应用：$selectedPackage", "warning")
+            }
+        }
+        rules.disallowedPackages.forEach { selectedPackage ->
+            try {
+                builder.addDisallowedApplication(selectedPackage)
+            } catch (_: android.content.pm.PackageManager.NameNotFoundException) {
+                appendEvent("已忽略不存在的绕过应用：$selectedPackage", "warning")
+            }
+        }
+        if (mode == AppRoutingMode.ONLY_SELECTED && allowedCount == 0) {
+            throw IllegalArgumentException("仅代理所选应用模式没有可用应用")
+        }
+        appendEvent(
+            when (mode) {
+                AppRoutingMode.ALL -> "应用路由：所有应用"
+                AppRoutingMode.BYPASS_SELECTED ->
+                    "应用路由：绕过 ${rules.disallowedPackages.size - 1} 个所选应用"
+                AppRoutingMode.ONLY_SELECTED -> "应用路由：仅代理 $allowedCount 个所选应用"
+            },
+            "info",
+        )
     }
 
     /** Clash-style live rates in the ongoing VPN notification. */
@@ -473,6 +533,8 @@ class ViaSixVpnService : VpnService() {
         const val EXTRA_SELECTED_IP = "selected_ip"
         const val EXTRA_MODE = "mode"
         const val EXTRA_FULL_TUNNEL = "full_tunnel"
+        const val EXTRA_APP_ROUTING_MODE = "app_routing_mode"
+        const val EXTRA_SELECTED_APP_PACKAGES = "selected_app_packages"
         const val EXTRA_REASON = "reason"
         const val MIXED_PORT = 11451
         const val CONTROLLER_PORT = 9090

@@ -6,6 +6,9 @@ import dev.viasix.app.net.ExitIPDetectionMode
 import dev.viasix.app.net.ExitIPInfo
 import dev.viasix.app.prefs.SessionPrefs
 import dev.viasix.app.runtime.RuntimeComponentsState
+import dev.viasix.app.session.AppRoutingMode
+import dev.viasix.app.session.AppRoutingPolicy
+import dev.viasix.app.session.AppRoutingState
 import dev.viasix.app.session.BatteryOptimizationState
 import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.session.NotificationPermissionState
@@ -125,6 +128,7 @@ data class SessionUiState(
     val candidateAddresses: List<String> = emptyList(),
     val routingMode: RoutingMode = RoutingMode.RULE,
     val fullTunnel: Boolean = true,
+    val appRouting: AppRoutingState = AppRoutingState(),
     val notificationPermission: NotificationPermissionState = NotificationPermissionState(),
     val vpnPermission: VpnPermissionState = VpnPermissionState(),
     val batteryOptimization: BatteryOptimizationState = BatteryOptimizationState(),
@@ -173,6 +177,8 @@ data class SessionUiState(
             selectedAddress = selectedAddress,
             routingMode = routingMode.wire,
             fullTunnel = fullTunnel,
+            appRoutingMode = appRouting.mode.wire,
+            selectedAppPackages = appRouting.selectedPackages,
             candidateAddresses = candidateAddresses,
             exitIPEndpoint = exitIP.endpoint,
             exitIPDetectionMode = exitIP.mode.wire,
@@ -214,6 +220,17 @@ data class SessionUiState(
                 candidateAddresses = candidates,
                 routingMode = RoutingMode.parse(prefs.routingMode) ?: RoutingMode.RULE,
                 fullTunnel = prefs.fullTunnel,
+                appRouting =
+                    AppRoutingState(
+                        mode = AppRoutingMode.parse(prefs.appRoutingMode),
+                        selectedPackages =
+                            prefs.selectedAppPackages
+                                .map(String::trim)
+                                .filter(AppRoutingPolicy::isValidPackageName)
+                                .distinct()
+                                .sorted()
+                                .take(200),
+                    ),
                 exitIP =
                     ExitIPState(
                         mode = ExitIPDetectionMode.parse(prefs.exitIPDetectionMode),

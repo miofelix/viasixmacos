@@ -17,6 +17,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.viasix.app.BuildConfig
 import dev.viasix.app.net.ExitIPDetectionMode
+import dev.viasix.app.session.AppRoutingMode
 import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.state.LogLevel
 import dev.viasix.app.state.SessionUiState
@@ -704,6 +706,18 @@ fun OverviewScreen(
                 CompactInfoRow("控制", "127.0.0.1:${state.runtime.controllerPort}", Icons.Outlined.Language)
                 HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
                 CompactInfoRow("模式", state.routingMode.displayName(), Icons.Outlined.Route)
+                HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
+                CompactInfoRow(
+                    "应用路由",
+                    when (state.appRouting.mode) {
+                        AppRoutingMode.ALL -> "所有应用"
+                        AppRoutingMode.BYPASS_SELECTED ->
+                            "绕过 ${state.appRouting.selectedCount} 个"
+                        AppRoutingMode.ONLY_SELECTED ->
+                            "仅代理 ${state.appRouting.selectedCount} 个"
+                    },
+                    Icons.Outlined.Apps,
+                )
                 Spacer(Modifier.height(VisualStyle.spacing12))
             }
 

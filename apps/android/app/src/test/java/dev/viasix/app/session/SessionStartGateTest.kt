@@ -46,6 +46,35 @@ class SessionStartGateTest {
     }
 
     @Test
+    fun onlySelectedModeRequiresAtLeastOneAppEvenInDirectMode() {
+        val result =
+            SessionStartGate.evaluate(
+                RoutingMode.DIRECT,
+                selectedAddress = "not-an-ip",
+                summary = managedSummary,
+                appRoutingMode = AppRoutingMode.ONLY_SELECTED,
+                selectedAppPackages = emptyList(),
+            )
+
+        assertTrue(result is SessionStartGate.Result.Blocked)
+        assertEquals("settings", (result as SessionStartGate.Result.Blocked).sectionWire)
+    }
+
+    @Test
+    fun onlySelectedModeRejectsInvalidPackageNames() {
+        val result =
+            SessionStartGate.evaluate(
+                RoutingMode.DIRECT,
+                selectedAddress = "not-an-ip",
+                summary = managedSummary,
+                appRoutingMode = AppRoutingMode.ONLY_SELECTED,
+                selectedAppPackages = listOf("not-a-package"),
+            )
+
+        assertTrue(result is SessionStartGate.Result.Blocked)
+    }
+
+    @Test
     fun ruleModeBlocksWithoutIpv6() {
         val result =
             SessionStartGate.evaluate(RoutingMode.RULE, "invalid", managedSummary)

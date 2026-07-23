@@ -33,8 +33,11 @@ import dev.viasix.app.prefs.SessionPrefsStore
 import dev.viasix.app.runtime.RuntimeComponentCondition
 import dev.viasix.app.runtime.RuntimeComponentId
 import dev.viasix.app.runtime.RuntimeComponentInfo
+import dev.viasix.app.session.AppRoutingMode
+import dev.viasix.app.session.AppRoutingPolicy
 import dev.viasix.app.session.BatteryOptimizationState
 import dev.viasix.app.session.ConnectionPhase
+import dev.viasix.app.session.InstalledAppsRepository
 import dev.viasix.app.session.NotificationPermissionFlow
 import dev.viasix.app.session.NotificationPermissionState
 import dev.viasix.app.session.POST_NOTIFICATIONS_PERMISSION
@@ -237,6 +240,43 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            fun refreshInstalledApps() {
+                if (state.appRouting.isLoadingApps) return
+                logOnly {
+                    it.copy(appRouting = it.appRouting.copy(isLoadingApps = true))
+                }
+                scope.launch {
+                    try {
+                        val apps =
+                            withContext(Dispatchers.IO) {
+                                InstalledAppsRepository(this@MainActivity).load()
+                            }
+                        logOnly {
+                            it.copy(
+                                appRouting =
+                                    it.appRouting
+                                        .withInstalledApps(apps)
+                                        .copy(isLoadingApps = false),
+                            )
+                        }
+                    } catch (error: Exception) {
+                        update {
+                            it.copy(
+                                appRouting = it.appRouting.copy(isLoadingApps = false),
+                            ).appendLog(
+                                "读取应用列表失败：${error.message}",
+                                LogLevel.Warning,
+                                LogSource.System,
+                            )
+                        }
+                    }
+                }
+            }
+
+            LaunchedEffect("installed-apps") {
+                refreshInstalledApps()
+            }
+
             profileImportHandler = { yaml ->
                 update {
                     it.copy(profileDraft = yaml, configPreview = "")
@@ -414,6 +454,8 @@ class MainActivity : ComponentActivity() {
                             state.routingMode,
                             state.selectedAddress,
                             state.profileSummary,
+                            state.appRouting.mode,
+                            state.appRouting.selectedPackages,
                         )
                 ) {
                     is SessionStartGate.Result.Blocked -> {
@@ -421,10 +463,10 @@ class MainActivity : ComponentActivity() {
                             it.appendLog(
                                 gate.message,
                                 LogLevel.Error,
-                                if (gate.sectionWire == "profiles") {
-                                    LogSource.Proxy
-                                } else {
-                                    LogSource.Node
+                                when (gate.sectionWire) {
+                                    "profiles" -> LogSource.Proxy
+                                    "nodes" -> LogSource.Node
+                                    else -> LogSource.System
                                 },
                                 asNotice = true,
                             )
@@ -1185,6 +1227,50 @@ class MainActivity : ComponentActivity() {
                 openBatteryOptimizationSettings()
             }
 
+            fun changeAppRoutingMode(mode: AppRoutingMode) {
+                if (state.connectionPhase.isActiveOrTransitioning) {
+                    update {
+                        it.appendLog(
+                            "运行中无法切换分应用路由，请先断开 VPN",
+                            LogLevel.Warning,
+                            LogSource.Network,
+                            asNotice = true,
+                        )
+                    }
+                } else {
+                    update { it.copy(appRouting = it.appRouting.copy(mode = mode)) }
+                }
+            }
+
+            fun toggleAppRoutingPackage(packageName: String) {
+                if (state.connectionPhase.isActiveOrTransitioning) return
+                val normalized = packageName.trim()
+                if (
+                    !AppRoutingPolicy.isValidPackageName(normalized) ||
+                        normalized == this@MainActivity.packageName
+                ) {
+                    update {
+                        it.appendLog(
+                            "无法添加应用包名：$normalized",
+                            LogLevel.Warning,
+                            LogSource.System,
+                            asNotice = true,
+                        )
+                    }
+                    return
+                }
+                update {
+                    it.copy(appRouting = it.appRouting.togglePackage(normalized))
+                }
+            }
+
+            fun clearSelectedAppPackages() {
+                if (state.connectionPhase.isActiveOrTransitioning) return
+                update {
+                    it.copy(appRouting = it.appRouting.copy(selectedPackages = emptyList()))
+                }
+            }
+
             ViaSixApp(
                 state = state,
                 selectedSection = selectedSection,
@@ -1263,6 +1349,10 @@ class MainActivity : ComponentActivity() {
                 onManageNotificationPermission = ::manageNotificationPermission,
                 onManageVpnPermission = ::manageVpnPermission,
                 onManageBatteryOptimization = ::manageBatteryOptimization,
+                onAppRoutingModeChange = ::changeAppRoutingMode,
+                onToggleAppRoutingPackage = ::toggleAppRoutingPackage,
+                onClearSelectedAppPackages = ::clearSelectedAppPackages,
+                onRefreshInstalledApps = ::refreshInstalledApps,
                 onRoutingModeChange = ::patchRoutingMode,
                 onFullTunnelChange = { full ->
                     if (state.connectionPhase.isActiveOrTransitioning) {
@@ -1319,6 +1409,12 @@ class MainActivity : ComponentActivity() {
                                         ),
                                     vpnPermission = currentVpnPermissionState(),
                                     batteryOptimization = currentBatteryOptimizationState(),
+                                    appRouting =
+                                        state.appRouting.copy(
+                                            mode = AppRoutingMode.ALL,
+                                            selectedPackages = emptyList(),
+                                            isLoadingApps = false,
+                                        ),
                                     runtimeComponents = state.runtimeComponents,
                                     runtime = currentRuntime.toUiSnapshot(),
                                     connectionPhase =

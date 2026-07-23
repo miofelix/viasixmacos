@@ -1,5 +1,6 @@
 package dev.viasix.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,7 +10,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.NotificationsActive
@@ -19,6 +23,9 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.VpnKey
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -28,6 +35,11 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
@@ -37,6 +49,8 @@ import dev.viasix.app.net.ExitIPDetector
 import dev.viasix.app.runtime.RuntimeComponentCondition
 import dev.viasix.app.runtime.RuntimeComponentId
 import dev.viasix.app.runtime.RuntimeComponentInfo
+import dev.viasix.app.session.AppRoutingMode
+import dev.viasix.app.session.AppRoutingPolicy
 import dev.viasix.app.state.SessionUiState
 import dev.viasix.app.ui.AppSection
 import dev.viasix.app.ui.displayName
@@ -62,10 +76,17 @@ fun SettingsScreen(
     onManageNotificationPermission: () -> Unit = {},
     onManageVpnPermission: () -> Unit = {},
     onManageBatteryOptimization: () -> Unit = {},
+    onAppRoutingModeChange: (AppRoutingMode) -> Unit = {},
+    onToggleAppRoutingPackage: (String) -> Unit = {},
+    onClearSelectedAppPackages: () -> Unit = {},
+    onRefreshInstalledApps: () -> Unit = {},
 ) {
     val colors = LocalViaSixColors.current
     val uriHandler = LocalUriHandler.current
     val tunnelLocked = state.connectionPhase.isActiveOrTransitioning
+    var showAppPicker by remember { mutableStateOf(false) }
+    var appSearch by remember { mutableStateOf("") }
+    var manualPackage by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize()) {
         AppPageHeader(
@@ -146,6 +167,84 @@ fun SettingsScreen(
                             ),
                 ) {
                     Text(state.vpnPermission.actionLabel)
+                }
+            }
+
+            SurfaceCard {
+                val appRouting = state.appRouting
+                CardHeader(
+                    title = "分应用路由",
+                    icon = Icons.Outlined.Apps,
+                    tone = AppTone.Accent,
+                )
+                HorizontalDivider(color = colors.surfaceBorder)
+                Column(
+                    modifier = Modifier.padding(VisualStyle.spacing16),
+                    verticalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+                ) {
+                    AppRoutingMode.entries.forEach { mode ->
+                        if (appRouting.mode == mode) {
+                            FilledTonalButton(
+                                onClick = { onAppRoutingModeChange(mode) },
+                                enabled = !tunnelLocked,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(mode.label)
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = { onAppRoutingModeChange(mode) },
+                                enabled = !tunnelLocked,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(mode.label)
+                            }
+                        }
+                    }
+                    Text(
+                        text = appRouting.mode.detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (
+                        appRouting.mode == AppRoutingMode.ONLY_SELECTED &&
+                            appRouting.selectedPackages.isEmpty()
+                    ) {
+                        Text(
+                            text = "至少选择一个应用后才能连接。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.warning,
+                        )
+                    }
+                    CompactInfoRow("已选择", "${appRouting.selectedCount} 个应用")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                showAppPicker = true
+                                if (appRouting.installedApps.isEmpty()) onRefreshInstalledApps()
+                            },
+                            enabled = !tunnelLocked,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("选择应用")
+                        }
+                        TextButton(
+                            onClick = onClearSelectedAppPackages,
+                            enabled = !tunnelLocked && appRouting.selectedPackages.isNotEmpty(),
+                        ) {
+                            Text("清空")
+                        }
+                    }
+                    if (tunnelLocked) {
+                        Text(
+                            text = "运行中不可修改应用路由，请先断开 VPN。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
 
@@ -473,7 +572,7 @@ fun SettingsScreen(
                 HorizontalDivider(color = colors.surfaceBorder)
                 Column(modifier = Modifier.padding(VisualStyle.spacing16)) {
                     Text(
-                        "清除本机会话偏好（配置 YAML、节点候选、出口检测设置）。" +
+                        "清除本机会话偏好（配置 YAML、节点候选、分应用选择、出口检测设置）。" +
                             "不会卸载 mihomo 二进制或撤销 VPN 权限。" +
                             if (resetLocked) " 请先断开 VPN 后再重置。" else "",
                         style = MaterialTheme.typography.bodySmall,
@@ -512,6 +611,152 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    if (showAppPicker) {
+        val query = appSearch.trim()
+        val visibleApps =
+            remember(state.appRouting.installedApps, query) {
+                state.appRouting.installedApps.filter { app ->
+                    query.isEmpty() ||
+                        app.label.contains(query, ignoreCase = true) ||
+                        app.packageName.contains(query, ignoreCase = true)
+                }
+            }
+        AlertDialog(
+            onDismissRequest = { showAppPicker = false },
+            title = { Text("选择应用") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(VisualStyle.spacing8)) {
+                    OutlinedTextField(
+                        value = appSearch,
+                        onValueChange = { appSearch = it },
+                        label = { Text("搜索名称或包名") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedTextField(
+                            value = manualPackage,
+                            onValueChange = { manualPackage = it },
+                            label = { Text("高级：手动包名") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Button(
+                            onClick = {
+                                val packageName = manualPackage.trim()
+                                onToggleAppRoutingPackage(packageName)
+                                appSearch = packageName
+                                manualPackage = ""
+                            },
+                            enabled =
+                                !tunnelLocked &&
+                                    AppRoutingPolicy.isValidPackageName(manualPackage) &&
+                                    !state.appRouting.selectedPackages.contains(
+                                        manualPackage.trim(),
+                                    ),
+                        ) {
+                            Text("添加")
+                        }
+                    }
+                    if (
+                        manualPackage.isNotBlank() &&
+                            !AppRoutingPolicy.isValidPackageName(manualPackage)
+                    ) {
+                        Text(
+                            "请输入类似 com.example.app 的 Android 包名。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.warning,
+                        )
+                    }
+                    when {
+                        state.appRouting.isLoadingApps ->
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(VisualStyle.spacing16),
+                                horizontalArrangement = Arrangement.Center,
+                            ) {
+                                CircularProgressIndicator()
+                            }
+                        visibleApps.isEmpty() ->
+                            Text(
+                                "没有匹配的可启动应用。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        else ->
+                            LazyColumn(modifier = Modifier.height(360.dp)) {
+                                items(
+                                    items = visibleApps,
+                                    key = { it.packageName },
+                                ) { app ->
+                                    val checked =
+                                        state.appRouting.selectedPackages.contains(app.packageName)
+                                    Row(
+                                        modifier =
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .clickable(enabled = !tunnelLocked) {
+                                                    onToggleAppRoutingPackage(app.packageName)
+                                                }
+                                                .padding(vertical = VisualStyle.spacing4),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Checkbox(
+                                            checked = checked,
+                                            onCheckedChange = {
+                                                onToggleAppRoutingPackage(app.packageName)
+                                            },
+                                            enabled = !tunnelLocked,
+                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = app.label,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                            )
+                                            Text(
+                                                text =
+                                                    if (app.launchable) {
+                                                        app.packageName
+                                                    } else {
+                                                        "${app.packageName} · 无启动器入口或已卸载"
+                                                    },
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color =
+                                                    if (app.launchable) {
+                                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                                    } else {
+                                                        colors.warning
+                                                    },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAppPicker = false }) {
+                    Text("完成")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = onRefreshInstalledApps,
+                    enabled = !state.appRouting.isLoadingApps,
+                ) {
+                    Text("刷新")
+                }
+            },
+        )
     }
 }
 

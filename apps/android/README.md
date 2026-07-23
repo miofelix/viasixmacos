@@ -46,7 +46,7 @@ make android-assemble
 | IPv6 优选 | CFST 测速、结果表、应用 / 应用并重连 + 手动入口 |
 | 连接配置 | Profile YAML 安全草稿、校验后应用/还原、运行中应用并重连 + 投影预览 |
 | 日志 | 会话活动时间线 |
-| 设置 | 全量隧道开关、运行组件、关于 |
+| 设置 | 全量隧道、分应用路由、系统权限/后台运行、运行组件、关于 |
 
 设计令牌与卡片组件见 `ui/theme/`（对应 macOS `VisualStyle` / `SurfaceCard` 等）。
 
@@ -60,6 +60,7 @@ make android-assemble
 | mihomo 用户态启动（assets → filesDir） | ✓ |
 | 全量隧道 IPv4/IPv6 TCP→SOCKS | ✓（`Tun2SocksEngine`） |
 | 全量隧道通用 UDP→SOCKS5 UDP ASSOCIATE | ✓（每本地源端口一条 ASSOCIATE；DNS/53 独立 protect） |
+| 分应用路由 | ✓（所有应用 / 绕过所选 / 仅代理所选；可搜索启动器应用或手动添加包名，无广泛包可见权限） |
 | HTTP 代理 VPN 模式（可选，无默认路由） | ✓ |
 | 系统代理 | 不适用 |
 | 流量：速率差分 + 曲线 + 内存 + 连接数 | ✓ |
