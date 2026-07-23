@@ -95,6 +95,24 @@ class TcpRetransmissionQueueTest {
     }
 
     @Test
+    fun synConsumesSequenceSpaceAndIsRetainedUntilAcknowledged() {
+        val queue = queue()
+        val reservation =
+            queue.reserve(
+                sequence = 100L,
+                flags = Packet.SYN or Packet.ACK,
+                payload = ByteArray(0),
+            )!!
+        queue.markQueued(reservation, nowMs = 0L)
+
+        val due = queue.pollDue(nowMs = 1_000L) as TcpRetransmissionQueue.PollResult.Retransmit
+        assertEquals(100L, due.sequence)
+        assertEquals(Packet.SYN or Packet.ACK, due.flags)
+        assertTrue(queue.acknowledge(acknowledgement = 101L, nowMs = 1_001L))
+        assertTrue(queue.awaitEmpty(timeoutMs = 0L))
+    }
+
+    @Test
     fun thirdDuplicateAcknowledgementTriggersOneFastRetransmission() {
         val queue = queue()
         val reservation = queue.reserve(100L, Packet.PSH or Packet.ACK, byteArrayOf(1, 2))!!

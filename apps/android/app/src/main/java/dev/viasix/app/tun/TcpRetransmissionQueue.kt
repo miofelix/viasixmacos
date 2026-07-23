@@ -49,7 +49,10 @@ class TcpRetransmissionQueue(
         payload: ByteArray,
     ): Long? =
         synchronized(monitor) {
-            val sequenceLength = payload.size + if (flags and Packet.FIN != 0) 1 else 0
+            val sequenceLength =
+                payload.size +
+                    (if (flags and Packet.SYN != 0) 1 else 0) +
+                    (if (flags and Packet.FIN != 0) 1 else 0)
             if (cancelled || sequenceLength <= 0) return@synchronized null
             if (retainedBytes + sequenceLength > maxRetainedBytes) return@synchronized null
             val previous = segments.lastOrNull()

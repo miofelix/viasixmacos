@@ -534,7 +534,7 @@ class Tun2SocksEngine(
             session.socket = socket
             inFlightIo.unregister(socket)
 
-            val synAckQueued = enqueueSynAck(session)
+            val synAckQueued = retainAndEnqueueSynAck(session)
             if (!synAckQueued) {
                 removeSession(key, session)
                 return
@@ -775,6 +775,21 @@ class Tun2SocksEngine(
             ),
             lossless = true,
         )
+
+    private fun retainAndEnqueueSynAck(session: TcpSession): Boolean {
+        val reservation =
+            session.retransmissions.reserve(
+                sequence = session.serverIsn,
+                flags = Packet.SYN or Packet.ACK,
+                payload = ByteArray(0),
+            ) ?: return false
+        if (!enqueueSynAck(session)) {
+            session.retransmissions.discard(reservation)
+            return false
+        }
+        session.retransmissions.markQueued(reservation, monotonicTimeMs())
+        return true
+    }
 
     private fun ensureTcpUpstreamWriter(key: String, session: TcpSession): Boolean {
         val socket = session.socket ?: return false
@@ -1262,6 +1277,18 @@ class Tun2SocksEngine(
                     ack = session.clientNextSeq,
                     flags = due.flags,
                     payload = due.payload,
+                    maximumSegmentSize =
+                        if (due.flags and Packet.SYN != 0) {
+                            TcpSegmentSizer.maxPayloadBytes(mtu, session.ipv6)
+                        } else {
+                            null
+                        },
+                    windowScale =
+                        if (due.flags and Packet.SYN != 0 && session.clientWindowScale != null) {
+                            SERVER_WINDOW_SCALE
+                        } else {
+                            null
+                        },
                 ),
                 lossless = true,
                 timeoutMs = 0L,

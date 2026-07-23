@@ -30,12 +30,28 @@ class TcpHandshakeSurfaceTest {
                 engine.indexOf("private fun openTcpSession"),
                 engine.indexOf("private fun ensureTcpDownstreamReader"),
             )
+        val retainedSyn =
+            engine.substring(
+                engine.indexOf("private fun retainAndEnqueueSynAck"),
+                engine.indexOf("private fun ensureTcpUpstreamWriter"),
+            )
+        val retransmission =
+            engine.substring(
+                engine.indexOf("private fun enqueueTcpRetransmission"),
+                engine.indexOf("private fun enqueueAck"),
+            )
         assertTrue(openSession.indexOf("session.clientNextSeq =") < openSession.indexOf("session.socket = socket"))
+        assertTrue(openSession.contains("retainAndEnqueueSynAck(session)"))
         assertTrue(engine.contains("ensureTcpDownstreamReader(key, session)"))
         assertTrue(engine.contains("session.handshakeDeadlineMs = monotonicTimeMs()"))
         assertTrue(engine.contains("TCP handshake timed out for"))
         assertFalse(engine.contains("session.handshake.await(HANDSHAKE_TIMEOUT_MS)"))
         assertTrue(engine.contains("seq = session.serverIsn"))
+        assertTrue(retainedSyn.contains("flags = Packet.SYN or Packet.ACK"))
+        assertTrue(retainedSyn.contains("session.retransmissions.markQueued(reservation, monotonicTimeMs())"))
+        assertTrue(retransmission.contains("if (due.flags and Packet.SYN != 0)"))
+        assertTrue(retransmission.contains("TcpSegmentSizer.maxPayloadBytes(mtu, session.ipv6)"))
+        assertTrue(retransmission.contains("SERVER_WINDOW_SCALE"))
         assertTrue(engine.contains("handshake.cancel()"))
         assertFalse(engine.contains("session.handshakeComplete = true"))
     }
