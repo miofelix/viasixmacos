@@ -17,6 +17,8 @@ class TcpRetransmissionSurfaceTest {
         assertTrue(engine.contains("session.retransmissions.markQueued"))
         assertTrue(engine.contains("session.retransmissions.acknowledge"))
         assertTrue(engine.contains("session.retransmissions.pollDue"))
+        assertTrue(engine.contains("session.retransmissions.noteDuplicateAcknowledgement"))
+        assertTrue(engine.contains("reason = \"fast\""))
         assertTrue(engine.contains("session.retransmissions.awaitEmpty"))
         assertTrue(engine.contains("Executors.newSingleThreadScheduledExecutor"))
         assertTrue(engine.contains("timeoutMs = 0L"))

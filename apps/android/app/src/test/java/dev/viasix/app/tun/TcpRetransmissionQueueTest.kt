@@ -94,6 +94,42 @@ class TcpRetransmissionQueueTest {
         assertTrue(queue.awaitEmpty(timeoutMs = 0L))
     }
 
+    @Test
+    fun thirdDuplicateAcknowledgementTriggersOneFastRetransmission() {
+        val queue = queue()
+        val reservation = queue.reserve(100L, Packet.PSH or Packet.ACK, byteArrayOf(1, 2))!!
+        queue.markQueued(reservation, nowMs = 0L)
+
+        assertNull(queue.noteDuplicateAcknowledgement(100L, nowMs = 10L))
+        assertNull(queue.noteDuplicateAcknowledgement(100L, nowMs = 20L))
+        val due =
+            queue.noteDuplicateAcknowledgement(100L, nowMs = 30L)
+                as TcpRetransmissionQueue.PollResult.Retransmit
+
+        assertEquals(100L, due.sequence)
+        assertArrayEquals(byteArrayOf(1, 2), due.payload)
+        assertEquals(1, due.attempt)
+        assertNull(queue.noteDuplicateAcknowledgement(100L, nowMs = 40L))
+    }
+
+    @Test
+    fun advancingAcknowledgementResetsFastRetransmitForNewOldestSegment() {
+        val queue = queue()
+        val first = queue.reserve(200L, Packet.PSH or Packet.ACK, byteArrayOf(1, 2))!!
+        val second = queue.reserve(202L, Packet.PSH or Packet.ACK, byteArrayOf(3, 4))!!
+        queue.markQueued(first, nowMs = 0L)
+        queue.markQueued(second, nowMs = 0L)
+        repeat(3) { queue.noteDuplicateAcknowledgement(200L, nowMs = 10L + it) }
+
+        assertTrue(queue.acknowledge(acknowledgement = 202L, nowMs = 100L))
+        assertNull(queue.noteDuplicateAcknowledgement(202L, nowMs = 110L))
+        assertNull(queue.noteDuplicateAcknowledgement(202L, nowMs = 120L))
+        val due = queue.noteDuplicateAcknowledgement(202L, nowMs = 130L)
+
+        assertEquals(202L, due!!.sequence)
+        assertArrayEquals(byteArrayOf(3, 4), due.payload)
+    }
+
     private fun queue(
         maxRetransmissions: Int = 5,
         maxRetainedBytes: Int = 16,

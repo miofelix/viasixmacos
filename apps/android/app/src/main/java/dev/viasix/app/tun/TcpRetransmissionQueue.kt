@@ -32,6 +32,9 @@ class TcpRetransmissionQueue(
     private var retainedBytes = 0
     private var nextId = 1L
     private var cancelled = false
+    private var duplicateAcknowledgement: Long? = null
+    private var duplicateAcknowledgementCount = 0
+    private var fastRetransmittedSequence: Long? = null
 
     init {
         require(baseRtoMs > 0L) { "baseRtoMs must be positive" }
@@ -87,6 +90,7 @@ class TcpRetransmissionQueue(
             if (segment.id != reservationId || segment.queuedAtMs != null) return@synchronized false
             segments.removeLast()
             retainedBytes -= segment.sequenceLength
+            if (segments.isEmpty()) resetDuplicateAcknowledgements()
             monitor.notifyAll()
             true
         }
@@ -132,6 +136,7 @@ class TcpRetransmissionQueue(
                 break
             }
             if (advanced) {
+                resetDuplicateAcknowledgements()
                 segments.firstOrNull()?.let { first ->
                     first.retransmissions = 0
                     if (first.queuedAtMs != null) first.queuedAtMs = nowMs
@@ -139,6 +144,42 @@ class TcpRetransmissionQueue(
                 monitor.notifyAll()
             }
             advanced
+        }
+
+    fun noteDuplicateAcknowledgement(
+        acknowledgement: Long,
+        nowMs: Long,
+    ): PollResult.Retransmit? =
+        synchronized(monitor) {
+            if (cancelled) return@synchronized null
+            val segment = segments.firstOrNull() ?: return@synchronized null
+            if (segment.queuedAtMs == null || acknowledgement != segment.sequence) {
+                resetDuplicateAcknowledgements()
+                return@synchronized null
+            }
+            if (duplicateAcknowledgement == acknowledgement) {
+                duplicateAcknowledgementCount += 1
+            } else {
+                duplicateAcknowledgement = acknowledgement
+                duplicateAcknowledgementCount = 1
+                fastRetransmittedSequence = null
+            }
+            if (
+                duplicateAcknowledgementCount < FAST_RETRANSMIT_DUPLICATE_ACKS ||
+                    fastRetransmittedSequence == segment.sequence ||
+                    segment.retransmissions >= maxRetransmissions
+            ) {
+                return@synchronized null
+            }
+            segment.retransmissions += 1
+            segment.queuedAtMs = nowMs
+            fastRetransmittedSequence = segment.sequence
+            PollResult.Retransmit(
+                sequence = segment.sequence,
+                flags = segment.flags,
+                payload = segment.payload.copyOf(),
+                attempt = segment.retransmissions,
+            )
         }
 
     fun pollDue(nowMs: Long): PollResult? =
@@ -186,8 +227,15 @@ class TcpRetransmissionQueue(
             cancelled = true
             segments.clear()
             retainedBytes = 0
+            resetDuplicateAcknowledgements()
             monitor.notifyAll()
         }
+    }
+
+    private fun resetDuplicateAcknowledgements() {
+        duplicateAcknowledgement = null
+        duplicateAcknowledgementCount = 0
+        fastRetransmittedSequence = null
     }
 
     private fun retransmissionTimeout(retransmissions: Int): Long {
@@ -197,5 +245,9 @@ class TcpRetransmissionQueue(
             timeout = minOf(maxRtoMs, timeout * 2L)
         }
         return timeout
+    }
+
+    private companion object {
+        const val FAST_RETRANSMIT_DUPLICATE_ACKS = 3
     }
 }

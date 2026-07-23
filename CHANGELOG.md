@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android TCP 下行丢包只能等待 RTO、连续重复 ACK 无法及时恢复的问题；当前三次有效纯重复 ACK 会触发一次有界快速重传，ACK 推进后重置计数，同一序列不会因 ACK 洪峰重复放大。
 - 修复 Android TUN reader 直接向远端 TCP socket `write/flush`、在慢远端或内核背压时阻塞整个隧道读线程的问题；客户端上行 payload 现进入每会话 64 KiB 有界队列，由独立 writer 顺序排空，队列满时保留旧 ACK 促使客户端重传，FIN 等待排队数据真正写完后再执行 `shutdownOutput`。
 - 修复 Android IPv4 分片在没有重组器时可能被误交给 TCP/UDP 解析的问题；现拒绝 `MF`、非零 fragment offset 与保留标志，避免首片残缺 payload 或非首片字节污染用户态流连接。
 - 修复 Android 远端 FIN 发出后立即销毁 TCP 会话、导致 FIN 丢失无法重传及双方半关闭未完成的问题；FIN 现占用序列空间并纳入未确认段缓存，等待客户端 ACK，双方 FIN 完成后关闭，迟迟不完成的半关闭在 60 秒后回收，客户端 FIN 后的非法 payload 不再写入 SOCKS。

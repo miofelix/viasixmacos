@@ -271,10 +271,24 @@ class Tun2SocksEngine(
                     nextSequence = session.serverSeq,
                 )
             ) {
-                session.retransmissions.acknowledge(
-                    acknowledgement = tcp.ack,
-                    nowMs = monotonicTimeMs(),
-                )
+                val nowMs = monotonicTimeMs()
+                val acknowledgementAdvanced =
+                    session.retransmissions.acknowledge(
+                        acknowledgement = tcp.ack,
+                        nowMs = nowMs,
+                    )
+                if (
+                    !acknowledgementAdvanced &&
+                        tcp.payloadLength == 0 &&
+                        tcp.flags and (Packet.SYN or Packet.FIN or Packet.RST) == 0
+                ) {
+                    session.retransmissions.noteDuplicateAcknowledgement(
+                        acknowledgement = tcp.ack,
+                        nowMs = nowMs,
+                    )?.let { due ->
+                        enqueueTcpRetransmission(key, session, due, reason = "fast")
+                    }
+                }
                 if (
                     session.closeState.acknowledgeServerFin(tcp.ack) &&
                         session.closeState.isFullyClosed
@@ -860,21 +874,7 @@ class Tun2SocksEngine(
             when (val due = session.retransmissions.pollDue(nowMs)) {
                 is TcpRetransmissionQueue.PollResult.Retransmit -> {
                     if (sessions[key] !== session) continue
-                    val queued =
-                        enqueuePacket(
-                            buildTcpPacket(
-                                session = session,
-                                seq = due.sequence,
-                                ack = session.clientNextSeq,
-                                flags = due.flags,
-                                payload = due.payload,
-                            ),
-                            lossless = true,
-                            timeoutMs = 0L,
-                        )
-                    if (!queued) {
-                        Log.w(TAG, "TCP retransmission deferred by TUN backpressure for $key")
-                    }
+                    enqueueTcpRetransmission(key, session, due, reason = "timeout")
                 }
                 TcpRetransmissionQueue.PollResult.Exhausted -> {
                     Log.w(TAG, "TCP retransmission limit reached for $key")
@@ -889,6 +889,30 @@ class Tun2SocksEngine(
                 Log.w(TAG, "TCP half-close timed out for $key")
                 removeSession(key, session)
             }
+        }
+    }
+
+    private fun enqueueTcpRetransmission(
+        key: String,
+        session: TcpSession,
+        due: TcpRetransmissionQueue.PollResult.Retransmit,
+        reason: String,
+    ) {
+        if (sessions[key] !== session) return
+        val queued =
+            enqueuePacket(
+                buildTcpPacket(
+                    session = session,
+                    seq = due.sequence,
+                    ack = session.clientNextSeq,
+                    flags = due.flags,
+                    payload = due.payload,
+                ),
+                lossless = true,
+                timeoutMs = 0L,
+            )
+        if (!queued) {
+            Log.w(TAG, "TCP $reason retransmission deferred by TUN backpressure for $key")
         }
     }
 
