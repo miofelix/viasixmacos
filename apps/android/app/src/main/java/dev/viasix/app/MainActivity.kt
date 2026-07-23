@@ -26,6 +26,7 @@ import dev.viasix.app.net.ExitIPDetectionMode
 import dev.viasix.app.net.ExitIPDetector
 import dev.viasix.app.prefs.SessionPrefsStore
 import dev.viasix.app.session.ConnectionPhase
+import dev.viasix.app.session.ProfileDraftGate
 import dev.viasix.app.session.ProfileImportText
 import dev.viasix.app.session.SessionStartGate
 import dev.viasix.app.session.VpnSessionCommands
@@ -137,8 +138,12 @@ class MainActivity : ComponentActivity() {
 
             profileImportHandler = { yaml ->
                 update {
-                    it.copy(profileYaml = yaml)
-                        .appendLog("已导入配置（${yaml.length} 字符）", LogLevel.Success, LogSource.Proxy)
+                    it.copy(profileDraft = yaml, configPreview = "")
+                        .appendLog(
+                            "已导入配置草稿（${yaml.length} 字符），校验后请应用",
+                            LogLevel.Success,
+                            LogSource.Proxy,
+                        )
                 }
             }
 
@@ -365,9 +370,9 @@ class MainActivity : ComponentActivity() {
                     return
                 }
                 update {
-                    it.copy(profileYaml = yaml)
+                    it.copy(profileDraft = yaml, configPreview = "")
                         .appendLog(
-                            "已从剪贴板导入配置（${yaml.length} 字符）",
+                            "已从剪贴板导入配置草稿（${yaml.length} 字符），校验后请应用",
                             LogLevel.Success,
                             LogSource.Proxy,
                             asNotice = true,
@@ -418,17 +423,20 @@ class MainActivity : ComponentActivity() {
 
             fun projectPreview() {
                 try {
+                    val previewMode =
+                        if (state.routingMode == RoutingMode.DIRECT) {
+                            RoutingMode.RULE
+                        } else {
+                            state.routingMode
+                        }
                     val preview =
                         MihomoProjection.projectYaml(
-                            if (state.routingMode == RoutingMode.DIRECT) null else state.profileYaml,
+                            state.profileDraft,
                             ProjectOptions(
-                                routingMode = state.routingMode,
+                                routingMode = previewMode,
                                 selectedAddress =
-                                    if (state.routingMode == RoutingMode.DIRECT) {
-                                        null
-                                    } else {
-                                        state.selectedAddress
-                                    },
+                                    Ipv6Address.normalize(state.selectedAddress)
+                                        ?: PROFILE_VALIDATION_IPV6,
                             ),
                         )
                     update {
@@ -453,6 +461,76 @@ class MainActivity : ComponentActivity() {
                                 LogSource.Proxy,
                             )
                     }
+                }
+            }
+
+            fun applyProfileDraft(reconnect: Boolean) {
+                val draft = state.profileDraft.trim()
+                when (val gate = ProfileDraftGate.evaluate(draft)) {
+                    is ProfileDraftGate.Result.Blocked -> {
+                        update {
+                            it.appendLog(
+                                "配置草稿无法应用：${gate.message}",
+                                LogLevel.Error,
+                                LogSource.Proxy,
+                                asNotice = true,
+                            )
+                        }
+                        return
+                    }
+                    ProfileDraftGate.Result.Ok -> Unit
+                }
+
+                try {
+                    // Validate projection independently from the currently selected node.
+                    MihomoProjection.projectYaml(
+                        draft,
+                        ProjectOptions(
+                            routingMode = RoutingMode.RULE,
+                            selectedAddress = PROFILE_VALIDATION_IPV6,
+                        ),
+                    )
+                } catch (error: ProjectError) {
+                    update {
+                        it.appendLog(
+                            "配置草稿无法应用：${error.contractCode}",
+                            LogLevel.Error,
+                            LogSource.Proxy,
+                            asNotice = true,
+                        )
+                    }
+                    return
+                } catch (error: Exception) {
+                    update {
+                        it.appendLog(
+                            "配置草稿无法应用：${error.message ?: "unknown error"}",
+                            LogLevel.Error,
+                            LogSource.Proxy,
+                            asNotice = true,
+                        )
+                    }
+                    return
+                }
+
+                val wasRunning = state.runtime.running
+                update {
+                    it.copy(
+                        profileYaml = draft,
+                        profileDraft = draft,
+                        configPreview = "",
+                    ).appendLog(
+                        when {
+                            reconnect && wasRunning -> "配置已应用，正在重新连接"
+                            wasRunning -> "配置已保存，当前会话保持不变"
+                            else -> "配置已应用，下次连接将使用新配置"
+                        },
+                        LogLevel.Success,
+                        LogSource.Proxy,
+                        asNotice = true,
+                    )
+                }
+                if (reconnect && wasRunning) {
+                    startVpn(reason = "apply-profile")
                 }
             }
 
@@ -834,7 +912,16 @@ class MainActivity : ComponentActivity() {
                 state = state,
                 selectedSection = selectedSection,
                 onSectionChange = { selectedSection = it },
-                onProfileChange = { yaml -> update { it.copy(profileYaml = yaml) } },
+                onProfileChange = { yaml ->
+                    update { it.copy(profileDraft = yaml, configPreview = "") }
+                },
+                onApplyProfile = ::applyProfileDraft,
+                onRevertProfile = {
+                    update {
+                        it.copy(profileDraft = it.profileYaml, configPreview = "")
+                            .appendLog("已还原为上一次应用的配置", LogLevel.Info, LogSource.Proxy)
+                    }
+                },
                 onImportProfile = {
                     openDocument.launch(arrayOf("text/*", "application/*", "*/*"))
                 },
@@ -938,5 +1025,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         /** Fail STARTING if VPN runtime never becomes ready. */
         private const val START_TIMEOUT_MS = 25_000L
+        private const val PROFILE_VALIDATION_IPV6 = "2001:db8::1"
     }
 }

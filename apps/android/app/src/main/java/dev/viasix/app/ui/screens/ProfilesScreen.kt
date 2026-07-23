@@ -40,12 +40,16 @@ import dev.viasix.app.ui.theme.VisualStyle
 fun ProfilesScreen(
     state: SessionUiState,
     onProfileChange: (String) -> Unit,
+    onApplyProfile: (reconnect: Boolean) -> Unit,
+    onRevertProfile: () -> Unit,
     onProjectPreview: () -> Unit,
     onImportProfile: () -> Unit,
     onImportClipboard: () -> Unit = {},
 ) {
     val colors = LocalViaSixColors.current
     val summary = state.profileSummary
+    val draftSummary = state.profileDraftSummary
+    val draftIssue = state.profileDraftIssue
     val tone =
         when {
             summary.isManaged -> AppTone.Accent
@@ -58,7 +62,10 @@ fun ProfilesScreen(
             title = AppSection.PROFILES.title,
             subtitle = AppSection.PROFILES.subtitle,
         ) {
-            StatusBadge(summary.statusLabel, tone = tone)
+            StatusBadge(
+                title = if (state.profileHasUnsavedChanges) "草稿未应用" else summary.statusLabel,
+                tone = if (state.profileHasUnsavedChanges) AppTone.Warning else tone,
+            )
         }
 
         Column(
@@ -74,7 +81,7 @@ fun ProfilesScreen(
         ) {
             SurfaceCard {
                 CardHeader(
-                    title = "当前代理入口",
+                    title = "已应用代理入口",
                     icon = Icons.Outlined.Inventory2,
                     tone = tone,
                 )
@@ -126,27 +133,53 @@ fun ProfilesScreen(
                 CardHeader(
                     title = "编辑 YAML",
                     icon = Icons.Outlined.Science,
-                    tone = AppTone.Accent,
-                )
+                    tone = if (draftIssue == null) AppTone.Accent else AppTone.Warning,
+                ) {
+                    StatusBadge(
+                        title =
+                            when {
+                                draftIssue != null -> "需要修正"
+                                state.profileHasUnsavedChanges -> "可以应用"
+                                else -> "已同步"
+                            },
+                        tone =
+                            when {
+                                draftIssue != null -> AppTone.Warning
+                                state.profileHasUnsavedChanges -> AppTone.Accent
+                                else -> AppTone.Positive
+                            },
+                    )
+                }
                 HorizontalDivider(color = colors.surfaceBorder)
                 Column(
                     modifier = Modifier.padding(VisualStyle.spacing16),
                     verticalArrangement = Arrangement.spacedBy(VisualStyle.spacing12),
                 ) {
                     Text(
-                        "粘贴或编辑 mihomo 兼容 YAML。须包含 x-viasix 管理段，" +
-                            "与 contracts 及 macOS / Windows 投影语义一致。",
+                        "草稿与当前运行配置相互隔离。校验并应用后才会替换已保存配置；" +
+                            "运行中可选择立即重连。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     OutlinedTextField(
-                        value = state.profileYaml,
+                        value = state.profileDraft,
                         onValueChange = onProfileChange,
                         modifier =
                             Modifier
                                 .fillMaxWidth()
                                 .height(280.dp),
                         label = { Text("Profile YAML") },
+                        isError = draftIssue != null,
+                        supportingText = {
+                            Text(
+                                draftIssue
+                                    ?: if (state.profileHasUnsavedChanges) {
+                                        "草稿尚未应用；当前连接仍使用上一次有效配置。"
+                                    } else {
+                                        "草稿与已应用配置一致。"
+                                    },
+                            )
+                        },
                         textStyle =
                             MaterialTheme.typography.bodySmall.copy(
                                 fontFamily = FontFamily.Monospace,
@@ -163,11 +196,53 @@ fun ProfilesScreen(
                             Text("粘贴剪贴板")
                         }
                     }
-                    Button(
-                        onClick = onProjectPreview,
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
                     ) {
-                        Text("生成运行配置预览")
+                        OutlinedButton(
+                            onClick = onRevertProfile,
+                            enabled = state.profileHasUnsavedChanges,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("还原草稿")
+                        }
+                        OutlinedButton(
+                            onClick = onProjectPreview,
+                            enabled = state.profileDraft.isNotBlank(),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("投影预览")
+                        }
+                    }
+                    if (state.runtime.running) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+                        ) {
+                            OutlinedButton(
+                                onClick = { onApplyProfile(false) },
+                                enabled = state.profileHasUnsavedChanges && draftIssue == null,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("仅保存")
+                            }
+                            Button(
+                                onClick = { onApplyProfile(true) },
+                                enabled = state.profileHasUnsavedChanges && draftIssue == null,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("应用并重连")
+                            }
+                        }
+                    } else {
+                        Button(
+                            onClick = { onApplyProfile(false) },
+                            enabled = state.profileHasUnsavedChanges && draftIssue == null,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("应用配置")
+                        }
                     }
                 }
             }
@@ -201,24 +276,29 @@ fun ProfilesScreen(
                 Text(
                     text =
                         "配置仅保存在本机 SharedPreferences，不会上传。" +
-                            "请勿分享含有 uuid / 密钥的完整 YAML。" +
-                            "投影前请确认 x-viasix.version 与 contracts 一致。",
+                            "编辑草稿不会覆盖上一次有效配置；请勿分享含有 uuid / 密钥的完整 YAML。" +
+                            "应用前会按 contracts 投影规则再次校验。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(VisualStyle.spacing16),
                 )
             }
 
-            if (!summary.isManaged) {
+            if (draftIssue != null) {
                 SurfaceCard {
                     CardHeader(
-                        title = "配置不完整",
+                        title = "草稿需要修正",
                         icon = Icons.Outlined.WarningAmber,
                         tone = AppTone.Warning,
                     )
                     HorizontalDivider(color = colors.surfaceBorder)
                     Text(
-                        "规则/全局模式需要带 x-viasix 的托管入口，否则启动时投影会失败。",
+                        draftIssue +
+                            if (draftSummary.warnings.isNotEmpty()) {
+                                "\n${draftSummary.warnings.joinToString("；")}"
+                            } else {
+                                ""
+                            },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(VisualStyle.spacing16),

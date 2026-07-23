@@ -65,6 +65,8 @@ fun ViaSixApp(
     selectedSection: AppSection,
     onSectionChange: (AppSection) -> Unit,
     onProfileChange: (String) -> Unit,
+    onApplyProfile: (reconnect: Boolean) -> Unit,
+    onRevertProfile: () -> Unit,
     onImportProfile: () -> Unit,
     onImportClipboard: () -> Unit = {},
     onSelectedAddressChange: (String) -> Unit,
@@ -201,6 +203,8 @@ fun ViaSixApp(
                                 ProfilesScreen(
                                     state = state,
                                     onProfileChange = onProfileChange,
+                                    onApplyProfile = onApplyProfile,
+                                    onRevertProfile = onRevertProfile,
                                     onProjectPreview = onProjectPreview,
                                     onImportProfile = onImportProfile,
                                     onImportClipboard = onImportClipboard,

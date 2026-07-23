@@ -6,6 +6,7 @@ import dev.viasix.app.net.ExitIPDetectionMode
 import dev.viasix.app.net.ExitIPInfo
 import dev.viasix.app.prefs.SessionPrefs
 import dev.viasix.app.session.ConnectionPhase
+import dev.viasix.app.session.ProfileDraftGate
 import dev.viasix.core.net.Ipv6Address
 import dev.viasix.core.profile.ProfileSummary
 import dev.viasix.core.profile.ProfileSummaryParser
@@ -112,7 +113,10 @@ data class SpeedTestUiState(
  * runtime is polled from the VPN service + controller.
  */
 data class SessionUiState(
+    /** Last validated profile used to build new VPN sessions. */
     val profileYaml: String = "",
+    /** Editable, persisted draft; never used by the runtime until explicitly applied. */
+    val profileDraft: String = "",
     val selectedAddress: String = "2001:db8::1",
     val candidateAddresses: List<String> = emptyList(),
     val routingMode: RoutingMode = RoutingMode.RULE,
@@ -132,6 +136,19 @@ data class SessionUiState(
     val profileSummary: ProfileSummary
         get() = ProfileSummaryParser.parse(profileYaml)
 
+    val profileDraftSummary: ProfileSummary
+        get() = ProfileSummaryParser.parse(profileDraft)
+
+    val profileHasUnsavedChanges: Boolean
+        get() = profileDraft != profileYaml
+
+    val profileDraftIssue: String?
+        get() =
+            when (val gate = ProfileDraftGate.evaluate(profileDraft)) {
+                ProfileDraftGate.Result.Ok -> null
+                is ProfileDraftGate.Result.Blocked -> gate.message
+            }
+
     val selectedIsIpv6: Boolean
         get() = Ipv6Address.isValid(selectedAddress)
 
@@ -143,6 +160,7 @@ data class SessionUiState(
     fun toPrefs(): SessionPrefs =
         SessionPrefs(
             profileYaml = profileYaml,
+            profileDraft = profileDraft,
             selectedAddress = selectedAddress,
             routingMode = routingMode.wire,
             fullTunnel = fullTunnel,
@@ -169,6 +187,7 @@ data class SessionUiState(
             """.trimIndent()
 
         fun fromPrefs(prefs: SessionPrefs): SessionUiState {
+            val profile = prefs.profileYaml.ifBlank { defaultProfile }
             val selected = prefs.selectedAddress.ifBlank { "2001:db8::1" }
             val candidates =
                 (listOf(selected) + prefs.candidateAddresses)
@@ -176,7 +195,8 @@ data class SessionUiState(
                     .distinct()
                     .take(50)
             return SessionUiState(
-                profileYaml = prefs.profileYaml.ifBlank { defaultProfile },
+                profileYaml = profile,
+                profileDraft = prefs.profileDraft ?: profile,
                 selectedAddress = selected,
                 candidateAddresses = candidates,
                 routingMode = RoutingMode.parse(prefs.routingMode) ?: RoutingMode.RULE,

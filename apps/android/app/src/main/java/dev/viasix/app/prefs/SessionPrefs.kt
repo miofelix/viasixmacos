@@ -12,6 +12,8 @@ import org.json.JSONObject
  */
 data class SessionPrefs(
     val profileYaml: String = "",
+    /** Nullable for migration: absent means the draft should start from [profileYaml]. */
+    val profileDraft: String? = null,
     val selectedAddress: String = "2001:db8::1",
     val routingMode: String = "rule",
     val fullTunnel: Boolean = true,
@@ -25,6 +27,7 @@ data class SessionPrefs(
     fun toJson(): JSONObject =
         JSONObject()
             .put("profileYaml", profileYaml)
+            .put("profileDraft", profileDraft)
             .put("selectedAddress", selectedAddress)
             .put("routingMode", routingMode)
             .put("fullTunnel", fullTunnel)
@@ -80,6 +83,12 @@ data class SessionPrefs(
                     }
                 SessionPrefs(
                     profileYaml = o.optString("profileYaml", ""),
+                    profileDraft =
+                        if (o.has("profileDraft") && !o.isNull("profileDraft")) {
+                            o.optString("profileDraft", "")
+                        } else {
+                            null
+                        },
                     selectedAddress = o.optString("selectedAddress", "2001:db8::1"),
                     routingMode = o.optString("routingMode", "rule"),
                     fullTunnel = o.optBoolean("fullTunnel", true),

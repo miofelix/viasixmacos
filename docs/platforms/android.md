@@ -35,7 +35,7 @@ Android 功能对齐以 **macOS** 为准。Windows 端仍在完善中，**不得
 | 配置延迟测试 | `ControllerClient.proxyDelay` |
 | `NodesView` / CFST | IPv6 校验、候选库、IP 源、参数校验与面板、起停、结果排序、当前节点测速、应用/应用并重连 |
 | Overview「测试节点」 | 首页对选中 IPv6 的配置测速（macOS configuration test） |
-| `ProfilesView` | 摘要解析、文件导入、YAML 编辑、投影预览 |
+| `ProfilesView` | 摘要解析、文件/剪贴板导入、安全 YAML 草稿、校验后应用/还原、运行中应用并重连、投影预览 |
 | `LogsView` | 来源/级别过滤、搜索、排序 + VPN 事件合并 |
 | `VisualStyle` / `SurfaceCard` | `ui/theme/VisualStyle` + 组件 |
 | XPC helper + utun | `VpnService` + 用户态 `Tun2SocksEngine`（无独立特权 helper） |
@@ -48,6 +48,7 @@ Android 功能对齐以 **macOS** 为准。Windows 端仍在完善中，**不得
 - `ViaSixTileService`：API 34+ 通过 `PendingIntent` 展开应用，API 26–28 不访问 API 29 的磁贴字幕
 - `ProfileSummaryParser` / `Ipv6Address` / `ByteRateFormatter` / `SpeedTestResultParser`：`:core` 可测纯逻辑
 - 会话偏好扩展：候选节点、出口检测端点与模式、测速 IP 源
+- 配置安全编辑：`profileDraft` 与已应用 `profileYaml` 分离持久化；应用前检查 `x-viasix` 并执行真实投影校验
 - CFST：`CfstInstaller` + `CfstRunner` + `IPSourceMode` / `SpeedTestParameters`（macOS 参数语义）+ `NodeResultSorting` + 当前节点测速
 - 全量隧道：`Tun2SocksEngine` — IPv4/IPv6 TCP→SOCKS5 CONNECT；通用 UDP→**每本地源端口** SOCKS5 UDP ASSOCIATE（正确并发 demux）；DNS/53 始终 per-query `protect` DatagramSocket
 
