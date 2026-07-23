@@ -2,6 +2,7 @@ package dev.viasix.app.tun
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -93,6 +94,54 @@ class Socks5UdpRelayLifecycleTest {
         }
         assertTrue(rejectedSocket?.isClosed == true)
         assertFalse(rejectedSocket?.isConnected == true)
+    }
+
+    @Test
+    fun remoteControlCloseInvalidatesRelayAfterUdpReceiveTimeout() {
+        val loopback = InetAddress.getLoopbackAddress()
+        DatagramSocket(0, loopback).use { udpTarget ->
+            ServerSocket(0, 1, loopback).use { server ->
+                val accepted =
+                    thread(start = true, isDaemon = true) {
+                        server.accept().use { socket ->
+                            val input = socket.getInputStream()
+                            val output = socket.getOutputStream()
+                            readFully(input, 3)
+                            output.write(byteArrayOf(0x05, 0x00))
+                            output.flush()
+                            readFully(input, 10)
+                            output.write(
+                                byteArrayOf(
+                                    0x05,
+                                    0x00,
+                                    0x00,
+                                    0x01,
+                                    127,
+                                    0,
+                                    0,
+                                    1,
+                                    ((udpTarget.localPort ushr 8) and 0xff).toByte(),
+                                    (udpTarget.localPort and 0xff).toByte(),
+                                ),
+                            )
+                            output.flush()
+                        }
+                    }
+                val relay =
+                    Socks5UdpRelay.open(
+                        proxyHost = loopback.hostAddress ?: "127.0.0.1",
+                        proxyPort = server.localPort,
+                    )
+                try {
+                    accepted.join(2_000)
+                    assertFalse(accepted.isAlive)
+                    assertThrows(IOException::class.java) { relay.receive(timeoutMs = 50) }
+                    assertFalse(relay.isOpen)
+                } finally {
+                    relay.close()
+                }
+            }
+        }
     }
 
     private fun readFully(input: InputStream, count: Int): ByteArray {

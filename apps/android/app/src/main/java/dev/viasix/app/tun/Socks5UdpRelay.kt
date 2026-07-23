@@ -42,7 +42,36 @@ internal class Socks5UdpRelay private constructor(
             udp.receive(packet)
             Socks5UdpFraming.unwrap(packet.data, packet.length)
         } catch (_: SocketTimeoutException) {
+            if (!controlConnectionAlive()) {
+                close()
+                throw IOException("SOCKS5 UDP control connection closed")
+            }
             null
+        }
+    }
+
+    /** SOCKS5 sends no control payload after ASSOCIATE, so timeout means alive and EOF means dead. */
+    private fun controlConnectionAlive(): Boolean {
+        if (control.isClosed) return false
+        val previousTimeout =
+            try {
+                control.soTimeout
+            } catch (_: Exception) {
+                return false
+            }
+        return try {
+            control.soTimeout = CONTROL_PROBE_TIMEOUT_MS
+            control.getInputStream().read()
+            false
+        } catch (_: SocketTimeoutException) {
+            true
+        } catch (_: Exception) {
+            false
+        } finally {
+            try {
+                if (!control.isClosed) control.soTimeout = previousTimeout
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -109,16 +138,24 @@ internal class Socks5UdpRelay private constructor(
                 out.flush()
 
                 val head = readFully(input, 4)
-                if (head[0] != 0x05.toByte() || head[1] != 0x00.toByte()) {
+                if (
+                    head[0] != 0x05.toByte() ||
+                        head[1] != 0x00.toByte() ||
+                        head[2] != 0x00.toByte()
+                ) {
                     throw IOException("SOCKS5 UDP ASSOCIATE failed status=${head[1]}")
                 }
                 val relayAddress = readRelayAddress(input, head[3].toInt() and 0xff, proxyHost)
+                if (relayAddress.isUnresolved) {
+                    throw IOException("SOCKS5 UDP relay address could not be resolved")
+                }
 
                 val datagram = DatagramSocket()
                 udp = datagram
                 if (protectDatagram?.invoke(datagram) == false) {
                     throw IOException("VpnService.protect(SOCKS5 UDP socket) failed")
                 }
+                datagram.connect(relayAddress)
                 control.soTimeout = 0
                 return Socks5UdpRelay(control, datagram, relayAddress).also { udp = null }
             } catch (error: Exception) {
@@ -145,8 +182,9 @@ internal class Socks5UdpRelay private constructor(
                     0x04 -> reportedHost(readFully(input, 16), proxyHost)
                     0x03 -> {
                         val len = readFully(input, 1)[0].toInt() and 0xff
+                        if (len == 0) throw IOException("SOCKS5 returned empty UDP relay domain")
                         val reported = String(readFully(input, len), Charsets.US_ASCII)
-                        if (reported.isEmpty() || reported == "0.0.0.0" || reported == "::") {
+                        if (reported == "0.0.0.0" || reported == "::") {
                             proxyHost
                         } else {
                             reported
@@ -177,5 +215,7 @@ internal class Socks5UdpRelay private constructor(
             }
             return buf
         }
+
+        private const val CONTROL_PROBE_TIMEOUT_MS = 1
     }
 }

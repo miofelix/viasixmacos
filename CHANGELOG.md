@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android SOCKS5 UDP ASSOCIATE 的控制 TCP 被代理重启/关闭后，本地 UDP socket 仍显示可写、活跃流量持续续期失效 relay 并永久黑洞的问题；UDP 接收超时现探测控制连接 EOF 并立即淘汰代际，UDP socket 同时连接到代理报告的 relay 地址以仅接收可信端点回包，且严格校验 ASSOCIATE 保留字、域名与可解析地址。
 - 修复 Android TCP SOCKS5 CONNECT 只有连接超时、代理在 greeting/CONNECT 响应阶段停滞时可永久占住连接 worker，以及 EOF、写入或畸形响应异常未统一关闭 socket 的问题；握手现受独立 10 秒读超时约束，成功后恢复普通阻塞读取，所有失败路径可靠关闭资源并校验版本、保留字、地址类型与目标参数。
 - 修复 Android TUN 使用无上限 cached worker pool、在 TCP 建连/双向转发、UDP relay 与直连 DNS 突发时可能持续创建线程的问题；阻塞任务现拆分为最多 16 个连接 worker 与 64 个 I/O worker，采用无隐式积压的即时拒绝策略，并在 TCP、UDP、DNS 各拒绝路径主动发送复位或释放会话、relay、permit。
 - 修复 Android TUN 解析只检查 IPv4/IPv6 与 TCP/UDP 长度、不验证校验和的问题；现拒绝损坏的 IPv4 头、TCP、非零 IPv4 UDP 与 IPv6 UDP 报文，IPv4 UDP 允许 RFC 768 的零校验和，所有回包构造器生成有效传输层校验和并拒绝超出 16 位长度字段的地址族/负载组合。
