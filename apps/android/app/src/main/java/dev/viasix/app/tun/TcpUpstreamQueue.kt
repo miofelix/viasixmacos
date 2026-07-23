@@ -38,12 +38,15 @@ class TcpUpstreamQueue(
 
     fun poll(timeoutMs: Long): ByteArray? =
         synchronized(monitor) {
-            val deadline = System.currentTimeMillis() + timeoutMs.coerceAtLeast(0L)
+            val deadline = System.nanoTime() + timeoutMs.coerceAtLeast(0L) * NANOS_PER_MILLISECOND
             while (!cancelled && queue.isEmpty()) {
-                val remaining = deadline - System.currentTimeMillis()
-                if (remaining <= 0L) return@synchronized null
+                val remainingNanos = deadline - System.nanoTime()
+                if (remainingNanos <= 0L) return@synchronized null
                 try {
-                    monitor.wait(remaining)
+                    monitor.wait(
+                        remainingNanos / NANOS_PER_MILLISECOND,
+                        (remainingNanos % NANOS_PER_MILLISECOND).toInt(),
+                    )
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                     return@synchronized null
@@ -66,12 +69,15 @@ class TcpUpstreamQueue(
 
     fun awaitEmpty(timeoutMs: Long): Boolean =
         synchronized(monitor) {
-            val deadline = System.nanoTime() + timeoutMs.coerceAtLeast(0L) * 1_000_000L
+            val deadline = System.nanoTime() + timeoutMs.coerceAtLeast(0L) * NANOS_PER_MILLISECOND
             while (!cancelled && (queue.isNotEmpty() || inFlightSegments > 0)) {
-                val remaining = deadline - System.nanoTime()
-                if (remaining <= 0L) return@synchronized false
+                val remainingNanos = deadline - System.nanoTime()
+                if (remainingNanos <= 0L) return@synchronized false
                 try {
-                    monitor.wait(remaining / 1_000_000L, (remaining % 1_000_000L).toInt())
+                    monitor.wait(
+                        remainingNanos / NANOS_PER_MILLISECOND,
+                        (remainingNanos % NANOS_PER_MILLISECOND).toInt(),
+                    )
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                     return@synchronized false
@@ -88,5 +94,9 @@ class TcpUpstreamQueue(
             inFlightSegments = 0
             monitor.notifyAll()
         }
+    }
+
+    private companion object {
+        const val NANOS_PER_MILLISECOND = 1_000_000L
     }
 }

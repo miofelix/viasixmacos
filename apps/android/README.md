@@ -58,7 +58,7 @@ make android-assemble
 | 分区导航 UI（对齐 macOS 信息架构） | ✓ |
 | VpnService 权限与前台会话 / 重启重连 | ✓（设置页授权与系统“始终开启 VPN”入口；系统 VPN“配置”动作回流设置分区；Sticky/Always-on 恢复；启动中可安全取消；整栈就绪后才发布运行态；异常退出自动收敛） |
 | mihomo 用户态启动（assets → filesDir） | ✓ |
-| 全量隧道 IPv4/IPv6 TCP→SOCKS | ✓（ACK 驱动握手/重复 SYN；安全解析客户端 MSS 并在 SYN-ACK 发布接口 MSS，无选项时使用协议默认值；SOCKS5 建连与握手均有 10 秒超时且失败关闭；有效 ACK 后才占用下行 worker，上行 writer 按 payload/FIN 单飞启动并空闲退出；下行按实际 VPN MTU 与客户端 MSS 较小值分段；两个半关闭方向独立，远端 EOF 仅等待本方向确认后发送可重传 FIN，读异常立即 RST；回绕安全序列；客户端接收窗口流控；双向有界队列与背压；重复 ACK 快速重传；未确认段有界保留与退避重传；连接/I/O worker 分别硬限 16/64） |
+| 全量隧道 IPv4/IPv6 TCP→SOCKS | ✓（ACK 驱动握手/重复 SYN；安全解析客户端 MSS 并在 SYN-ACK 发布接口 MSS，无选项时使用协议默认值；SOCKS5 建连与握手均有 10 秒超时且失败关闭；有效 ACK 后才占用下行 worker，上行 writer 按 payload/FIN 单飞启动并空闲退出；下行按实际 VPN MTU 与客户端 MSS 较小值分段；两个半关闭方向独立，远端 EOF 仅等待本方向确认后发送可重传 FIN，读异常立即 RST；回绕安全序列；客户端接收窗口流控；双向有界队列与背压；所有传输层有界等待使用单调时钟；重复 ACK 快速重传；未确认段有界保留与退避重传；连接/I/O worker 分别硬限 16/64） |
 | 全量隧道通用 UDP→SOCKS5 UDP ASSOCIATE | ✓（每本地源端口一条 ASSOCIATE；DNS 默认复用此路径；严格校验 RSV/FRAG/端口/frame 长度；单 Selector reactor 多路复用所有非阻塞 relay 回包，不占通用 I/O worker；空闲 60 秒主动回收；控制 TCP 每 5 秒探测 EOF；UDP 回包源绑定；relay 代际原子发布与按实例关闭） |
 | TUN 帧与生命周期安全 | ✓（IPv4/IPv6 与 TCP/UDP 声明长度严格受实际帧边界约束；验证 IPv4 头、TCP、IPv6 UDP 与非零 IPv4 UDP 校验和，允许 IPv4 UDP 零校验和；IPv4/IPv6 需重组分片拒绝，IPv6 常见扩展头有界遍历；畸形帧隔离；读写任一方向退出均 fail-closed，启动中途失败会原地回收部分资源） |
 | DNS 路由 | ✓（TCP/UDP 默认经 mihomo/SOCKS，支持显式 protect 直连与自定义数字 IPv4/IPv6 服务器；UDP 直连查询有 32 个 in-flight 硬上限，socket 绑定上游来源并保留完整 EDNS 数据报） |

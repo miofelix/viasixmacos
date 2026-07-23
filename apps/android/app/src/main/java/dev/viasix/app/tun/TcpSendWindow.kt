@@ -55,14 +55,17 @@ class TcpSendWindow {
     ): Int =
         synchronized(monitor) {
             require(maxBytes > 0) { "maxBytes must be positive" }
-            val deadline = System.currentTimeMillis() + timeoutMs.coerceAtLeast(0L)
+            val deadline = System.nanoTime() + timeoutMs.coerceAtLeast(0L) * NANOS_PER_MILLISECOND
             while (!cancelled) {
                 val available = availableBytes()
                 if (available > 0) return@synchronized minOf(available, maxBytes)
-                val remaining = deadline - System.currentTimeMillis()
-                if (remaining <= 0L) return@synchronized 0
+                val remainingNanos = deadline - System.nanoTime()
+                if (remainingNanos <= 0L) return@synchronized 0
                 try {
-                    monitor.wait(remaining)
+                    monitor.wait(
+                        remainingNanos / NANOS_PER_MILLISECOND,
+                        (remainingNanos % NANOS_PER_MILLISECOND).toInt(),
+                    )
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                     return@synchronized 0
@@ -83,5 +86,9 @@ class TcpSendWindow {
         val inFlight = TcpSequence.forwardDistance(acknowledgedSequence, sentSequence)
         if (inFlight >= advertisedBytes.toLong()) return 0
         return (advertisedBytes - inFlight).toInt()
+    }
+
+    private companion object {
+        const val NANOS_PER_MILLISECOND = 1_000_000L
     }
 }

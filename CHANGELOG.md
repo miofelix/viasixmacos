@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android TCP 发送窗口等待和上行 writer 队列轮询使用 `System.currentTimeMillis()`，设备校时或墙上时钟跳变可能导致等待被意外延长或提前超时的问题；传输层有界等待现统一改用 `System.nanoTime()` 计算纳秒级剩余时间，与重传、半关闭和 UDP relay 生命周期一致。
 - 修复 Android 把 SOCKS 远端正常 EOF 与下行读异常视为同一路径，并在发送服务端 FIN 前错误等待客户端上行队列最多 35 秒的问题；TCP 两个半关闭方向现彼此独立，正常 EOF 只等待本方向未确认数据后回送 FIN，读异常或内部下行失败则向客户端发送 RST 并立即释放会话。
 - 修复 Android 用户态 TCP 握手忽略客户端 SYN 的 MSS 选项，且 SYN-ACK 不发布自身 MSS，较小路径 MTU 下仍可能生成对端无法接收的段、无 MSS 时也未采用协议默认值的问题；TCP 选项解析现安全遍历 EOL/NOP/变长选项并严格校验 MSS，ViaSix 在 SYN-ACK 中发布接口 MSS，下行按接口上限与客户端 MSS 的较小值切分，缺省使用 IPv4 536 / IPv6 1220。
 - 修复 Android TCP 下行固定一次读取 16 KiB 并封装为单个 IPv4/IPv6 报文、可能远超用户配置的 VPN MTU 且 IPv4 仍设置 DF 的问题；转发引擎现接收会话实际 MTU，并分别扣除 20/40 字节 IP 头与 20 字节 TCP 头，把 SOCKS 下行切成不超过虚拟接口 MTU 的段。
