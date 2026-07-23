@@ -4,6 +4,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.net.InetAddress
 
@@ -61,6 +62,28 @@ class Socks5UdpFramingTest {
     }
 
     @Test
+    fun unwrap_rejectsNonZeroReservedBytesAndPortZero() {
+        val framed =
+            Socks5UdpFraming.wrap(
+                InetAddress.getByName("8.8.8.8"),
+                53,
+                byteArrayOf(1),
+            )
+        framed[0] = 1
+        assertNull(Socks5UdpFraming.unwrap(framed))
+
+        val valid =
+            Socks5UdpFraming.wrap(
+                InetAddress.getByName("8.8.8.8"),
+                53,
+                byteArrayOf(1),
+            )
+        valid[valid.size - 3] = 0
+        valid[valid.size - 2] = 0
+        assertNull(Socks5UdpFraming.unwrap(valid))
+    }
+
+    @Test
     fun unwrap_truncatedReturnsNull() {
         assertNull(Socks5UdpFraming.unwrap(byteArrayOf(0, 0, 0)))
         assertNull(Socks5UdpFraming.unwrap(byteArrayOf(0, 0, 0, 1, 1, 2, 3))) // missing port
@@ -74,5 +97,18 @@ class Socks5UdpFramingTest {
         val parsed = Socks5UdpFraming.unwrap(framed)!!
         assertEquals(443, parsed.remotePort)
         assertEquals(remote, parsed.remote)
+    }
+
+    @Test
+    fun wrapRejectsInvalidPortOversizedFrameAndUnboundedLength() {
+        val remote = InetAddress.getByName("2001:db8::1")
+        assertThrows(IllegalArgumentException::class.java) {
+            Socks5UdpFraming.wrap(remote, 0, byteArrayOf())
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            Socks5UdpFraming.wrap(remote, 53, ByteArray(65_514))
+        }
+        val framed = Socks5UdpFraming.wrap(remote, 53, byteArrayOf(1))
+        assertNull(Socks5UdpFraming.unwrap(framed, length = framed.size + 1))
     }
 }

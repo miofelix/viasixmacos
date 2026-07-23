@@ -40,14 +40,18 @@ internal object Socks5UdpFraming {
      * FRAG is always 0 (no fragmentation).
      */
     fun wrap(remote: InetAddress, remotePort: Int, payload: ByteArray): ByteArray {
+        require(remotePort in 1..0xffff) { "SOCKS5 UDP target port must be 1..65535" }
         val addr = remote.address
         val atyp =
             when (addr.size) {
                 4 -> ATYP_IPV4
                 16 -> ATYP_IPV6
                 else -> throw IllegalArgumentException("unsupported address length ${addr.size}")
-            }
+        }
         val headerLen = 4 + addr.size + 2
+        require(payload.size <= MAX_PACKET_BYTES - headerLen) {
+            "SOCKS5 UDP frame exceeds the maximum datagram size"
+        }
         val out = ByteArray(headerLen + payload.size)
         out[0] = 0x00 // RSV
         out[1] = 0x00
@@ -66,7 +70,8 @@ internal object Socks5UdpFraming {
      * Domain ATYP is supported for completeness; production path uses IP.
      */
     fun unwrap(packet: ByteArray, length: Int = packet.size): Datagram? {
-        if (length < 4) return null
+        if (length < 4 || length > packet.size) return null
+        if (packet[0].toInt() != 0 || packet[1].toInt() != 0) return null
         val frag = packet[2].toInt() and 0xff
         if (frag != 0) return null // fragmented datagrams not supported
         val atyp = packet[3].toInt() and 0xff
@@ -94,6 +99,7 @@ internal object Socks5UdpFraming {
             }
         if (length < offset + 2) return null
         val port = ((packet[offset].toInt() and 0xff) shl 8) or (packet[offset + 1].toInt() and 0xff)
+        if (port == 0) return null
         offset += 2
         val payload =
             if (offset >= length) {
@@ -108,4 +114,6 @@ internal object Socks5UdpFraming {
             frag = frag,
         )
     }
+
+    private const val MAX_PACKET_BYTES = 65_535
 }
