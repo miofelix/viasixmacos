@@ -16,6 +16,10 @@ class TcpHandshakeSurfaceTest {
 
         assertTrue(engine.contains("existing.handshake.isComplete"))
         assertTrue(engine.contains("enqueueSynAck(existing)"))
+        assertTrue(engine.contains("enqueueChallengeAck(existing)"))
+        assertTrue(engine.contains("if (tcp.flags and Packet.SYN != 0)"))
+        assertTrue(engine.contains("enqueueChallengeAck(session)"))
+        assertTrue(engine.contains("session.challengeAcks.tryAcquire(monotonicTimeMs())"))
         assertTrue(engine.contains("session.handshake.acknowledge"))
         assertTrue(engine.contains("expectedSequence = session.clientNextSeq"))
         assertTrue(engine.contains("expectedAcknowledgement = session.serverSeq"))

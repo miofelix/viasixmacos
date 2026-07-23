@@ -300,6 +300,8 @@ class Tun2SocksEngine(
             if (existing != null) {
                 if (!existing.handshake.isComplete && existing.socket != null) {
                     enqueueSynAck(existing)
+                } else if (existing.handshake.isComplete) {
+                    enqueueChallengeAck(existing)
                 }
                 return
             }
@@ -335,6 +337,15 @@ class Tun2SocksEngine(
 
         if (tcp.flags and Packet.RST != 0) {
             removeSession(key, session)
+            return
+        }
+
+        if (tcp.flags and Packet.SYN != 0) {
+            if (!session.handshake.isComplete && session.socket != null) {
+                enqueueSynAck(session)
+            } else if (session.handshake.isComplete) {
+                enqueueChallengeAck(session)
+            }
             return
         }
 
@@ -1221,6 +1232,10 @@ class Tun2SocksEngine(
         )
     }
 
+    private fun enqueueChallengeAck(session: TcpSession) {
+        if (session.challengeAcks.tryAcquire(monotonicTimeMs())) enqueueAck(session)
+    }
+
     private fun enqueuePacket(
         packet: ByteArray,
         lossless: Boolean = false,
@@ -1265,6 +1280,7 @@ class Tun2SocksEngine(
         val sendWindow = TcpSendWindow()
         val retransmissions = TcpRetransmissionQueue()
         val closeState = TcpCloseState()
+        val challengeAcks = TcpChallengeAckLimiter()
         val upstream = TcpUpstreamQueue()
         val outputShutdown = AtomicBoolean(false)
         val downstreamReaderStarted = AtomicBoolean(false)
