@@ -5,6 +5,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.InetAddress
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Exercises real [UdpClientEndpointTable]: per-client (not per-remote) registration,
@@ -54,6 +57,50 @@ class UdpClientEndpointTableTest {
         assertEquals(1, dropped.size)
         assertEquals(e.port, dropped[0].port)
         assertEquals(0, table.size)
+    }
+
+    @Test
+    fun expiryCallbackCompletesBeforeSameEndpointCanRegisterAgain() {
+        var now = 1_000L
+        val table =
+            UdpClientEndpointTable(
+                maxEntries = 8,
+                idleTimeoutMs = 100,
+                clock = { now },
+            )
+        val endpoint = UdpClientEndpointTable.Endpoint(clientA, 4001)
+        assertTrue(table.noteActivity(endpoint))
+        now = 1_250L
+
+        val callbackEntered = CountDownLatch(1)
+        val releaseCallback = CountDownLatch(1)
+        val activityStarted = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val purge =
+                pool.submit {
+                    table.purgeExpired {
+                        callbackEntered.countDown()
+                        releaseCallback.await()
+                    }
+                }
+            assertTrue(callbackEntered.await(1, TimeUnit.SECONDS))
+            val refresh =
+                pool.submit<Boolean> {
+                    activityStarted.countDown()
+                    table.noteActivity(endpoint)
+                }
+            assertTrue(activityStarted.await(1, TimeUnit.SECONDS))
+            assertFalse(refresh.isDone)
+
+            releaseCallback.countDown()
+            purge.get(1, TimeUnit.SECONDS)
+            assertTrue(refresh.get(1, TimeUnit.SECONDS))
+            assertTrue(table.contains(endpoint))
+        } finally {
+            releaseCallback.countDown()
+            pool.shutdownNow()
+        }
     }
 
     @Test

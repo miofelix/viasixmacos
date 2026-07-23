@@ -21,8 +21,11 @@ class UdpRelayLifecycleSurfaceTest {
         assertTrue(engine.contains("maintenanceExecutor.scheduleWithFixedDelay"))
         assertTrue(engine.contains("purgeIdleUdpClients()"))
         assertTrue(engine.contains("UDP_IDLE_CLEANUP_INTERVAL_MS"))
-        assertTrue(engine.contains("closeExpiredUdpRelay(expired)"))
+        assertTrue(engine.contains("udpClients.purgeExpired(::closeExpiredUdpRelay)"))
+        assertTrue(engine.contains("udpRelays.remove(clientRelay.endpoint.key(), clientRelay)"))
+        assertTrue(engine.contains("clientRelay.publishRelay(relay)"))
         assertTrue(table.contains("System.nanoTime() / 1_000_000L"))
+        assertTrue(table.contains("purgeExpired(onExpired: (Endpoint) -> Unit = {})"))
     }
 
     private fun resolve(vararg paths: String): File =

@@ -22,7 +22,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 
 /**
@@ -674,9 +674,7 @@ class Tun2SocksEngine(
         }
 
         // Drop idle client associates opportunistically (non-blocking).
-        for (expired in udpClients.purgeExpired()) {
-            closeExpiredUdpRelay(expired)
-        }
+        udpClients.purgeExpired(::closeExpiredUdpRelay)
 
         val endpoint =
             UdpClientEndpointTable.Endpoint(
@@ -689,42 +687,80 @@ class Tun2SocksEngine(
             return
         }
 
+        forwardUdpViaSocks(endpoint, remoteIp, udp.destPort, payload)
+    }
+
+    private fun forwardUdpViaSocks(
+        endpoint: UdpClientEndpointTable.Endpoint,
+        remoteIp: InetAddress,
+        remotePort: Int,
+        payload: ByteArray,
+    ) {
+        if (!running.get()) return
         val clientKey = endpoint.key()
-        val clientRelay =
-            udpRelays.computeIfAbsent(clientKey) {
-                UdpClientRelay(endpoint)
+        for (attempt in 0 until UDP_RELAY_OPERATION_ATTEMPTS) {
+            val clientRelay =
+                udpRelays.compute(clientKey) { _, existing ->
+                    if (existing == null || existing.isClosed) {
+                        UdpClientRelay(endpoint)
+                    } else {
+                        existing
+                    }
+                } ?: return
+            if (!running.get()) {
+                closeUdpRelay(clientRelay)
+                return
             }
 
-        val relay = clientRelay.relay.get()
-        if (relay != null && relay.isOpen) {
-            try {
-                relay.send(remoteIp, udp.destPort, payload)
-            } catch (error: Exception) {
-                Log.w(TAG, "UDP via SOCKS failed: ${error.message}")
-                // Drop dead relay; next packet will re-open asynchronously.
-                closeUdpClient(endpoint)
+            val relay = clientRelay.currentRelay()
+            if (relay != null) {
+                if (relay.isOpen) {
+                    try {
+                        relay.send(remoteIp, remotePort, payload)
+                        return
+                    } catch (error: Exception) {
+                        Log.w(TAG, "UDP via SOCKS failed: ${error.message}")
+                    }
+                }
+                // A published relay is single-use. Retire its generation before reopening.
+                closeUdpRelay(clientRelay)
+                continue
+            }
+
+            // Negative cache: do not retry ASSOCIATE on every packet after a recent failure.
+            if (monotonicTimeMs() < clientRelay.failedUntilMs.get()) return
+
+            // Queue a small amount of early datagrams while ASSOCIATE opens off the reader thread.
+            if (!clientRelay.offerPending(remoteIp, remotePort, payload)) {
+                closeUdpRelay(clientRelay)
+                continue
+            }
+            if (clientRelay.tryStartOpening()) {
+                try {
+                    executor.execute { openUdpAssociate(clientRelay) }
+                } catch (error: RejectedExecutionException) {
+                    if (running.get()) {
+                        clientRelay.failedUntilMs.set(monotonicTimeMs() + associateFailBackoffMs)
+                        clientRelay.clearPending()
+                    } else {
+                        closeUdpRelay(clientRelay)
+                    }
+                    clientRelay.finishOpening()
+                    Log.w(TAG, "UDP ASSOCIATE worker rejected: ${error.message}")
+                }
             }
             return
         }
-
-        // Negative cache: do not retry ASSOCIATE on every packet after a recent failure.
-        val now = System.currentTimeMillis()
-        if (now < clientRelay.failedUntilMs.get()) {
-            return
-        }
-
-        // Queue a small amount of early datagrams while ASSOCIATE opens off the reader thread.
-        clientRelay.offerPending(remoteIp, udp.destPort, payload)
-        if (clientRelay.opening.compareAndSet(false, true)) {
-            executor.execute { openUdpAssociate(clientRelay) }
-        }
+        Log.w(TAG, "UDP relay lifecycle contention for $clientKey; drop")
     }
 
     private fun openUdpAssociate(clientRelay: UdpClientRelay) {
         if (!running.get()) {
-            clientRelay.opening.set(false)
+            closeUdpRelay(clientRelay)
+            clientRelay.finishOpening()
             return
         }
+        var installed = false
         try {
             val relay =
                 Socks5UdpRelay.open(
@@ -733,14 +769,13 @@ class Tun2SocksEngine(
                     protect = { socket: Socket -> vpnService.protect(socket) },
                     protectDatagram = { ds: DatagramSocket -> vpnService.protect(ds) },
                 )
-            if (!running.get()) {
+            if (!running.get() || udpRelays[clientRelay.endpoint.key()] !== clientRelay) {
                 relay.close()
-                clientRelay.opening.set(false)
                 return
             }
-            clientRelay.relay.set(relay)
+            if (!clientRelay.publishRelay(relay)) return
+            installed = true
             clientRelay.failedUntilMs.set(0L)
-            clientRelay.opening.set(false)
             startUdpReceiver(clientRelay, relay)
             // Drain datagrams queued during open.
             while (true) {
@@ -749,7 +784,7 @@ class Tun2SocksEngine(
                     relay.send(pending.remote, pending.port, pending.payload)
                 } catch (error: Exception) {
                     Log.w(TAG, "UDP pending send failed: ${error.message}")
-                    break
+                    throw error
                 }
             }
             Log.i(
@@ -758,43 +793,52 @@ class Tun2SocksEngine(
             )
         } catch (error: Exception) {
             Log.w(TAG, "SOCKS5 UDP ASSOCIATE failed: ${error.message}")
-            clientRelay.failedUntilMs.set(System.currentTimeMillis() + associateFailBackoffMs)
-            clientRelay.opening.set(false)
-            clientRelay.clearPending()
+            if (installed) {
+                closeUdpRelay(clientRelay)
+            } else if (!clientRelay.isClosed) {
+                clientRelay.failedUntilMs.set(monotonicTimeMs() + associateFailBackoffMs)
+                clientRelay.clearPending()
+            }
+        } finally {
+            clientRelay.finishOpening()
         }
     }
 
     private fun startUdpReceiver(clientRelay: UdpClientRelay, relay: Socks5UdpRelay) {
         executor.execute {
             val endpoint = clientRelay.endpoint
-            while (running.get() && relay.isOpen) {
-                val datagram =
-                    try {
-                        relay.receive(200)
-                    } catch (_: Exception) {
-                        break
-                    } ?: continue
-                // Demux is implicit: this relay only carries traffic for [endpoint].
-                enqueuePacket(
-                    if (endpoint.ipv6) {
-                        Packet.buildIp6Udp(
-                            source = datagram.remote,
-                            destination = endpoint.ip,
-                            sourcePort = datagram.remotePort,
-                            destPort = endpoint.port,
-                            payload = datagram.payload,
-                        )
-                    } else {
-                        Packet.buildIp4Udp(
-                            source = datagram.remote,
-                            destination = endpoint.ip,
-                            sourcePort = datagram.remotePort,
-                            destPort = endpoint.port,
-                            payload = datagram.payload,
-                        )
-                    },
-                )
-                udpClients.noteActivity(endpoint)
+            try {
+                while (running.get() && relay.isOpen) {
+                    val datagram =
+                        try {
+                            relay.receive(200)
+                        } catch (_: Exception) {
+                            break
+                        } ?: continue
+                    // Demux is implicit: this relay only carries traffic for [endpoint].
+                    enqueuePacket(
+                        if (endpoint.ipv6) {
+                            Packet.buildIp6Udp(
+                                source = datagram.remote,
+                                destination = endpoint.ip,
+                                sourcePort = datagram.remotePort,
+                                destPort = endpoint.port,
+                                payload = datagram.payload,
+                            )
+                        } else {
+                            Packet.buildIp4Udp(
+                                source = datagram.remote,
+                                destination = endpoint.ip,
+                                sourcePort = datagram.remotePort,
+                                destPort = endpoint.port,
+                                payload = datagram.payload,
+                            )
+                        },
+                    )
+                    udpClients.noteActivity(endpoint)
+                }
+            } finally {
+                closeUdpRelay(clientRelay)
             }
         }
     }
@@ -855,39 +899,25 @@ class Tun2SocksEngine(
         }
     }
 
-    private fun closeUdpClient(endpoint: UdpClientEndpointTable.Endpoint) {
-        udpClients.remove(endpoint)
-        closeUdpRelay(endpoint)
-    }
-
     private fun closeExpiredUdpRelay(endpoint: UdpClientEndpointTable.Endpoint) {
-        closeUdpRelay(endpoint)
+        val clientRelay = udpRelays[endpoint.key()] ?: return
+        closeUdpRelay(clientRelay)
     }
 
-    private fun closeUdpRelay(endpoint: UdpClientEndpointTable.Endpoint) {
-        val relay = udpRelays.remove(endpoint.key())
-        try {
-            relay?.relay?.get()?.close()
-        } catch (_: Exception) {
-        }
-        relay?.clearPending()
+    private fun closeUdpRelay(clientRelay: UdpClientRelay) {
+        udpRelays.remove(clientRelay.endpoint.key(), clientRelay)
+        clientRelay.close()
     }
 
     private fun purgeIdleUdpClients() {
         if (!running.get()) return
-        for (expired in udpClients.purgeExpired()) {
-            closeExpiredUdpRelay(expired)
-        }
+        udpClients.purgeExpired(::closeExpiredUdpRelay)
     }
 
     private fun closeAllUdpRelays() {
         for (key in udpRelays.keys.toList()) {
             val r = udpRelays.remove(key)
-            try {
-                r?.relay?.get()?.close()
-            } catch (_: Exception) {
-            }
-            r?.clearPending()
+            r?.close()
         }
         udpClients.clear()
     }
@@ -1018,23 +1048,51 @@ class Tun2SocksEngine(
      */
     private class UdpClientRelay(
         val endpoint: UdpClientEndpointTable.Endpoint,
-    ) {
-        val relay = AtomicReference<Socks5UdpRelay?>(null)
-        val opening = AtomicBoolean(false)
-        val failedUntilMs = AtomicReference(0L)
+    ) : AutoCloseable {
+        private val lifecycle = CloseableRelaySlot<Socks5UdpRelay>()
+        private val opening = AtomicBoolean(false)
+        val failedUntilMs = AtomicLong(0L)
         private val pending = LinkedBlockingQueue<PendingUdp>(PENDING_CAP)
 
-        fun offerPending(remote: InetAddress, port: Int, payload: ByteArray) {
-            if (!pending.offer(PendingUdp(remote, port, payload))) {
-                pending.poll()
-                pending.offer(PendingUdp(remote, port, payload))
-            }
+        val isClosed: Boolean
+            get() = lifecycle.isClosed
+
+        fun currentRelay(): Socks5UdpRelay? = lifecycle.current()
+
+        fun publishRelay(relay: Socks5UdpRelay): Boolean = lifecycle.publish(relay)
+
+        fun tryStartOpening(): Boolean {
+            if (isClosed || !opening.compareAndSet(false, true)) return false
+            if (!isClosed) return true
+            opening.set(false)
+            return false
         }
 
-        fun pollPending(): PendingUdp? = pending.poll()
+        fun finishOpening() {
+            opening.set(false)
+        }
+
+        fun offerPending(remote: InetAddress, port: Int, payload: ByteArray): Boolean {
+            if (isClosed) return false
+            val pendingDatagram = PendingUdp(remote, port, payload)
+            if (!pending.offer(pendingDatagram)) {
+                pending.poll()
+                pending.offer(pendingDatagram)
+            }
+            if (!isClosed) return true
+            pending.remove(pendingDatagram)
+            return false
+        }
+
+        fun pollPending(): PendingUdp? = if (isClosed) null else pending.poll()
 
         fun clearPending() {
             pending.clear()
+        }
+
+        override fun close() {
+            lifecycle.close()
+            clearPending()
         }
 
         data class PendingUdp(
@@ -1057,6 +1115,7 @@ class Tun2SocksEngine(
         private const val UPSTREAM_POLL_MS = 200L
         private const val UPSTREAM_DRAIN_TIMEOUT_MS = 35_000L
         private const val UDP_IDLE_CLEANUP_INTERVAL_MS = 5_000L
+        private const val UDP_RELAY_OPERATION_ATTEMPTS = 2
 
         private fun monotonicTimeMs(): Long = System.nanoTime() / 1_000_000L
     }

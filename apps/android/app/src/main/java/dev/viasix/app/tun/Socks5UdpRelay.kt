@@ -71,102 +71,100 @@ internal class Socks5UdpRelay private constructor(
             protectDatagram: ((DatagramSocket) -> Boolean)? = null,
         ): Socks5UdpRelay {
             val control = Socket()
-            control.tcpNoDelay = true
-            control.connect(InetSocketAddress(proxyHost, proxyPort), connectTimeoutMs)
-            protect?.invoke(control)
-
-            val out = control.getOutputStream()
-            val input = control.getInputStream()
-
-            // greeting
-            out.write(byteArrayOf(0x05, 0x01, 0x00))
-            out.flush()
-            val greet = readFully(input, 2)
-            if (greet[0] != 0x05.toByte() || greet[1] != 0x00.toByte()) {
-                control.close()
-                throw IOException("SOCKS5 greeting rejected for UDP ASSOCIATE")
-            }
-
-            // UDP ASSOCIATE to 0.0.0.0:0 — proxy assigns BND
-            out.write(
-                byteArrayOf(
-                    0x05,
-                    0x03, // UDP ASSOCIATE
-                    0x00,
-                    0x01, // IPv4
-                    0x00,
-                    0x00,
-                    0x00,
-                    0x00,
-                    0x00,
-                    0x00,
-                ),
-            )
-            out.flush()
-
-            val head = readFully(input, 4)
-            if (head[0] != 0x05.toByte() || head[1] != 0x00.toByte()) {
-                control.close()
-                throw IOException("SOCKS5 UDP ASSOCIATE failed status=${head[1]}")
-            }
-            val atyp = head[3].toInt() and 0xff
-            val bindAddr: ByteArray
-            val bindPort: Int
-            when (atyp) {
-                0x01 -> {
-                    bindAddr = readFully(input, 4)
-                    val p = readFully(input, 2)
-                    bindPort = ((p[0].toInt() and 0xff) shl 8) or (p[1].toInt() and 0xff)
+            var udp: DatagramSocket? = null
+            try {
+                control.tcpNoDelay = true
+                control.soTimeout = connectTimeoutMs
+                if (protect?.invoke(control) == false) {
+                    throw IOException("VpnService.protect(SOCKS5 UDP control) failed")
                 }
-                0x04 -> {
-                    bindAddr = readFully(input, 16)
-                    val p = readFully(input, 2)
-                    bindPort = ((p[0].toInt() and 0xff) shl 8) or (p[1].toInt() and 0xff)
+                control.connect(InetSocketAddress(proxyHost, proxyPort), connectTimeoutMs)
+
+                val out = control.getOutputStream()
+                val input = control.getInputStream()
+
+                // greeting
+                out.write(byteArrayOf(0x05, 0x01, 0x00))
+                out.flush()
+                val greet = readFully(input, 2)
+                if (greet[0] != 0x05.toByte() || greet[1] != 0x00.toByte()) {
+                    throw IOException("SOCKS5 greeting rejected for UDP ASSOCIATE")
                 }
-                0x03 -> {
-                    val len = readFully(input, 1)[0].toInt() and 0xff
-                    val host = String(readFully(input, len), Charsets.US_ASCII)
-                    val p = readFully(input, 2)
-                    bindPort = ((p[0].toInt() and 0xff) shl 8) or (p[1].toInt() and 0xff)
-                    val udp = DatagramSocket()
-                    protectDatagram?.invoke(udp)
-                    // Domain bind: resolve via the reported host (often 127.0.0.1 or proxy host).
-                    val targetHost =
-                        if (host == "0.0.0.0" || host.isEmpty()) proxyHost else host
-                    val relay =
-                        Socks5UdpRelay(
-                            control,
-                            udp,
-                            InetSocketAddress(targetHost, bindPort),
-                        )
-                    return relay
+
+                // UDP ASSOCIATE to 0.0.0.0:0 — proxy assigns BND
+                out.write(
+                    byteArrayOf(
+                        0x05,
+                        0x03, // UDP ASSOCIATE
+                        0x00,
+                        0x01, // IPv4
+                        0x00,
+                        0x00,
+                        0x00,
+                        0x00,
+                        0x00,
+                        0x00,
+                    ),
+                )
+                out.flush()
+
+                val head = readFully(input, 4)
+                if (head[0] != 0x05.toByte() || head[1] != 0x00.toByte()) {
+                    throw IOException("SOCKS5 UDP ASSOCIATE failed status=${head[1]}")
                 }
-                else -> {
+                val relayAddress = readRelayAddress(input, head[3].toInt() and 0xff, proxyHost)
+
+                val datagram = DatagramSocket()
+                udp = datagram
+                if (protectDatagram?.invoke(datagram) == false) {
+                    throw IOException("VpnService.protect(SOCKS5 UDP socket) failed")
+                }
+                control.soTimeout = 0
+                return Socks5UdpRelay(control, datagram, relayAddress).also { udp = null }
+            } catch (error: Exception) {
+                try {
+                    udp?.close()
+                } catch (_: Exception) {
+                }
+                try {
                     control.close()
-                    throw IOException("SOCKS5 UDP ASSOCIATE unknown atyp=$atyp")
+                } catch (_: Exception) {
                 }
+                throw error
             }
+        }
 
-            val reported = InetAddress.getByAddress(bindAddr)
-            // Many proxies return 0.0.0.0 — send to the proxy host instead.
-            val hostForSend =
-                if (
-                    reported.isAnyLocalAddress ||
-                        reported.hostAddress == "0.0.0.0" ||
-                        reported.hostAddress == "::"
-                ) {
-                    InetAddress.getByName(proxyHost)
-                } else {
-                    reported
+        private fun readRelayAddress(
+            input: java.io.InputStream,
+            atyp: Int,
+            proxyHost: String,
+        ): InetSocketAddress {
+            val host =
+                when (atyp) {
+                    0x01 -> reportedHost(readFully(input, 4), proxyHost)
+                    0x04 -> reportedHost(readFully(input, 16), proxyHost)
+                    0x03 -> {
+                        val len = readFully(input, 1)[0].toInt() and 0xff
+                        val reported = String(readFully(input, len), Charsets.US_ASCII)
+                        if (reported.isEmpty() || reported == "0.0.0.0" || reported == "::") {
+                            proxyHost
+                        } else {
+                            reported
+                        }
+                    }
+                    else -> throw IOException("SOCKS5 UDP ASSOCIATE unknown atyp=$atyp")
                 }
+            val portBytes = readFully(input, 2)
+            val port =
+                ((portBytes[0].toInt() and 0xff) shl 8) or
+                    (portBytes[1].toInt() and 0xff)
+            if (port == 0) throw IOException("SOCKS5 UDP ASSOCIATE returned port 0")
+            return InetSocketAddress(host, port)
+        }
 
-            val udp = DatagramSocket()
-            protectDatagram?.invoke(udp)
-            return Socks5UdpRelay(
-                control,
-                udp,
-                InetSocketAddress(hostForSend, bindPort),
-            )
+        private fun reportedHost(address: ByteArray, proxyHost: String): String {
+            val reported = InetAddress.getByAddress(address)
+            return if (reported.isAnyLocalAddress) proxyHost else reported.hostAddress
         }
 
         private fun readFully(input: java.io.InputStream, n: Int): ByteArray {

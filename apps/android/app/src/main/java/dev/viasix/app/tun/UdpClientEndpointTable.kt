@@ -37,6 +37,7 @@ internal class UdpClientEndpointTable(
      * Record activity for a client endpoint. Returns false if the table is full and
      * this client is not already registered.
      */
+    @Synchronized
     fun noteActivity(endpoint: Endpoint): Boolean {
         val key = endpoint.key()
         val existing = byClient[key]
@@ -50,31 +51,40 @@ internal class UdpClientEndpointTable(
         return true
     }
 
+    @Synchronized
     fun contains(endpoint: Endpoint): Boolean {
         return byClient.containsKey(endpoint.key())
     }
 
+    @Synchronized
     fun remove(endpoint: Endpoint) {
         byClient.remove(endpoint.key())
     }
 
+    @Synchronized
     fun clear() {
         byClient.clear()
     }
 
-    /** Remove idle endpoints; returns the endpoints that were dropped. */
-    fun purgeExpired(): List<Endpoint> {
+    /**
+     * Remove idle endpoints and return those dropped. [onExpired] runs while registration
+     * is locked so a newly active endpoint cannot be confused with the generation being reaped.
+     */
+    @Synchronized
+    fun purgeExpired(onExpired: (Endpoint) -> Unit = {}): List<Endpoint> {
         val now = clock()
         val dropped = mutableListOf<Endpoint>()
         for (e in byClient.entries.toList()) {
             if (now - e.value.lastSeenMs > idleTimeoutMs) {
                 if (byClient.remove(e.key, e.value)) {
                     dropped += e.value.endpoint
+                    onExpired(e.value.endpoint)
                 }
             }
         }
         return dropped
     }
 
+    @Synchronized
     fun endpoints(): List<Endpoint> = byClient.values.map { it.endpoint }
 }
