@@ -42,11 +42,14 @@ gradle :core:test :app:test --no-daemon
 gradle :app:assembleRelease --no-daemon
 ```
 
-建议发布文件名：
+发布文件名规范：`ViaSix-<platform>-<version>.<ext>`
 
 ```text
-ViaSix-<versionName>-android-arm64-release.apk
+ViaSix-android-<versionName>.apk
+ViaSix-android-<versionName>.apk.sha256
 ```
+
+示例：`ViaSix-android-1.0.0.apk`
 
 ## 发布
 

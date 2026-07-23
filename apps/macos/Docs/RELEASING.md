@@ -149,7 +149,8 @@ xcrun notarytool store-credentials "viasix-notary"
 将应用压缩为保留 bundle 元数据且包含版本和架构的 ZIP：
 
 ```bash
-viasix_artifact="dist/ViaSix-${viasix_version}-macOS-${viasix_arch}.zip"
+# 命名规范：ViaSix-<platform>-<version>.zip（多架构时再追加 -arm64 / -x86_64）
+viasix_artifact="dist/ViaSix-macos-${viasix_version}.zip"
 ditto -c -k --keepParent dist/ViaSix.app "$viasix_artifact"
 ```
 
@@ -201,9 +202,8 @@ make verify-app
 
 推荐至少发布：
 
-- `ViaSix-<version>-macOS-arm64.zip`
-- `ViaSix-<version>-macOS-x86_64.zip`（实际完成该架构验证时）
-- 每个 ZIP 的 SHA-256
+- `ViaSix-macos-<version>.zip`（单架构默认名；若同版本提供多架构，用 `ViaSix-macos-<version>-arm64.zip` / `-x86_64.zip`）
+- 每个 ZIP 的 SHA-256（`ViaSix-macos-<version>.zip.sha256`）
 - 发布说明
 - 第三方声明
 - ViaSix 自身许可证
