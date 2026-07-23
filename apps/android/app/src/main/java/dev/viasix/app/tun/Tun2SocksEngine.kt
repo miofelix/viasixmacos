@@ -91,19 +91,26 @@ class Tun2SocksEngine(
             Thread(
                 {
                     val buffer = ByteBuffer.allocate(32767)
-                    while (running.get()) {
-                        buffer.clear()
-                        val len =
+                    try {
+                        while (running.get()) {
+                            buffer.clear()
+                            val len =
+                                try {
+                                    inChannel.read(buffer)
+                                } catch (_: Exception) {
+                                    break
+                                }
+                            if (len <= 0) continue
+                            buffer.flip()
                             try {
-                                inChannel.read(buffer)
-                            } catch (_: Exception) {
-                                break
+                                handlePacket(buffer)
+                            } catch (error: Exception) {
+                                Log.w(TAG, "drop malformed TUN packet: ${error.message}")
                             }
-                        if (len <= 0) continue
-                        buffer.flip()
-                        handlePacket(buffer)
+                        }
+                    } finally {
+                        running.set(false)
                     }
-                    running.set(false)
                 },
                 "viasix-tun-reader",
             ).also {

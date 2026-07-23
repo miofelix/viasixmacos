@@ -76,6 +76,7 @@ internal object Packet {
         val ihl = (versionIhl and 0x0f) * 4
         if (ihl < IP4_HEADER_SIZE || buffer.remaining() < ihl) return null
         val totalLength = buffer.getShort(start + 2).toInt() and 0xffff
+        if (totalLength < ihl || totalLength > buffer.limit() - start) return null
         val protocol = buffer.get(start + 9).toInt() and 0xff
         val src = ByteArray(4)
         val dst = ByteArray(4)
@@ -100,6 +101,7 @@ internal object Packet {
         val version = (buffer.get(start).toInt() and 0xf0) ushr 4
         if (version != 6) return null
         val payloadLength = buffer.getShort(start + 4).toInt() and 0xffff
+        if (IP6_HEADER_SIZE + payloadLength > buffer.limit() - start) return null
         val nextHeader = buffer.get(start + 6).toInt() and 0xff
         // Extension headers are not walked — only direct TCP/UDP next-header.
         val src = ByteArray(16)
@@ -118,17 +120,17 @@ internal object Packet {
     }
 
     fun parseTcp(buffer: ByteBuffer, payloadOffset: Int, l4Length: Int): Tcp? {
-        if (buffer.limit() - payloadOffset < TCP_HEADER_SIZE) return null
+        if (l4Length < TCP_HEADER_SIZE || buffer.limit() - payloadOffset < l4Length) return null
         val start = payloadOffset
         val sourcePort = buffer.getShort(start).toInt() and 0xffff
         val destPort = buffer.getShort(start + 2).toInt() and 0xffff
         val seq = buffer.getInt(start + 4).toLong() and 0xffffffffL
         val ack = buffer.getInt(start + 8).toLong() and 0xffffffffL
         val dataOffset = ((buffer.get(start + 12).toInt() and 0xf0) ushr 4) * 4
-        if (dataOffset < TCP_HEADER_SIZE) return null
+        if (dataOffset < TCP_HEADER_SIZE || dataOffset > l4Length) return null
         val flags = buffer.get(start + 13).toInt() and 0xff
         val tcpPayloadOffset = start + dataOffset
-        val payloadLength = (l4Length - dataOffset).coerceAtLeast(0)
+        val payloadLength = l4Length - dataOffset
         return Tcp(sourcePort, destPort, seq, ack, dataOffset, flags, tcpPayloadOffset, payloadLength)
     }
 
@@ -138,20 +140,23 @@ internal object Packet {
     fun parseTcp(buffer: ByteBuffer, ip: Ip6): Tcp? =
         parseTcp(buffer, ip.payloadOffset, ip.payloadLength)
 
-    fun parseUdp(buffer: ByteBuffer, payloadOffset: Int): Udp? {
-        if (buffer.limit() - payloadOffset < UDP_HEADER_SIZE) return null
+    fun parseUdp(buffer: ByteBuffer, payloadOffset: Int, l4Length: Int): Udp? {
+        if (l4Length < UDP_HEADER_SIZE || buffer.limit() - payloadOffset < l4Length) return null
         val start = payloadOffset
         val sourcePort = buffer.getShort(start).toInt() and 0xffff
         val destPort = buffer.getShort(start + 2).toInt() and 0xffff
         val length = buffer.getShort(start + 4).toInt() and 0xffff
+        if (length < UDP_HEADER_SIZE || length > l4Length) return null
         val udpPayloadOffset = start + UDP_HEADER_SIZE
-        val payloadLength = (length - UDP_HEADER_SIZE).coerceAtLeast(0)
+        val payloadLength = length - UDP_HEADER_SIZE
         return Udp(sourcePort, destPort, length, udpPayloadOffset, payloadLength)
     }
 
-    fun parseUdp(buffer: ByteBuffer, ip: Ip4): Udp? = parseUdp(buffer, ip.payloadOffset)
+    fun parseUdp(buffer: ByteBuffer, ip: Ip4): Udp? =
+        parseUdp(buffer, ip.payloadOffset, ip.totalLength - ip.headerLength)
 
-    fun parseUdp(buffer: ByteBuffer, ip: Ip6): Udp? = parseUdp(buffer, ip.payloadOffset)
+    fun parseUdp(buffer: ByteBuffer, ip: Ip6): Udp? =
+        parseUdp(buffer, ip.payloadOffset, ip.payloadLength)
 
     fun buildIp4Tcp(
         source: InetAddress,
