@@ -27,6 +27,9 @@ class VpnStartupCancellationSurfaceTest {
         assertTrue(engineStarted >= 0)
         assertTrue(published > engineStarted)
         assertTrue(service.contains("mihomo exited before VPN stack became ready"))
+        assertTrue(service.contains("TUN forwarding exited before VPN stack became ready"))
+        val startupWindow = service.substring(engineStarted, published)
+        assertTrue(startupWindow.split("requireRuntimeStackHealthy(").size >= 3)
     }
 
     private fun resolve(vararg paths: String): File =

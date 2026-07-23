@@ -445,6 +445,10 @@ class ViaSixVpnService : VpnService() {
             engine.start()
             tunEngine = engine
             requireStartupActive("after TUN forwarding launch")
+            requireRuntimeStackHealthy(
+                mihomoRunning = process.isRunning,
+                fullTunnel = true,
+            )
             updateNotification(
                 if (health.ok) {
                     "全量隧道 · mixed :$MIXED_PORT · ${health.version ?: "ok"}"
@@ -469,9 +473,10 @@ class ViaSixVpnService : VpnService() {
         }
 
         requireStartupActive("runtime publication")
-        if (!process.isRunning) {
-            throw IllegalStateException("mihomo exited before VPN stack became ready")
-        }
+        requireRuntimeStackHealthy(
+            mihomoRunning = process.isRunning,
+            fullTunnel = fullTunnel,
+        )
         // Publish running only after mihomo, the VPN interface and optional TUN forwarding
         // are all owned by this still-active startup.
         writeRuntimeStatus(
@@ -486,6 +491,25 @@ class ViaSixVpnService : VpnService() {
         startTrafficNotificationLoop(secret, fullTunnel)
         requireStartupActive("after traffic supervision launch")
         Log.i(TAG, "stack ready fullTunnel=$fullTunnel health=${health.message}")
+    }
+
+    private fun requireRuntimeStackHealthy(
+        mihomoRunning: Boolean,
+        fullTunnel: Boolean,
+    ) {
+        when (
+            RuntimeStackHealth.failure(
+                mihomoRunning = mihomoRunning,
+                fullTunnel = fullTunnel,
+                tunnelRunning = tunEngine?.isRunning == true,
+            )
+        ) {
+            RuntimeStackFailure.MIHOMO_EXITED ->
+                throw IllegalStateException("mihomo exited before VPN stack became ready")
+            RuntimeStackFailure.TUNNEL_EXITED ->
+                throw IllegalStateException("TUN forwarding exited before VPN stack became ready")
+            null -> Unit
+        }
     }
 
     private fun requireStartupActive(stage: String) {

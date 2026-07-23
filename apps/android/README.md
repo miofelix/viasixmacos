@@ -56,7 +56,7 @@ make android-assemble
 | --- | --- |
 | contracts 投影 | ✓（`:core` 测试） |
 | 分区导航 UI（对齐 macOS 信息架构） | ✓ |
-| VpnService 权限与前台会话 / 重启重连 | ✓（设置页授权与系统“始终开启 VPN”入口；系统 VPN“配置”动作回流设置分区；Sticky/Always-on 恢复；启动中可安全取消；整栈就绪后才发布运行态；异常退出自动收敛） |
+| VpnService 权限与前台会话 / 重启重连 | ✓（设置页授权与系统“始终开启 VPN”入口；系统 VPN“配置”动作回流设置分区；Sticky/Always-on 恢复；启动中可安全取消；TUN 启动后与最终发布前双重校验整栈健康，确认就绪后才发布运行态；异常退出自动收敛） |
 | mihomo 用户态启动（assets → filesDir） | ✓ |
 | 全量隧道 IPv4/IPv6 TCP→SOCKS | ✓（ACK/SEQ/标志联合校验驱动握手，重复 SYN 可即时重发 SYN-ACK，首次 SYN-ACK 丢失时也在约 1、3、7 秒主动重传，同步态意外 SYN 与非精确窗口内 RST 使用每会话限速的 RFC 5961 challenge ACK，精确 RST 才关闭；CLOSED 状态与会话过载按 RFC 9293 无状态 RST；同步态普通段先按 RFC 9293 验证当前动态接收窗口且必须携带 ACK，零窗口 persist probe 仅回 ACK 而不推进状态；安全解析客户端 MSS 与 Window Scale，在 SYN-ACK 发布接口 MSS 和协商所需 shift 0，无 MSS 时使用协议默认值，对端缩放窗口展开后仍受 131,070 字节重传容量约束；SOCKS5 建连与握手均有 10 秒超时且失败关闭；有效 ACK 后才占用下行 worker，上行 writer 按 payload/FIN 单飞启动并空闲退出；客户端上行按队列剩余容量动态广告窗口，饱和发布零窗口，恢复后由维护线程可靠补发窗口更新 ACK；下行按实际 VPN MTU 与客户端 MSS 较小值分段；两个半关闭方向独立，远端 EOF 仅等待本方向确认后发送可重传 FIN，读异常、重传耗尽与半关闭超时均以窗口内序号主动 RST；回绕安全序列；客户端接收窗口按 SND.WL1/WL2 防陈旧覆盖流控；双向有界队列与背压；所有传输层有界等待使用单调时钟；ACK 号与窗口均未变化的三次重复 ACK 快速重传；未确认段有界保留与退避重传，lossless TCP 入队可先淘汰 UDP，TUN 背压未入队不消耗 attempt；连接/I/O worker 分别硬限 16/64） |
 | 全量隧道通用 UDP→SOCKS5 UDP ASSOCIATE | ✓（每本地源端口一条 ASSOCIATE；DNS 默认复用此路径；严格校验 RSV/FRAG/端口/frame 长度；单 Selector reactor 多路复用所有非阻塞 relay 收发，不占通用 I/O worker，线程级异常会传播为隧道故障并 fail-closed；发送按 relay 采用数据报数/字节数双重有界队列并以 `OP_WRITE` 背压，饱和只丢当前数据报；空闲 60 秒主动回收；控制 TCP 每 5 秒探测 EOF；UDP 回包源绑定；relay 代际原子发布、按实例关闭并从共享 reactor 显式注销） |

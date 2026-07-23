@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android VPN 启动最终发布运行态前只复核 mihomo 进程，没有复核刚启动的 `Tun2SocksEngine`；若 TUN reader/writer 或 UDP reactor 在异步启动窗口内立即退出，服务仍可能短暂写入 `running=true` 并展示连接成功。启动现复用统一的 `RuntimeStackHealth`，在 TUN 启动后及运行态发布前同时校验 mihomo 与可选 TUN，引擎已失效时直接回滚整栈。
 - 修复 Android 共享 UDP relay reactor 因 `Selector` 层异常而退出时只在内部清理资源，却不把故障传播给 `Tun2SocksEngine`，导致 VPN 继续显示运行、TCP 仍可用但所有通用 UDP 永久失效的问题；reactor 现区分显式关闭与意外线程终止，后者在完成 relay 清理后通知引擎关闭运行健康门，由既有 service supervisor 统一 fail-closed 结束会话。
 - 修复 Android VPN 停止时仅清空 TUN 出站队列，正在等待空位的 lossless TCP producer 会被 `clear` 释放容量后重新入队并返回成功，导致停止后残留报文与虚假发送成功的问题；队列现采用不可逆 cancelled 状态，取消会清空现有报文并唤醒等待者，所有 producer 在入队前后复核取消状态并按对象身份撤回竞态入队，后续 TCP/UDP 报文均不能复活已停止队列。
 - 修复 Android TUN 出站队列虽标记 TCP 为 lossless，但队列已被可丢 UDP 数据报填满时仍只等待空位、不会主动让 UDP 腾位的问题；writer 暂停超过等待上限时，关键 TCP SYN/data/FIN/RST 可能入队失败而 UDP 反被保留。所有 producer 现通过同一入队锁仲裁：lossless 报文先直接入队，满时原子淘汰一个 droppable 并立即占位，只有队列全为 lossless 时才执行原有有界等待；新 UDP 仍只能替换旧 UDP，不能淘汰 TCP。
