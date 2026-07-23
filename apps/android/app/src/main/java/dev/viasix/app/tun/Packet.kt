@@ -12,6 +12,7 @@ internal object Packet {
     const val IP6_HEADER_SIZE = 40
     const val TCP_HEADER_SIZE = 20
     const val UDP_HEADER_SIZE = 8
+    const val TCP_WINDOW_SIZE = 0xffff
 
     const val PROTO_TCP: Byte = 6
     const val PROTO_UDP: Byte = 17
@@ -385,7 +386,7 @@ internal object Packet {
         buf.putInt(ack.toInt())
         buf.put(((tcpHeaderSize / 4) shl 4).toByte())
         buf.put(flags.toByte())
-        buf.putShort(0xffff.toShort()) // window
+        buf.putShort(TCP_WINDOW_SIZE.toShort())
         buf.putShort(0) // checksum
         buf.putShort(0) // urgent
         buf.put(options)
@@ -489,7 +490,7 @@ internal object Packet {
         buf.putInt(ack.toInt())
         buf.put(((tcpHeaderSize / 4) shl 4).toByte())
         buf.put(flags.toByte())
-        buf.putShort(0xffff.toShort())
+        buf.putShort(TCP_WINDOW_SIZE.toShort())
         buf.putShort(0)
         buf.putShort(0)
         buf.put(options)

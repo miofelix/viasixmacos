@@ -378,6 +378,21 @@ class Tun2SocksEngine(
                 return
             }
         }
+        if (
+            session.handshake.isComplete &&
+                (
+                    tcp.flags and Packet.ACK == 0 ||
+                        !TcpReceiveWindow.accepts(
+                            sequence = tcp.seq,
+                            payloadLength = tcp.payloadLength,
+                            fin = tcp.flags and Packet.FIN != 0,
+                            nextExpected = session.clientNextSeq,
+                        )
+                )
+        ) {
+            enqueueAck(session)
+            return
+        }
         if (session.handshake.isComplete && tcp.flags and Packet.ACK != 0) {
             if (
                 session.sendWindow.update(
