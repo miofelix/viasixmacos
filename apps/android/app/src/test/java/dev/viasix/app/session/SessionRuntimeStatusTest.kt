@@ -53,6 +53,7 @@ class SessionRuntimeStatusTest {
             ).forProcess(currentProcessToken = "current-process")
 
         assertFalse(stale.running)
+        assertEquals(ConnectionPhase.STOPPED, stale.phase)
         assertEquals("stopped", stale.health)
         assertEquals("", stale.secret)
         assertEquals(null, stale.mihomoVersion)
@@ -71,5 +72,19 @@ class SessionRuntimeStatusTest {
             )
 
         assertEquals(current, current.forProcess(currentProcessToken = "current-process"))
+    }
+
+    @Test
+    fun staleTransitionFromAnotherProcessIsRejected() {
+        val stale =
+            SessionRuntimeStatus(
+                phase = ConnectionPhase.STARTING,
+                health = "starting",
+                processToken = "old-process",
+            ).forProcess(currentProcessToken = "current-process")
+
+        assertEquals(ConnectionPhase.STOPPED, stale.phase)
+        assertFalse(stale.running)
+        assertEquals("stopped", stale.health)
     }
 }

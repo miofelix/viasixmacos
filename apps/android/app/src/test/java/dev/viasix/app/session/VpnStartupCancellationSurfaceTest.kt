@@ -23,7 +23,7 @@ class VpnStartupCancellationSurfaceTest {
         assertTrue(service.contains("requireStartupActive(\"after traffic supervision launch\")"))
 
         val engineStarted = service.indexOf("engine.start()")
-        val published = service.indexOf("running = true")
+        val published = service.indexOf("phase = ConnectionPhase.RUNNING")
         assertTrue(engineStarted >= 0)
         assertTrue(published > engineStarted)
         assertTrue(service.contains("mihomo exited before VPN stack became ready"))

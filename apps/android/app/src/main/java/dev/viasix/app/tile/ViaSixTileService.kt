@@ -9,6 +9,7 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.util.Log
 import dev.viasix.app.MainActivity
+import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.session.NotificationPermissionFlow
 import dev.viasix.app.session.NotificationPermissionState
 import dev.viasix.app.session.POST_NOTIFICATIONS_PERMISSION
@@ -26,8 +27,8 @@ class ViaSixTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        val running = VpnSessionCommands.isRuntimeRunning(this)
-        if (running) {
+        val phase = VpnSessionCommands.runtimePhase(this)
+        if (phase.isActiveOrTransitioning) {
             startService(VpnSessionCommands.buildStopIntent(this))
             // Optimistic inactive until prefs catch up
             qsTile?.state = Tile.STATE_INACTIVE
@@ -128,17 +129,29 @@ class ViaSixTileService : TileService() {
 
     private fun refreshTile() {
         val tile = qsTile ?: return
-        val running = VpnSessionCommands.isRuntimeRunning(this)
-        tile.state = if (running) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+        val phase = VpnSessionCommands.runtimePhase(this)
+        tile.state =
+            if (phase == ConnectionPhase.RUNNING || phase == ConnectionPhase.STARTING) {
+                Tile.STATE_ACTIVE
+            } else {
+                Tile.STATE_INACTIVE
+            }
         tile.label = "ViaSix"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            tile.subtitle = if (running) "已连接 · 点按断开" else "点按连接"
+            tile.subtitle =
+                when (phase) {
+                    ConnectionPhase.STARTING -> "正在连接 · 点按取消"
+                    ConnectionPhase.RUNNING -> "已连接 · 点按断开"
+                    ConnectionPhase.STOPPING -> "正在断开…"
+                    ConnectionPhase.STOPPED -> "点按连接"
+                }
         }
         tile.contentDescription =
-            if (running) {
-                "ViaSix 已连接，点按断开"
-            } else {
-                "ViaSix 未连接，点按连接"
+            when (phase) {
+                ConnectionPhase.STARTING -> "ViaSix 正在连接，点按取消"
+                ConnectionPhase.RUNNING -> "ViaSix 已连接，点按断开"
+                ConnectionPhase.STOPPING -> "ViaSix 正在断开"
+                ConnectionPhase.STOPPED -> "ViaSix 未连接，点按连接"
             }
         tile.updateTile()
     }

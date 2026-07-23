@@ -18,6 +18,9 @@ enum class ConnectionPhase {
     val isActiveOrTransitioning: Boolean
         get() = this == STARTING || this == RUNNING || this == STOPPING
 
+    val wire: String
+        get() = name.lowercase()
+
     /** Primary button label for Overview / hero control. */
     fun actionLabel(): String =
         when (this) {
@@ -39,29 +42,32 @@ enum class ConnectionPhase {
     companion object {
         /** Restore the visible phase before the first runtime poll after UI recreation. */
         fun restore(
-            runtimeRunning: Boolean,
+            runtimePhase: ConnectionPhase,
             hasPendingStart: Boolean = false,
         ): ConnectionPhase =
             when {
-                runtimeRunning -> RUNNING
+                runtimePhase != STOPPED -> runtimePhase
                 hasPendingStart -> STARTING
                 else -> STOPPED
             }
 
         /**
          * Reconcile local intent with polled VPN runtime.
-         * [runtimeRunning] comes from [ViaSixVpnService] prefs.
+         * [runtimePhase] comes from [ViaSixVpnService] prefs.
          */
         fun reconcile(
             current: ConnectionPhase,
-            runtimeRunning: Boolean,
+            runtimePhase: ConnectionPhase,
         ): ConnectionPhase =
-            when {
-                runtimeRunning -> RUNNING
-                current == STARTING -> STARTING // keep until timeout or running
-                current == STOPPING -> STOPPED
-                current == RUNNING -> STOPPED // unexpected drop
-                else -> STOPPED
+            when (runtimePhase) {
+                RUNNING -> RUNNING
+                STARTING -> STARTING
+                STOPPING -> STOPPING
+                STOPPED ->
+                    when (current) {
+                        STARTING -> STARTING // keep pending local consent until timeout
+                        STOPPING, RUNNING, STOPPED -> STOPPED
+                    }
             }
 
         /**
@@ -69,12 +75,15 @@ enum class ConnectionPhase {
          */
         fun afterStartTimeout(
             current: ConnectionPhase,
-            runtimeRunning: Boolean,
+            runtimePhase: ConnectionPhase,
         ): ConnectionPhase =
             when {
-                runtimeRunning -> RUNNING
+                runtimePhase != STOPPED -> runtimePhase
                 current == STARTING -> STOPPED
                 else -> current
             }
+
+        fun parse(value: String?): ConnectionPhase? =
+            entries.firstOrNull { it.wire.equals(value, ignoreCase = true) }
     }
 }

@@ -18,11 +18,22 @@ object VpnSessionCommands {
     fun loadPrefs(context: Context): SessionPrefs = SessionPrefsStore(context).load()
 
     fun isRuntimeRunning(context: Context): Boolean {
+        return runtimePhase(context) == ConnectionPhase.RUNNING
+    }
+
+    fun runtimePhase(context: Context): ConnectionPhase {
         val prefs =
             context.getSharedPreferences(ViaSixVpnService.RUNTIME_PREFS, Context.MODE_PRIVATE)
         val owner = prefs.getString(ViaSixVpnService.KEY_PROCESS_TOKEN, "")
-        return prefs.getBoolean(ViaSixVpnService.KEY_RUNNING, false) &&
-            owner == RuntimeProcessIdentity.token
+        val running = prefs.getBoolean(ViaSixVpnService.KEY_RUNNING, false)
+        val phase =
+            ConnectionPhase.parse(prefs.getString(ViaSixVpnService.KEY_PHASE, null))
+                ?: if (running) ConnectionPhase.RUNNING else ConnectionPhase.STOPPED
+        return if (phase.isActiveOrTransitioning && owner != RuntimeProcessIdentity.token) {
+            ConnectionPhase.STOPPED
+        } else {
+            phase
+        }
     }
 
     fun evaluateStart(prefs: SessionPrefs): SessionStartGate.Result {

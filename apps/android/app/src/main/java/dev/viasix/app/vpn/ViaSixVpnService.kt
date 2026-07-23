@@ -26,6 +26,7 @@ import dev.viasix.app.mihomo.TrafficSampler
 import dev.viasix.app.prefs.SessionPrefsStore
 import dev.viasix.app.session.AppRoutingMode
 import dev.viasix.app.session.AppRoutingPolicy
+import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.session.DnsRoutingMode
 import dev.viasix.app.session.DnsSettingsPolicy
 import dev.viasix.app.session.GenerationGate
@@ -261,6 +262,13 @@ class ViaSixVpnService : VpnService() {
                 val request = startRequests.takeNext() ?: break
                 try {
                     requireStartupActive("before restart cleanup")
+                    writeRuntimeStatus(
+                        phase = ConnectionPhase.STARTING,
+                        healthMessage = "starting",
+                        secret = "",
+                        version = null,
+                        startedAt = null,
+                    )
                     // Tear down any previous stack before applying new parameters
                     // (node apply / reconnect path).
                     stopStackOnly("restart for ${request.reason}")
@@ -521,7 +529,7 @@ class ViaSixVpnService : VpnService() {
         // Publish running only after mihomo, the VPN interface and optional TUN forwarding
         // are all owned by this still-active startup.
         writeRuntimeStatus(
-            running = true,
+            phase = ConnectionPhase.RUNNING,
             healthMessage = health.message,
             secret = secret,
             version = health.version,
@@ -560,7 +568,7 @@ class ViaSixVpnService : VpnService() {
     private fun finishCancelledStartup() {
         stopStackOnly("startup cancelled")
         writeRuntimeStatus(
-            running = false,
+            phase = ConnectionPhase.STOPPED,
             healthMessage = "stopped",
             secret = "",
             version = null,
@@ -720,9 +728,16 @@ class ViaSixVpnService : VpnService() {
         if (!shuttingDown.compareAndSet(false, true)) return
         startRequests.cancelPending()
         Log.i(TAG, "shutdown: $reason")
+        writeRuntimeStatus(
+            phase = ConnectionPhase.STOPPING,
+            healthMessage = "stopping",
+            secret = "",
+            version = null,
+            startedAt = null,
+        )
         stopStackOnly(reason)
         writeRuntimeStatus(
-            running = false,
+            phase = ConnectionPhase.STOPPED,
             healthMessage = "stopped",
             secret = "",
             version = null,
@@ -819,22 +834,27 @@ class ViaSixVpnService : VpnService() {
     }
 
     private fun writeRuntimeStatus(
-        running: Boolean,
+        phase: ConnectionPhase,
         healthMessage: String,
         secret: String,
         version: String?,
         startedAt: Long?,
     ) {
+        val running = phase == ConnectionPhase.RUNNING
         getSharedPreferences(RUNTIME_PREFS, MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_RUNNING, running)
+            .putString(KEY_PHASE, phase.wire)
             .putString(KEY_HEALTH, healthMessage)
             .putString(KEY_SECRET, secret)
             .putInt(KEY_CONTROLLER_PORT, CONTROLLER_PORT)
             .putInt(KEY_MIXED_PORT, MIXED_PORT)
             .putString(KEY_VERSION, version.orEmpty())
             .putLong(KEY_STARTED_AT, startedAt ?: 0L)
-            .putString(KEY_PROCESS_TOKEN, if (running) RuntimeProcessIdentity.token else "")
+            .putString(
+                KEY_PROCESS_TOKEN,
+                if (phase.isActiveOrTransitioning) RuntimeProcessIdentity.token else "",
+            )
             .apply()
         notifyTileRefresh()
     }
@@ -970,6 +990,7 @@ class ViaSixVpnService : VpnService() {
         const val CONTROLLER_PORT = 9090
         const val RUNTIME_PREFS = "viasix_runtime"
         const val KEY_RUNNING = "running"
+        const val KEY_PHASE = "phase"
         const val KEY_HEALTH = "health"
         const val KEY_SECRET = "secret"
         const val KEY_CONTROLLER_PORT = "controllerPort"

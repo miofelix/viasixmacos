@@ -11,15 +11,18 @@ class ConnectionPhaseTest {
     fun restoreUsesRuntimeAndPendingConsentState() {
         assertEquals(
             ConnectionPhase.RUNNING,
-            ConnectionPhase.restore(runtimeRunning = true),
+            ConnectionPhase.restore(runtimePhase = ConnectionPhase.RUNNING),
         )
         assertEquals(
             ConnectionPhase.STARTING,
-            ConnectionPhase.restore(runtimeRunning = false, hasPendingStart = true),
+            ConnectionPhase.restore(
+                runtimePhase = ConnectionPhase.STOPPED,
+                hasPendingStart = true,
+            ),
         )
         assertEquals(
             ConnectionPhase.STOPPED,
-            ConnectionPhase.restore(runtimeRunning = false),
+            ConnectionPhase.restore(runtimePhase = ConnectionPhase.STOPPED),
         )
     }
 
@@ -27,11 +30,11 @@ class ConnectionPhaseTest {
     fun reconcile_runtimeRunningBecomesRunning() {
         assertEquals(
             ConnectionPhase.RUNNING,
-            ConnectionPhase.reconcile(ConnectionPhase.STARTING, runtimeRunning = true),
+            ConnectionPhase.reconcile(ConnectionPhase.STARTING, ConnectionPhase.RUNNING),
         )
         assertEquals(
             ConnectionPhase.RUNNING,
-            ConnectionPhase.reconcile(ConnectionPhase.STOPPED, runtimeRunning = true),
+            ConnectionPhase.reconcile(ConnectionPhase.STOPPED, ConnectionPhase.RUNNING),
         )
     }
 
@@ -39,7 +42,7 @@ class ConnectionPhaseTest {
     fun reconcile_stoppingWithoutRuntimeBecomesStopped() {
         assertEquals(
             ConnectionPhase.STOPPED,
-            ConnectionPhase.reconcile(ConnectionPhase.STOPPING, runtimeRunning = false),
+            ConnectionPhase.reconcile(ConnectionPhase.STOPPING, ConnectionPhase.STOPPED),
         )
     }
 
@@ -47,11 +50,11 @@ class ConnectionPhaseTest {
     fun reconcile_keepsStartingUntilTimeoutHelper() {
         assertEquals(
             ConnectionPhase.STARTING,
-            ConnectionPhase.reconcile(ConnectionPhase.STARTING, runtimeRunning = false),
+            ConnectionPhase.reconcile(ConnectionPhase.STARTING, ConnectionPhase.STOPPED),
         )
         assertEquals(
             ConnectionPhase.STOPPED,
-            ConnectionPhase.afterStartTimeout(ConnectionPhase.STARTING, runtimeRunning = false),
+            ConnectionPhase.afterStartTimeout(ConnectionPhase.STARTING, ConnectionPhase.STOPPED),
         )
     }
 
@@ -59,8 +62,22 @@ class ConnectionPhaseTest {
     fun reconcile_unexpectedDropFromRunning() {
         assertEquals(
             ConnectionPhase.STOPPED,
-            ConnectionPhase.reconcile(ConnectionPhase.RUNNING, runtimeRunning = false),
+            ConnectionPhase.reconcile(ConnectionPhase.RUNNING, ConnectionPhase.STOPPED),
         )
+    }
+
+    @Test
+    fun runtimeTransitionsRemainAuthoritativeAcrossUiRecreation() {
+        assertEquals(
+            ConnectionPhase.STARTING,
+            ConnectionPhase.restore(runtimePhase = ConnectionPhase.STARTING),
+        )
+        assertEquals(
+            ConnectionPhase.STOPPING,
+            ConnectionPhase.reconcile(ConnectionPhase.RUNNING, ConnectionPhase.STOPPING),
+        )
+        assertEquals(ConnectionPhase.STARTING, ConnectionPhase.parse("starting"))
+        assertEquals("stopping", ConnectionPhase.STOPPING.wire)
     }
 
     @Test

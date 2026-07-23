@@ -160,7 +160,7 @@ class MainActivity : ComponentActivity() {
                 runtime = initialRuntime.toUiSnapshot(),
                 connectionPhase =
                     ConnectionPhase.restore(
-                        runtimeRunning = initialRuntime.running,
+                        runtimePhase = initialRuntime.phase,
                         hasPendingStart =
                             pendingVpnStartReason != null ||
                                 pendingNotificationStartReason != null ||
@@ -339,18 +339,22 @@ class MainActivity : ComponentActivity() {
 
                     logOnly { current ->
                         var phase =
-                            ConnectionPhase.reconcile(current.connectionPhase, running)
+                            ConnectionPhase.reconcile(
+                                current.connectionPhase,
+                                runtimeStatus.phase,
+                            )
                         // STARTING without runtime for too long → failed start.
                         if (
                             phase == ConnectionPhase.STARTING &&
                                 !running &&
+                                runtimeStatus.phase == ConnectionPhase.STOPPED &&
                                 startingSinceMillis > 0L &&
                                 System.currentTimeMillis() - startingSinceMillis > START_TIMEOUT_MS
                         ) {
                             phase =
                                 ConnectionPhase.afterStartTimeout(
                                     current.connectionPhase,
-                                    runtimeRunning = false,
+                                    runtimePhase = runtimeStatus.phase,
                                 )
                             startingSinceMillis = 0L
                         }
@@ -1541,7 +1545,7 @@ class MainActivity : ComponentActivity() {
                                     runtimeComponents = state.runtimeComponents,
                                     runtime = currentRuntime.toUiSnapshot(),
                                     connectionPhase =
-                                        ConnectionPhase.restore(currentRuntime.running),
+                                        ConnectionPhase.restore(currentRuntime.phase),
                                 )
                                 .appendLog(
                                     "已重置会话偏好",

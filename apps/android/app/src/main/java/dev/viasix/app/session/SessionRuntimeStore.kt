@@ -8,6 +8,7 @@ import dev.viasix.app.vpn.ViaSixVpnService
 /** Last runtime state published by [ViaSixVpnService], available across UI process recreation. */
 data class SessionRuntimeStatus(
     val running: Boolean = false,
+    val phase: ConnectionPhase = if (running) ConnectionPhase.RUNNING else ConnectionPhase.STOPPED,
     val health: String = "—",
     val controllerPort: Int = ViaSixVpnService.CONTROLLER_PORT,
     val mixedPort: Int = ViaSixVpnService.MIXED_PORT,
@@ -18,13 +19,14 @@ data class SessionRuntimeStatus(
     val processToken: String = "",
     val underlyingNetwork: String = "正在检测",
 ) {
-    /** A persisted running flag is valid only while owned by this app process. */
+    /** A persisted active/transitioning phase is valid only while owned by this app process. */
     fun forProcess(currentProcessToken: String): SessionRuntimeStatus =
-        if (!running || processToken == currentProcessToken) {
+        if (!phase.isActiveOrTransitioning || processToken == currentProcessToken) {
             this
         } else {
             copy(
                 running = false,
+                phase = ConnectionPhase.STOPPED,
                 health = "stopped",
                 secret = "",
                 mihomoVersion = null,
@@ -51,9 +53,14 @@ class SessionRuntimeStore(context: Context) {
     private val prefs =
         context.getSharedPreferences(ViaSixVpnService.RUNTIME_PREFS, Context.MODE_PRIVATE)
 
-    fun load(): SessionRuntimeStatus =
-        SessionRuntimeStatus(
-            running = prefs.getBoolean(ViaSixVpnService.KEY_RUNNING, false),
+    fun load(): SessionRuntimeStatus {
+        val legacyRunning = prefs.getBoolean(ViaSixVpnService.KEY_RUNNING, false)
+        val phase =
+            ConnectionPhase.parse(prefs.getString(ViaSixVpnService.KEY_PHASE, null))
+                ?: if (legacyRunning) ConnectionPhase.RUNNING else ConnectionPhase.STOPPED
+        return SessionRuntimeStatus(
+            running = phase == ConnectionPhase.RUNNING,
+            phase = phase,
             health = prefs.getString(ViaSixVpnService.KEY_HEALTH, "—") ?: "—",
             controllerPort =
                 prefs.getInt(
@@ -78,4 +85,5 @@ class SessionRuntimeStore(context: Context) {
                 prefs.getString(ViaSixVpnService.KEY_UNDERLYING_NETWORK, "正在检测")
                     ?: "正在检测",
         ).forProcess(RuntimeProcessIdentity.token)
+    }
 }
