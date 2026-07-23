@@ -11,6 +11,8 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
+import java.nio.channels.ClosedSelectorException
+import java.nio.channels.Selector
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
@@ -21,6 +23,41 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
 class UdpRelayReactorTest {
+    @Test
+    fun explicitCloseDoesNotNotifyOwner() {
+        val fatalCount = AtomicInteger(0)
+        val reactor = UdpRelayReactor(onFatal = { fatalCount.incrementAndGet() })
+
+        reactor.start()
+        reactor.close()
+
+        assertEquals(0, fatalCount.get())
+    }
+
+    @Test
+    fun selectorFailureNotifiesOwner() {
+        val selector = Selector.open().also { it.close() }
+        val fatal = AtomicReference<Throwable?>(null)
+        val notified = CountDownLatch(1)
+        val reactor =
+            UdpRelayReactor(
+                controlProbeIntervalMs = 25L,
+                onFatal = { error ->
+                    fatal.set(error)
+                    notified.countDown()
+                },
+                selectorFactory = { selector },
+            )
+        try {
+            reactor.start()
+
+            assertTrue("selector failure was not reported", notified.await(2, TimeUnit.SECONDS))
+            assertTrue(fatal.get() is ClosedSelectorException)
+        } finally {
+            reactor.close()
+        }
+    }
+
     @Test
     fun multiplexesMultipleRelaysOnOneReactorThread() {
         FakeSocks5UdpServer(expectedAssociations = 2).use { proxy ->

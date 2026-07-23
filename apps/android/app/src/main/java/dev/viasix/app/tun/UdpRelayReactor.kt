@@ -13,6 +13,8 @@ internal class UdpRelayReactor(
     private val controlProbeIntervalMs: Long = CONTROL_PROBE_INTERVAL_MS,
     private val maxQueuedDatagrams: Int = MAX_QUEUED_DATAGRAMS,
     private val maxQueuedBytes: Int = MAX_QUEUED_BYTES,
+    private val onFatal: (Throwable) -> Unit = {},
+    selectorFactory: () -> Selector = { Selector.open() },
 ) : AutoCloseable {
     init {
         require(controlProbeIntervalMs > 0L) { "controlProbeIntervalMs must be positive" }
@@ -78,10 +80,10 @@ internal class UdpRelayReactor(
         }
     }
 
-    private val selector = Selector.open()
     private val pending = ConcurrentLinkedQueue<Registration>()
     private val pendingWrites = ConcurrentLinkedQueue<Registration>()
     private val registrations = ConcurrentHashMap<Socks5UdpRelay, Registration>()
+    private val selector = selectorFactory()
     private val running = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
     private val lifecycleLock = Any()
@@ -160,6 +162,7 @@ internal class UdpRelayReactor(
 
     private fun runLoop() {
         var nextControlProbeMs = monotonicTimeMs() + controlProbeIntervalMs
+        var fatalError: Exception? = null
         try {
             while (running.get()) {
                 registerPending()
@@ -190,6 +193,8 @@ internal class UdpRelayReactor(
                     nextControlProbeMs = nowMs + controlProbeIntervalMs
                 }
             }
+        } catch (error: Exception) {
+            if (!closed.get()) fatalError = error
         } finally {
             running.set(false)
             closeAllRegistrations()
@@ -197,6 +202,14 @@ internal class UdpRelayReactor(
                 selector.close()
             } catch (_: Exception) {
             }
+        }
+        fatalError?.let(::notifyFatal)
+    }
+
+    private fun notifyFatal(error: Throwable) {
+        try {
+            onFatal(error)
+        } catch (_: Exception) {
         }
     }
 

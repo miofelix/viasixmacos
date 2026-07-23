@@ -68,7 +68,14 @@ class Tun2SocksEngine(
         Executors.newSingleThreadScheduledExecutor { r ->
             Thread(r, "viasix-tun-maintenance").apply { isDaemon = true }
         }
-    private val udpRelayReactor = UdpRelayReactor()
+    private val udpRelayReactor =
+        UdpRelayReactor(
+            onFatal = { error ->
+                if (running.compareAndSet(true, false)) {
+                    Log.w(TAG, "UDP relay reactor failed: ${error.message}")
+                }
+            },
+        )
     private var inChannel: FileChannel? = null
     private var outStream: FileOutputStream? = null
     private var started = false
