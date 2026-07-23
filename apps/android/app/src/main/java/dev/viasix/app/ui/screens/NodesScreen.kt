@@ -44,6 +44,7 @@ import dev.viasix.app.ui.theme.SurfaceCard
 import dev.viasix.app.ui.theme.VisualStyle
 import dev.viasix.core.net.Ipv6Address
 import dev.viasix.core.speedtest.Ipv6IpPresets
+import dev.viasix.core.speedtest.NodeSortKey
 import dev.viasix.core.speedtest.SpeedTestResult
 
 @Composable
@@ -58,6 +59,8 @@ fun NodesScreen(
     onSpeedDisableDownloadChange: (Boolean) -> Unit = {},
     onStartSpeedTest: () -> Unit = {},
     onStopSpeedTest: () -> Unit = {},
+    onStartCurrentNodeTest: () -> Unit = {},
+    onSpeedSortChange: (NodeSortKey) -> Unit = {},
 ) {
     val colors = LocalViaSixColors.current
     val looksValid = Ipv6Address.isValid(state.selectedAddress)
@@ -199,7 +202,12 @@ fun NodesScreen(
                             enabled = !speed.isRunning,
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text(if (speed.isRunning) "测速中…" else "开始测速")
+                            Text(
+                                when {
+                                    speed.isRunning && !speed.isNodeTest -> "测速中…"
+                                    else -> "开始测速"
+                                },
+                            )
                         }
                         OutlinedButton(
                             onClick = onStopSpeedTest,
@@ -209,6 +217,24 @@ fun NodesScreen(
                             Text("停止")
                         }
                     }
+                    OutlinedButton(
+                        onClick = onStartCurrentNodeTest,
+                        enabled = !speed.isRunning && looksValid,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (speed.isRunning && speed.isNodeTest) {
+                                "当前节点测速中…"
+                            } else {
+                                "当前节点测速"
+                            },
+                        )
+                    }
+                    Text(
+                        "「当前节点测速」仅对选中 IPv6 运行 CFST（对齐 macOS 配置测速），结果可应用 / 重连。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 
@@ -222,8 +248,63 @@ fun NodesScreen(
                         StatusBadge("${speed.results.size}", tone = AppTone.Neutral)
                     }
                     HorizontalDivider(color = colors.surfaceBorder)
-                    Column {
-                        speed.results.forEachIndexed { index, row ->
+                    Column(
+                        modifier = Modifier.padding(top = VisualStyle.spacing8),
+                        verticalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+                    ) {
+                        Text(
+                            "排序（再点同一列切换升/降序；缺失值始终靠后）",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = VisualStyle.spacing16),
+                        )
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(horizontal = VisualStyle.spacing12),
+                            horizontalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+                        ) {
+                            SortChip(
+                                label = "延迟",
+                                key = NodeSortKey.LATENCY,
+                                current = speed.sortKey,
+                                ascending = speed.sortAscending,
+                                onClick = onSpeedSortChange,
+                            )
+                            SortChip(
+                                label = "丢包",
+                                key = NodeSortKey.LOSS,
+                                current = speed.sortKey,
+                                ascending = speed.sortAscending,
+                                onClick = onSpeedSortChange,
+                            )
+                            SortChip(
+                                label = "速度",
+                                key = NodeSortKey.SPEED,
+                                current = speed.sortKey,
+                                ascending = speed.sortAscending,
+                                onClick = onSpeedSortChange,
+                            )
+                            SortChip(
+                                label = "地区",
+                                key = NodeSortKey.REGION,
+                                current = speed.sortKey,
+                                ascending = speed.sortAscending,
+                                onClick = onSpeedSortChange,
+                            )
+                            SortChip(
+                                label = "IP",
+                                key = NodeSortKey.IP,
+                                current = speed.sortKey,
+                                ascending = speed.sortAscending,
+                                onClick = onSpeedSortChange,
+                            )
+                        }
+                        HorizontalDivider(color = colors.surfaceBorder)
+                        val sorted = speed.sortedResults
+                        sorted.forEachIndexed { index, row ->
                             SpeedResultRow(
                                 result = row,
                                 vpnRunning = state.runtime.running,
@@ -231,7 +312,7 @@ fun NodesScreen(
                                 onApplyReconnect = { onApplyNode(row.ip, true) },
                                 onCopy = { onCopy("IPv6", row.ip) },
                             )
-                            if (index != speed.results.lastIndex) {
+                            if (index != sorted.lastIndex) {
                                 HorizontalDivider(
                                     color = colors.surfaceBorder,
                                     modifier = Modifier.padding(start = 16.dp),
@@ -409,6 +490,28 @@ fun NodesScreen(
             }
         }
     }
+}
+
+@Composable
+private fun SortChip(
+    label: String,
+    key: NodeSortKey,
+    current: NodeSortKey,
+    ascending: Boolean,
+    onClick: (NodeSortKey) -> Unit,
+) {
+    val selected = current == key
+    val arrow =
+        when {
+            !selected -> ""
+            ascending -> " ↑"
+            else -> " ↓"
+        }
+    FilterChip(
+        selected = selected,
+        onClick = { onClick(key) },
+        label = { Text("$label$arrow") },
+    )
 }
 
 @Composable

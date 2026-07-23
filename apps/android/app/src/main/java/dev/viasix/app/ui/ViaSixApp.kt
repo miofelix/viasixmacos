@@ -26,6 +26,7 @@ import dev.viasix.app.ui.screens.SettingsScreen
 import dev.viasix.app.ui.theme.LocalViaSixColors
 import dev.viasix.app.ui.theme.ViaSixTheme
 import dev.viasix.core.projection.RoutingMode
+import dev.viasix.core.speedtest.NodeSortKey
 
 @Composable
 fun ViaSixApp(
@@ -42,6 +43,9 @@ fun ViaSixApp(
     onSpeedDisableDownloadChange: (Boolean) -> Unit = {},
     onStartSpeedTest: () -> Unit = {},
     onStopSpeedTest: () -> Unit = {},
+    onStartCurrentNodeTest: () -> Unit = {},
+    onSpeedSortChange: (NodeSortKey) -> Unit = {},
+    onRefreshCfstStatus: () -> Unit = {},
     onRoutingModeChange: (RoutingMode) -> Unit,
     onFullTunnelChange: (Boolean) -> Unit,
     onStart: () -> Unit,
@@ -145,6 +149,8 @@ fun ViaSixApp(
                             onSpeedDisableDownloadChange = onSpeedDisableDownloadChange,
                             onStartSpeedTest = onStartSpeedTest,
                             onStopSpeedTest = onStopSpeedTest,
+                            onStartCurrentNodeTest = onStartCurrentNodeTest,
+                            onSpeedSortChange = onSpeedSortChange,
                         )
                     AppSection.PROFILES ->
                         ProfilesScreen(
@@ -166,6 +172,7 @@ fun ViaSixApp(
                             onExitIpEndpointChange = onExitIpEndpointChange,
                             onDetectExitIp = onDetectExitIp,
                             onClearSessionData = onClearSessionData,
+                            onRefreshCfstStatus = onRefreshCfstStatus,
                         )
                 }
             }

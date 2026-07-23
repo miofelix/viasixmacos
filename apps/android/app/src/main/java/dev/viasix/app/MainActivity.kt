@@ -328,6 +328,68 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            fun applySpeedOutcome(result: CfstRunOutcome, installOk: Boolean, nodeTest: Boolean) {
+                when (result) {
+                    is CfstRunOutcome.Success -> {
+                        update {
+                            it.copy(
+                                speedTest =
+                                    it.speedTest.copy(
+                                        isRunning = false,
+                                        isNodeTest = false,
+                                        message =
+                                            if (nodeTest) {
+                                                "当前节点测速完成：${result.results.size} 个结果"
+                                            } else {
+                                                result.message
+                                            },
+                                        results = result.results,
+                                        binaryReady = true,
+                                    ),
+                            ).appendLog(
+                                if (nodeTest) {
+                                    "当前节点测速完成：${result.results.size} 个结果"
+                                } else {
+                                    result.message
+                                },
+                                LogLevel.Success,
+                                LogSource.Node,
+                            )
+                        }
+                    }
+                    is CfstRunOutcome.Cancelled -> {
+                        update {
+                            it.copy(
+                                speedTest =
+                                    it.speedTest.copy(
+                                        isRunning = false,
+                                        isNodeTest = false,
+                                        message = "测速已取消",
+                                        binaryReady = installOk,
+                                    ),
+                            ).appendLog("测速已取消", LogLevel.Warning, LogSource.Node)
+                        }
+                    }
+                    is CfstRunOutcome.Failed -> {
+                        update {
+                            it.copy(
+                                speedTest =
+                                    it.speedTest.copy(
+                                        isRunning = false,
+                                        isNodeTest = false,
+                                        message = result.message,
+                                        binaryReady = installOk,
+                                    ),
+                            ).appendLog(
+                                "测速失败：${result.message}",
+                                LogLevel.Error,
+                                LogSource.Node,
+                            )
+                        }
+                    }
+                }
+            }
+
             fun startSpeedTest() {
                 if (state.speedTest.isRunning || cfstRunner.isRunning) {
                     update {
@@ -343,6 +405,7 @@ class MainActivity : ComponentActivity() {
                         speedTest =
                             it.speedTest.copy(
                                 isRunning = true,
+                                isNodeTest = false,
                                 message = "正在准备 CFST…",
                             ),
                     ).appendLog("开始 IPv6 优选测速", LogLevel.Info, LogSource.Node)
@@ -365,59 +428,68 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
                                 val work = CfstInstaller.workDir(this@MainActivity)
-                                cfstRunner.run(install.binary, work, parameters) to install
+                                cfstRunner.run(install.binary, work, parameters) to true
                             } catch (error: Exception) {
-                                CfstRunOutcome.Failed(error.message ?: "CFST 安装失败") to null
+                                CfstRunOutcome.Failed(error.message ?: "CFST 安装失败") to false
                             }
                         }
-                    val (result, install) = outcome
-                    when (result) {
-                        is CfstRunOutcome.Success -> {
-                            update {
-                                it.copy(
-                                    speedTest =
-                                        it.speedTest.copy(
-                                            isRunning = false,
-                                            message = result.message,
-                                            results = result.results,
-                                            binaryReady = true,
-                                        ),
-                                ).appendLog(
-                                    result.message,
-                                    LogLevel.Success,
-                                    LogSource.Node,
-                                )
-                            }
-                        }
-                        is CfstRunOutcome.Cancelled -> {
-                            update {
-                                it.copy(
-                                    speedTest =
-                                        it.speedTest.copy(
-                                            isRunning = false,
-                                            message = "测速已取消",
-                                            binaryReady = install != null,
-                                        ),
-                                ).appendLog("测速已取消", LogLevel.Warning, LogSource.Node)
-                            }
-                        }
-                        is CfstRunOutcome.Failed -> {
-                            update {
-                                it.copy(
-                                    speedTest =
-                                        it.speedTest.copy(
-                                            isRunning = false,
-                                            message = result.message,
-                                            binaryReady = install != null,
-                                        ),
-                                ).appendLog(
-                                    "测速失败：${result.message}",
-                                    LogLevel.Error,
-                                    LogSource.Node,
-                                )
-                            }
-                        }
+                    applySpeedOutcome(outcome.first, outcome.second, nodeTest = false)
+                }
+            }
+
+            fun startCurrentNodeTest() {
+                if (state.speedTest.isRunning || cfstRunner.isRunning) {
+                    update {
+                        it.appendLog("测速已在进行中", LogLevel.Warning, LogSource.Node)
                     }
+                    return
+                }
+                val normalized = Ipv6Address.normalize(state.selectedAddress)
+                if (normalized == null || !Ipv6Address.isValid(normalized)) {
+                    update {
+                        it.appendLog(
+                            "当前节点测速需要合法 IPv6",
+                            LogLevel.Error,
+                            LogSource.Node,
+                        )
+                    }
+                    return
+                }
+                val disableDownload = state.speedTest.disableDownload
+                update {
+                    it.copy(
+                        speedTest =
+                            it.speedTest.copy(
+                                isRunning = true,
+                                isNodeTest = true,
+                                message = "正在对当前节点测速 $normalized…",
+                            ),
+                    ).appendLog(
+                        "当前节点测速：$normalized",
+                        LogLevel.Info,
+                        LogSource.Node,
+                    )
+                }
+                scope.launch {
+                    val outcome =
+                        withContext(Dispatchers.IO) {
+                            try {
+                                val install = CfstInstaller.installIfNeeded(this@MainActivity)
+                                val parameters =
+                                    SpeedTestParameters(
+                                        ipRange = normalized,
+                                        disableDownload = disableDownload,
+                                        // Single-node config test: fewer threads is enough.
+                                        threads = 50,
+                                        downloadCount = 1,
+                                    )
+                                val work = CfstInstaller.workDir(this@MainActivity)
+                                cfstRunner.run(install.binary, work, parameters) to true
+                            } catch (error: Exception) {
+                                CfstRunOutcome.Failed(error.message ?: "CFST 安装失败") to false
+                            }
+                        }
+                    applySpeedOutcome(outcome.first, outcome.second, nodeTest = true)
                 }
             }
 
@@ -429,6 +501,38 @@ class MainActivity : ComponentActivity() {
                             speedTest =
                                 it.speedTest.copy(message = "正在停止测速…"),
                         ).appendLog("正在停止测速…", LogLevel.Info, LogSource.Node)
+                    }
+                }
+            }
+
+            fun refreshCfstStatus() {
+                scope.launch {
+                    val ready =
+                        withContext(Dispatchers.IO) {
+                            try {
+                                val install = CfstInstaller.installIfNeeded(this@MainActivity)
+                                install.binary.isFile && install.binary.length() > 0L
+                            } catch (_: Exception) {
+                                false
+                            }
+                        }
+                    update {
+                        it.copy(
+                            speedTest =
+                                it.speedTest.copy(
+                                    binaryReady = ready,
+                                    message =
+                                        if (ready) {
+                                            "CFST 已就绪（arm64）"
+                                        } else {
+                                            "未找到 CFST，请运行 node scripts/fetch-cfst.mjs"
+                                        },
+                                ),
+                        ).appendLog(
+                            if (ready) "CFST 组件就绪" else "CFST 组件缺失",
+                            if (ready) LogLevel.Success else LogLevel.Warning,
+                            LogSource.System,
+                        )
                     }
                 }
             }
@@ -598,6 +702,21 @@ class MainActivity : ComponentActivity() {
                 },
                 onStartSpeedTest = ::startSpeedTest,
                 onStopSpeedTest = ::stopSpeedTest,
+                onStartCurrentNodeTest = ::startCurrentNodeTest,
+                onSpeedSortChange = { key ->
+                    update {
+                        val same = it.speedTest.sortKey == key
+                        it.copy(
+                            speedTest =
+                                it.speedTest.copy(
+                                    sortKey = key,
+                                    sortAscending =
+                                        if (same) !it.speedTest.sortAscending else true,
+                                ),
+                        )
+                    }
+                },
+                onRefreshCfstStatus = ::refreshCfstStatus,
                 onRoutingModeChange = ::patchRoutingMode,
                 onFullTunnelChange = { full -> update { it.copy(fullTunnel = full) } },
                 onStart = { startVpn("connect") },

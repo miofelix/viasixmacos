@@ -20,6 +20,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -50,6 +51,7 @@ fun SettingsScreen(
     onExitIpEndpointChange: (String) -> Unit,
     onDetectExitIp: () -> Unit,
     onClearSessionData: () -> Unit,
+    onRefreshCfstStatus: () -> Unit = {},
 ) {
     val colors = LocalViaSixColors.current
     val uriHandler = LocalUriHandler.current
@@ -167,6 +169,15 @@ fun SettingsScreen(
                 HorizontalDivider(color = colors.surfaceBorder)
                 CompactInfoRow("内核", state.runtime.mihomoVersion ?: "mihomo（assets → filesDir）")
                 HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
+                CompactInfoRow(
+                    "CFST",
+                    when {
+                        state.speedTest.isRunning -> "测速运行中"
+                        state.speedTest.binaryReady -> "已就绪（arm64）"
+                        else -> "未安装 / 需 fetch-cfst"
+                    },
+                )
+                HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
                 CompactInfoRow("混合端口", "127.0.0.1:${state.runtime.mixedPort}")
                 HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
                 CompactInfoRow("控制器", "127.0.0.1:${state.runtime.controllerPort}")
@@ -188,13 +199,7 @@ fun SettingsScreen(
                         "已停止"
                     },
                 )
-                Text(
-                    text =
-                        "mihomo 由应用内预编译二进制启动；更新可用 scripts/fetch-mihomo.mjs。" +
-                            "生产级 tun2socks / 完整 UDP·IPv6 转发仍在路线图中，" +
-                            "当前用户态引擎已含会话上限与写队列加固。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Column(
                     modifier =
                         Modifier.padding(
                             start = VisualStyle.spacing16,
@@ -202,7 +207,24 @@ fun SettingsScreen(
                             bottom = VisualStyle.spacing12,
                             top = VisualStyle.spacing8,
                         ),
-                )
+                    verticalArrangement = Arrangement.spacedBy(VisualStyle.spacing8),
+                ) {
+                    OutlinedButton(
+                        onClick = onRefreshCfstStatus,
+                        enabled = !state.speedTest.isRunning,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("检查 CFST 组件")
+                    }
+                    Text(
+                        text =
+                            "mihomo / CFST 由 assets 安装到 filesDir；" +
+                                "更新：scripts/fetch-mihomo.mjs、scripts/fetch-cfst.mjs（仅 arm64）。" +
+                                "生产级 tun2socks / 完整 UDP·IPv6 转发仍在路线图中。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             SurfaceCard {

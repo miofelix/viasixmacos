@@ -9,6 +9,8 @@ import dev.viasix.core.net.Ipv6Address
 import dev.viasix.core.profile.ProfileSummary
 import dev.viasix.core.profile.ProfileSummaryParser
 import dev.viasix.core.projection.RoutingMode
+import dev.viasix.core.speedtest.NodeResultSorting
+import dev.viasix.core.speedtest.NodeSortKey
 import dev.viasix.core.speedtest.SpeedTestParameters
 import dev.viasix.core.speedtest.SpeedTestResult
 import java.text.SimpleDateFormat
@@ -68,13 +70,20 @@ data class DelayTestState(
  */
 data class SpeedTestUiState(
     val isRunning: Boolean = false,
+    /** True while a single-IP “当前节点测速” run is active. */
+    val isNodeTest: Boolean = false,
     val message: String = "需要先执行 node scripts/fetch-cfst.mjs 下载 CFST（arm64）",
     val results: List<SpeedTestResult> = emptyList(),
     val ipRange: String = SpeedTestParameters.DEFAULT_IPV6_RANGE,
     val useBundledList: Boolean = false,
     val disableDownload: Boolean = false,
     val binaryReady: Boolean = false,
-)
+    val sortKey: NodeSortKey = NodeSortKey.LATENCY,
+    val sortAscending: Boolean = true,
+) {
+    val sortedResults: List<SpeedTestResult>
+        get() = NodeResultSorting.sorted(results, sortKey, sortAscending)
+}
 
 /**
  * Full UI state for the Android shell. Session fields persist via [SessionPrefs];
