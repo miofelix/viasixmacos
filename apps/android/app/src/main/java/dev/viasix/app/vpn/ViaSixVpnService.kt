@@ -4,16 +4,19 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.service.quicksettings.TileService
 import android.util.Log
 import dev.viasix.app.MainActivity
 import dev.viasix.app.mihomo.ControllerClient
 import dev.viasix.app.mihomo.MihomoInstaller
 import dev.viasix.app.mihomo.MihomoProcess
 import dev.viasix.app.mihomo.TrafficSampler
+import dev.viasix.app.tile.ViaSixTileService
 import dev.viasix.app.tun.Tun2SocksEngine
 import dev.viasix.core.formatting.ByteRateFormatter
 import dev.viasix.core.projection.MihomoProjection
@@ -311,6 +314,19 @@ class ViaSixVpnService : VpnService() {
             .putString(KEY_VERSION, version.orEmpty())
             .putLong(KEY_STARTED_AT, startedAt ?: 0L)
             .apply()
+        notifyTileRefresh()
+    }
+
+    /** Keep the Quick Settings tile in sync with VPN runtime (no polling required). */
+    private fun notifyTileRefresh() {
+        try {
+            TileService.requestListeningState(
+                this,
+                ComponentName(this, ViaSixTileService::class.java),
+            )
+        } catch (error: Exception) {
+            Log.w(TAG, "tile refresh: ${error.message}")
+        }
     }
 
     private fun appendEvent(message: String, level: String) {

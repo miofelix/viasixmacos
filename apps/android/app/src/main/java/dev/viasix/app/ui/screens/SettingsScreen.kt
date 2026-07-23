@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
+import dev.viasix.app.BuildConfig
 import dev.viasix.app.net.ExitIPDetectionMode
 import dev.viasix.app.net.ExitIPDetector
 import dev.viasix.app.state.SessionUiState
@@ -55,6 +56,7 @@ fun SettingsScreen(
 ) {
     val colors = LocalViaSixColors.current
     val uriHandler = LocalUriHandler.current
+    val tunnelLocked = state.connectionPhase.isActiveOrTransitioning
 
     Column(Modifier.fillMaxSize()) {
         AppPageHeader(
@@ -84,13 +86,18 @@ fun SettingsScreen(
                     Switch(
                         checked = state.fullTunnel,
                         onCheckedChange = onFullTunnelChange,
+                        enabled = !tunnelLocked,
                     )
                 }
                 Text(
                     text =
                         "关闭后仅建立带 HTTP 代理元数据的 VPN 会话（无默认路由），" +
                             "依赖应用自身代理感知。Android 无系统级 HTTP/SOCKS 代理开关。" +
-                            "变更后需重新连接生效。",
+                            if (tunnelLocked) {
+                                "运行中不可切换，请先断开。"
+                            } else {
+                                "变更在下次连接时生效。"
+                            },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier =
@@ -257,7 +264,7 @@ fun SettingsScreen(
             SurfaceCard {
                 CardHeader(title = "关于 ViaSix", icon = Icons.Outlined.Info, tone = AppTone.Neutral)
                 HorizontalDivider(color = colors.surfaceBorder)
-                CompactInfoRow("版本", "0.1.0")
+                CompactInfoRow("版本", BuildConfig.VERSION_NAME)
                 HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
                 CompactInfoRow("平台", "Android · VpnService")
                 HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))

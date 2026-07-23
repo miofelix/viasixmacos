@@ -22,6 +22,14 @@ class SettingsResidualCopyTest {
             "Settings should describe shipped TCP/UDP tunnel or optional hev residual",
             text.contains("TCP/UDP") && text.contains("native hev"),
         )
+        assertTrue(
+            "Version should come from BuildConfig, not a hard-coded string",
+            text.contains("BuildConfig.VERSION_NAME"),
+        )
+        assertFalse(
+            "Do not hard-code app version in Settings",
+            text.contains("\"0.1.0\""),
+        )
     }
 
     private fun resolveSettingsScreenSource(): File {
