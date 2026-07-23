@@ -65,6 +65,7 @@
 
 ### 修复
 
+- 修复 Android TUN 写线程在虚拟网卡 fd 写入失败后继续吞包且仍报告运行中，以及转发引擎在 `start()` 中途失败、尚未发布给 `VpnService` 时无法由外层回收部分资源的问题；TUN 读写任一方向退出现统一 fail-closed，启动异常会在原地关闭 reactor、线程池和已打开描述符后再向上抛出。
 - 修复 Android 每条 SOCKS5 UDP ASSOCIATE 都永久占用一个通用 I/O worker、并发 UDP 端点可能挤占 TCP/DNS 转发容量的问题；UDP relay 现改用非阻塞 `DatagramChannel`，由单个 daemon `Selector` reactor 多路复用全部回包，单轮有界排空并每 5 秒探测控制 TCP，关停时统一回收已注册和待注册 relay。
 - 修复 Android TCP 会话在代理连接完成后立即占用一个 I/O worker 等待客户端 ACK，并为每条连接永久保留独立上行 writer，导致 64 线程上限在半开或空闲连接下过早耗尽的问题；下行 reader 现仅在有效握手 ACK 后单飞启动，握手超时由共享维护线程回收，上行 writer 仅在队列/FIN 需要时启动并在空闲 1 秒后退出，退出竞态会检查待处理数据并安全重启。
 - 修复 Android SOCKS5 UDP framing 接受非零 RSV、零目标端口和越界 `length`，且可在构造超过单个 UDP 数据报上限的 frame 后才由 socket 报错的问题；编码现前置校验端口与 65,535 字节总长，解码严格拒绝保留字段、分片、零端口、截断和调用方越界长度。

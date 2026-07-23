@@ -20,7 +20,7 @@ class TunDescriptorSurfaceTest {
 
         assertTrue(service.contains(".setBlocking(fullTunnel)"))
         assertTrue(service.contains("non-blocking TUN descriptor"))
-        assertTrue(engine.contains("inChannel.read(buffer)"))
+        assertTrue(engine.contains("input.read(buffer)"))
         assertTrue(engine.contains("FileInputStream(tun.fileDescriptor).channel"))
     }
 

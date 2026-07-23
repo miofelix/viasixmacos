@@ -67,90 +67,101 @@ class Tun2SocksEngine(
             Thread(r, "viasix-tun-maintenance").apply { isDaemon = true }
         }
     private val udpRelayReactor = UdpRelayReactor()
-    private lateinit var inChannel: FileChannel
-    private lateinit var outStream: FileOutputStream
+    private var inChannel: FileChannel? = null
+    private var outStream: FileOutputStream? = null
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
-        inChannel = FileInputStream(tun.fileDescriptor).channel
-        outStream = FileOutputStream(tun.fileDescriptor)
-        udpRelayReactor.start()
-        maintenanceExecutor.scheduleWithFixedDelay(
-            {
-                try {
-                    retransmitDueTcpSegments()
-                } catch (error: Exception) {
-                    Log.w(TAG, "TCP retransmission scan failed: ${error.message}")
-                }
-            },
-            RETRANSMISSION_SCAN_MS,
-            RETRANSMISSION_SCAN_MS,
-            TimeUnit.MILLISECONDS,
-        )
-        maintenanceExecutor.scheduleWithFixedDelay(
-            {
-                try {
-                    purgeIdleUdpClients()
-                } catch (error: Exception) {
-                    Log.w(TAG, "UDP idle cleanup failed: ${error.message}")
-                }
-            },
-            UDP_IDLE_CLEANUP_INTERVAL_MS,
-            UDP_IDLE_CLEANUP_INTERVAL_MS,
-            TimeUnit.MILLISECONDS,
-        )
-
-        writerThread =
-            Thread(
+        try {
+            val input = FileInputStream(tun.fileDescriptor).channel
+            inChannel = input
+            val output = FileOutputStream(tun.fileDescriptor)
+            outStream = output
+            udpRelayReactor.start()
+            maintenanceExecutor.scheduleWithFixedDelay(
                 {
-                    while (running.get()) {
-                        val packet =
-                            outboundPackets.poll(timeoutMs = 200L) ?: continue
-                        try {
-                            outStream.write(packet)
-                            outStream.flush()
-                        } catch (error: Exception) {
-                            Log.w(TAG, "tun write failed: ${error.message}")
-                        }
-                    }
-                },
-                "viasix-tun-writer",
-            ).also {
-                it.isDaemon = true
-                it.start()
-            }
-
-        readerThread =
-            Thread(
-                {
-                    val buffer = ByteBuffer.allocate(32767)
                     try {
-                        while (running.get()) {
-                            buffer.clear()
-                            val len =
-                                try {
-                                    inChannel.read(buffer)
-                                } catch (_: Exception) {
-                                    break
-                                }
-                            if (len <= 0) continue
-                            buffer.flip()
-                            try {
-                                handlePacket(buffer)
-                            } catch (error: Exception) {
-                                Log.w(TAG, "drop malformed TUN packet: ${error.message}")
-                            }
-                        }
-                    } finally {
-                        running.set(false)
+                        retransmitDueTcpSegments()
+                    } catch (error: Exception) {
+                        Log.w(TAG, "TCP retransmission scan failed: ${error.message}")
                     }
                 },
-                "viasix-tun-reader",
-            ).also {
-                it.isDaemon = true
-                it.start()
-            }
-        Log.i(TAG, "Tun2SocksEngine started socks=$socksHost:$socksPort (TCP+UDP IPv4/IPv6)")
+                RETRANSMISSION_SCAN_MS,
+                RETRANSMISSION_SCAN_MS,
+                TimeUnit.MILLISECONDS,
+            )
+            maintenanceExecutor.scheduleWithFixedDelay(
+                {
+                    try {
+                        purgeIdleUdpClients()
+                    } catch (error: Exception) {
+                        Log.w(TAG, "UDP idle cleanup failed: ${error.message}")
+                    }
+                },
+                UDP_IDLE_CLEANUP_INTERVAL_MS,
+                UDP_IDLE_CLEANUP_INTERVAL_MS,
+                TimeUnit.MILLISECONDS,
+            )
+
+            writerThread =
+                Thread(
+                    {
+                        try {
+                            while (running.get()) {
+                                val packet =
+                                    outboundPackets.poll(timeoutMs = 200L) ?: continue
+                                output.write(packet)
+                                output.flush()
+                            }
+                        } catch (error: Exception) {
+                            if (running.get()) {
+                                Log.w(TAG, "tun write failed: ${error.message}")
+                            }
+                        } finally {
+                            running.set(false)
+                        }
+                    },
+                    "viasix-tun-writer",
+                ).also {
+                    it.isDaemon = true
+                    it.start()
+                }
+
+            readerThread =
+                Thread(
+                    {
+                        val buffer = ByteBuffer.allocate(32767)
+                        try {
+                            while (running.get()) {
+                                buffer.clear()
+                                val len =
+                                    try {
+                                        input.read(buffer)
+                                    } catch (_: Exception) {
+                                        break
+                                    }
+                                if (len <= 0) continue
+                                buffer.flip()
+                                try {
+                                    handlePacket(buffer)
+                                } catch (error: Exception) {
+                                    Log.w(TAG, "drop malformed TUN packet: ${error.message}")
+                                }
+                            }
+                        } finally {
+                            running.set(false)
+                        }
+                    },
+                    "viasix-tun-reader",
+                ).also {
+                    it.isDaemon = true
+                    it.start()
+                }
+            Log.i(TAG, "Tun2SocksEngine started socks=$socksHost:$socksPort (TCP+UDP IPv4/IPv6)")
+        } catch (error: Throwable) {
+            stop()
+            throw error
+        }
     }
 
     fun stop() {
@@ -176,13 +187,15 @@ class Tun2SocksEngine(
         connectionWorkers.close()
         ioWorkers.close()
         try {
-            inChannel.close()
+            inChannel?.close()
         } catch (_: Exception) {
         }
+        inChannel = null
         try {
-            outStream.close()
+            outStream?.close()
         } catch (_: Exception) {
         }
+        outStream = null
         Log.i(TAG, "Tun2SocksEngine stopped")
     }
 
