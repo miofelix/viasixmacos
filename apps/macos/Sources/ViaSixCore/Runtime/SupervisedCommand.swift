@@ -49,10 +49,12 @@ enum SupervisedCommand {
                     group.addTask {
                         .exited(await waitTask.value)
                     }
+                    // Only signal the deadline here. Killing and reaping must
+                    // happen after this branch wins, otherwise the exit task
+                    // can race ahead and report a normal completion for a
+                    // process we intentionally timed out.
                     group.addTask {
                         try await Task.sleep(for: timeout)
-                        terminateImmediately(process)
-                        _ = await waitTask.value
                         return .timedOut
                     }
 
@@ -60,7 +62,15 @@ enum SupervisedCommand {
                         throw CancellationError()
                     }
                     group.cancelAll()
-                    return first
+
+                    switch first {
+                    case .timedOut:
+                        terminateImmediately(process)
+                        _ = await waitTask.value
+                        return .timedOut
+                    case .exited:
+                        return first
+                    }
                 }
             } onCancel: {
                 terminateImmediately(process)
