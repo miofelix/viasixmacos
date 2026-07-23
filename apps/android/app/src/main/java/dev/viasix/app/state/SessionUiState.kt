@@ -5,6 +5,7 @@ import dev.viasix.app.mihomo.TrafficSnapshot
 import dev.viasix.app.net.ExitIPDetectionMode
 import dev.viasix.app.net.ExitIPInfo
 import dev.viasix.app.prefs.SessionPrefs
+import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.core.net.Ipv6Address
 import dev.viasix.core.profile.ProfileSummary
 import dev.viasix.core.profile.ProfileSummaryParser
@@ -117,6 +118,8 @@ data class SessionUiState(
     val routingMode: RoutingMode = RoutingMode.RULE,
     val fullTunnel: Boolean = true,
     val runtime: RuntimeSnapshot = RuntimeSnapshot(),
+    /** UI connection lifecycle; reconciled with [runtime.running] each poll. */
+    val connectionPhase: ConnectionPhase = ConnectionPhase.STOPPED,
     val exitIP: ExitIPState = ExitIPState(),
     val delayTest: DelayTestState = DelayTestState(),
     val speedTest: SpeedTestUiState = SpeedTestUiState(),

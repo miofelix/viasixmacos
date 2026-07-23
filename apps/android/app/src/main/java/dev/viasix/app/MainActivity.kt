@@ -24,6 +24,7 @@ import dev.viasix.app.mihomo.TrafficSnapshot
 import dev.viasix.app.net.ExitIPDetectionMode
 import dev.viasix.app.net.ExitIPDetector
 import dev.viasix.app.prefs.SessionPrefsStore
+import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.session.ProfileImportText
 import dev.viasix.app.session.SessionStartGate
 import dev.viasix.app.session.VpnSessionCommands
@@ -58,13 +59,24 @@ class MainActivity : ComponentActivity() {
     private val cfstRunner = CfstRunner()
     private var lastImportedEventId: Long = 0L
     private var wasRunning: Boolean = false
+    /** Wall clock when STARTING began; used for start-timeout reconcile. */
+    private var startingSinceMillis: Long = 0L
+    private var onVpnPermissionResult: ((granted: Boolean) -> Unit)? = null
 
     private val vpnPermission =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            if (result.resultCode == Activity.RESULT_OK) {
-                pendingStart?.let { startForegroundService(it) }
+            val granted = result.resultCode == Activity.RESULT_OK
+            if (granted) {
+                pendingStart?.let {
+                    trafficSampler.reset()
+                    startingSinceMillis = System.currentTimeMillis()
+                    startForegroundService(it)
+                }
+            } else {
+                startingSinceMillis = 0L
             }
             pendingStart = null
+            onVpnPermissionResult?.invoke(granted)
         }
 
     private val openDocument =
@@ -106,6 +118,20 @@ class MainActivity : ComponentActivity() {
             fun logOnly(transform: (SessionUiState) -> SessionUiState) {
                 // Runtime / log updates that should not thrash session prefs writes.
                 state = transform(state)
+            }
+
+            onVpnPermissionResult = { granted ->
+                if (!granted) {
+                    update {
+                        it.copy(connectionPhase = ConnectionPhase.STOPPED)
+                            .appendLog(
+                                "VPN 权限被拒绝",
+                                LogLevel.Error,
+                                LogSource.Network,
+                                asNotice = true,
+                            )
+                    }
+                }
             }
 
             profileImportHandler = { yaml ->
@@ -180,6 +206,26 @@ class MainActivity : ComponentActivity() {
                     }
 
                     logOnly { current ->
+                        var phase =
+                            ConnectionPhase.reconcile(current.connectionPhase, running)
+                        // STARTING without runtime for too long → failed start.
+                        if (
+                            phase == ConnectionPhase.STARTING &&
+                                !running &&
+                                startingSinceMillis > 0L &&
+                                System.currentTimeMillis() - startingSinceMillis > START_TIMEOUT_MS
+                        ) {
+                            phase =
+                                ConnectionPhase.afterStartTimeout(
+                                    current.connectionPhase,
+                                    runtimeRunning = false,
+                                )
+                            startingSinceMillis = 0L
+                        }
+                        if (phase == ConnectionPhase.RUNNING || phase == ConnectionPhase.STOPPED) {
+                            startingSinceMillis = 0L
+                        }
+
                         var next =
                             current.copy(
                                 runtime =
@@ -193,7 +239,21 @@ class MainActivity : ComponentActivity() {
                                         secretPresent = secret.isNotBlank(),
                                         startedAtMillis = startedAt,
                                     ),
+                                connectionPhase = phase,
                             )
+                        if (
+                            current.connectionPhase == ConnectionPhase.STARTING &&
+                                phase == ConnectionPhase.STOPPED &&
+                                !running
+                        ) {
+                            next =
+                                next.appendLog(
+                                    "启动超时或失败，请查看日志",
+                                    LogLevel.Error,
+                                    LogSource.Session,
+                                    asNotice = true,
+                                )
+                        }
                         // Import oldest-first so list stays newest-first after prepend.
                         imported.sortedBy { it.first }.forEach { (_, message, level) ->
                             next =
@@ -219,6 +279,15 @@ class MainActivity : ComponentActivity() {
                     .putExtra(ViaSixVpnService.EXTRA_REASON, reason)
 
             fun startVpn(reason: String = "connect") {
+                // Avoid double-start from tile + home; allow apply-node restart while running.
+                when (state.connectionPhase) {
+                    ConnectionPhase.STARTING -> return
+                    ConnectionPhase.STOPPING -> return
+                    ConnectionPhase.RUNNING ->
+                        if (reason == "connect" || reason == "quick-settings") return
+                    ConnectionPhase.STOPPED -> Unit
+                }
+
                 when (
                     val gate =
                         SessionStartGate.evaluate(
@@ -257,13 +326,17 @@ class MainActivity : ComponentActivity() {
                     pendingStart = intent
                     vpnPermission.launch(prepare)
                     update {
-                        it.appendLog("请求 VPN 权限…", LogLevel.Info, LogSource.Network)
+                        it.copy(connectionPhase = ConnectionPhase.STARTING)
+                            .appendLog("请求 VPN 权限…", LogLevel.Info, LogSource.Network)
                     }
+                    startingSinceMillis = System.currentTimeMillis()
                 } else {
                     trafficSampler.reset()
+                    startingSinceMillis = System.currentTimeMillis()
                     startForegroundService(intent)
                     update {
-                        it.appendLog("正在启动 VPN + mihomo…", LogLevel.Info, LogSource.Session)
+                        it.copy(connectionPhase = ConnectionPhase.STARTING)
+                            .appendLog("正在启动 VPN + mihomo…", LogLevel.Info, LogSource.Session)
                     }
                 }
             }
@@ -325,12 +398,21 @@ class MainActivity : ComponentActivity() {
             }
 
             fun stopVpn() {
+                if (state.connectionPhase == ConnectionPhase.STOPPED ||
+                    state.connectionPhase == ConnectionPhase.STOPPING
+                ) {
+                    return
+                }
                 startService(
                     Intent(this@MainActivity, ViaSixVpnService::class.java)
                         .setAction(ViaSixVpnService.ACTION_STOP),
                 )
                 trafficSampler.reset()
-                update { it.appendLog("已发送停止意图", LogLevel.Info, LogSource.Session) }
+                startingSinceMillis = 0L
+                update {
+                    it.copy(connectionPhase = ConnectionPhase.STOPPING)
+                        .appendLog("已发送停止意图", LogLevel.Info, LogSource.Session)
+                }
             }
 
             fun projectPreview() {
@@ -812,7 +894,20 @@ class MainActivity : ComponentActivity() {
                 },
                 onRefreshCfstStatus = ::refreshCfstStatus,
                 onRoutingModeChange = ::patchRoutingMode,
-                onFullTunnelChange = { full -> update { it.copy(fullTunnel = full) } },
+                onFullTunnelChange = { full ->
+                    if (state.connectionPhase.isActiveOrTransitioning) {
+                        update {
+                            it.appendLog(
+                                "运行中无法切换全量隧道，请先断开再改",
+                                LogLevel.Warning,
+                                LogSource.Network,
+                                asNotice = true,
+                            )
+                        }
+                    } else {
+                        update { it.copy(fullTunnel = full) }
+                    }
+                },
                 onStart = { startVpn("connect") },
                 onStop = ::stopVpn,
                 onProjectPreview = ::projectPreview,
@@ -836,5 +931,10 @@ class MainActivity : ComponentActivity() {
                 },
             )
         }
+    }
+
+    companion object {
+        /** Fail STARTING if VPN runtime never becomes ready. */
+        private const val START_TIMEOUT_MS = 25_000L
     }
 }

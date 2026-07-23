@@ -47,7 +47,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.viasix.app.BuildConfig
 import dev.viasix.app.net.ExitIPDetectionMode
+import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.state.LogLevel
 import dev.viasix.app.state.SessionUiState
 import dev.viasix.app.ui.AppSection
@@ -82,20 +84,21 @@ fun OverviewScreen(
     onStopSpeedTest: () -> Unit = {},
 ) {
     val colors = LocalViaSixColors.current
-    val running = state.runtime.running
+    val phase = state.connectionPhase
+    val running = phase == ConnectionPhase.RUNNING || state.runtime.running
     val selectedIsIpv6 = state.selectedIsIpv6
     val profileReady = state.configurationReady
     val headerTone =
         when {
-            running -> AppTone.Positive
+            phase == ConnectionPhase.RUNNING || running -> AppTone.Positive
+            phase == ConnectionPhase.STARTING || phase == ConnectionPhase.STOPPING -> AppTone.Warning
             state.statusLevel == LogLevel.Error -> AppTone.Negative
             else -> AppTone.Neutral
         }
     val headerStatus =
         when {
-            running -> "已连接"
-            state.statusLevel == LogLevel.Error -> "异常"
-            else -> "未连接"
+            state.statusLevel == LogLevel.Error && phase == ConnectionPhase.STOPPED -> "异常"
+            else -> phase.statusLabel()
         }
 
     Column(Modifier.fillMaxSize()) {
@@ -130,21 +133,27 @@ fun OverviewScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (running) "已连接" else "未连接",
+                                text = phase.statusLabel(),
                                 style =
                                     MaterialTheme.typography.headlineSmall.copy(
                                         fontWeight = FontWeight.SemiBold,
                                     ),
                                 color =
-                                    if (running) {
-                                        colors.positive
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurface
+                                    when (phase) {
+                                        ConnectionPhase.RUNNING -> colors.positive
+                                        ConnectionPhase.STARTING,
+                                        ConnectionPhase.STOPPING,
+                                        -> colors.warning
+                                        ConnectionPhase.STOPPED -> MaterialTheme.colorScheme.onSurface
                                     },
                             )
                             Text(
                                 text =
                                     when {
+                                        phase == ConnectionPhase.STARTING ->
+                                            "正在建立 VPN 与 mihomo…"
+                                        phase == ConnectionPhase.STOPPING ->
+                                            "正在停止会话…"
                                         running && state.runtime.traffic.live ->
                                             state.runtime.traffic.message
                                         running -> state.runtime.health
@@ -161,25 +170,48 @@ fun OverviewScreen(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                        if (running) {
-                            OutlinedButton(
-                                onClick = onStop,
-                                modifier =
-                                    Modifier
-                                        .height(52.dp)
-                                        .padding(start = VisualStyle.spacing4),
-                            ) {
-                                Text("断开", fontWeight = FontWeight.SemiBold)
+                        when (phase) {
+                            ConnectionPhase.RUNNING,
+                            ConnectionPhase.STARTING,
+                            -> {
+                                // STARTING: allow cancel (stop), like macOS.
+                                OutlinedButton(
+                                    onClick = onStop,
+                                    enabled = phase != ConnectionPhase.STOPPING,
+                                    modifier =
+                                        Modifier
+                                            .height(52.dp)
+                                            .padding(start = VisualStyle.spacing4),
+                                ) {
+                                    Text(
+                                        if (phase == ConnectionPhase.STARTING) "取消" else "断开",
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
                             }
-                        } else {
-                            Button(
-                                onClick = onStart,
-                                modifier =
-                                    Modifier
-                                        .height(52.dp)
-                                        .padding(start = VisualStyle.spacing4),
-                            ) {
-                                Text("连接", fontWeight = FontWeight.SemiBold)
+                            ConnectionPhase.STOPPING -> {
+                                OutlinedButton(
+                                    onClick = {},
+                                    enabled = false,
+                                    modifier =
+                                        Modifier
+                                            .height(52.dp)
+                                            .padding(start = VisualStyle.spacing4),
+                                ) {
+                                    Text("断开中…", fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                            ConnectionPhase.STOPPED -> {
+                                Button(
+                                    onClick = onStart,
+                                    enabled = profileReady || state.routingMode == RoutingMode.DIRECT,
+                                    modifier =
+                                        Modifier
+                                            .height(52.dp)
+                                            .padding(start = VisualStyle.spacing4),
+                                ) {
+                                    Text("连接", fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
                     }
@@ -353,12 +385,21 @@ fun OverviewScreen(
                         },
                     icon = Icons.Outlined.VpnKey,
                 ) {
-                    Switch(checked = state.fullTunnel, onCheckedChange = onFullTunnelChange)
+                    Switch(
+                        checked = state.fullTunnel,
+                        onCheckedChange = onFullTunnelChange,
+                        enabled = !phase.isActiveOrTransitioning,
+                    )
                 }
                 Text(
                     text =
                         "Android 使用 VpnService 作为虚拟网卡路径，无系统代理。" +
-                            "全量隧道会排除本应用 UID 以防环路。变更后需重新连接生效。",
+                            "全量隧道会排除本应用 UID 以防环路。" +
+                            if (phase.isActiveOrTransitioning) {
+                                "运行中不可切换，请先断开。"
+                            } else {
+                                "变更在下次连接时生效。"
+                            },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier =
@@ -644,7 +685,7 @@ fun OverviewScreen(
             SurfaceCard {
                 CardHeader(title = "应用信息", icon = Icons.Outlined.Info, tone = AppTone.Neutral)
                 HorizontalDivider(color = colors.surfaceBorder)
-                CompactInfoRow("版本", "0.1.0", Icons.Outlined.Info)
+                CompactInfoRow("版本", BuildConfig.VERSION_NAME, Icons.Outlined.Info)
                 HorizontalDivider(color = colors.surfaceBorder, modifier = Modifier.padding(start = 40.dp))
                 CompactInfoRow(
                     "运行",
