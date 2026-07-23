@@ -41,6 +41,22 @@ class TcpRetransmissionQueueTest {
     }
 
     @Test
+    fun deferredSendDoesNotConsumeRetransmissionAttemptOrBackoff() {
+        val queue = queue(maxRetransmissions = 1)
+        val reservation = queue.reserve(10L, Packet.ACK, byteArrayOf(1))!!
+        queue.markQueued(reservation, nowMs = 0L)
+
+        val first = queue.pollDue(nowMs = 1_000L) as TcpRetransmissionQueue.PollResult.Retransmit
+        assertEquals(1, first.attempt)
+        assertTrue(queue.deferRetransmission(first, nowMs = 1_000L))
+        val retried = queue.pollDue(nowMs = 1_001L) as TcpRetransmissionQueue.PollResult.Retransmit
+
+        assertEquals(1, retried.attempt)
+        assertNull(queue.pollDue(nowMs = 3_000L))
+        assertSame(TcpRetransmissionQueue.PollResult.Exhausted, queue.pollDue(nowMs = 3_001L))
+    }
+
+    @Test
     fun queuedMarkerMayArriveAfterFastAcknowledgement() {
         val queue = queue()
         val reservation = queue.reserve(200L, Packet.PSH or Packet.ACK, byteArrayOf(1, 2))!!

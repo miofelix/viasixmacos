@@ -12,6 +12,7 @@ class TcpRetransmissionQueue(
             val flags: Int,
             val payload: ByteArray,
             val attempt: Int,
+            internal val reservationId: Long,
         ) : PollResult()
 
         object Exhausted : PollResult()
@@ -199,6 +200,7 @@ class TcpRetransmissionQueue(
                 flags = segment.flags,
                 payload = segment.payload.copyOf(),
                 attempt = segment.retransmissions,
+                reservationId = segment.id,
             )
         }
 
@@ -220,7 +222,26 @@ class TcpRetransmissionQueue(
                 flags = segment.flags,
                 payload = segment.payload.copyOf(),
                 attempt = segment.retransmissions,
+                reservationId = segment.id,
             )
+        }
+
+    fun deferRetransmission(
+        retransmission: PollResult.Retransmit,
+        nowMs: Long,
+    ): Boolean =
+        synchronized(monitor) {
+            val segment = segments.firstOrNull() ?: return@synchronized false
+            if (
+                cancelled ||
+                    segment.id != retransmission.reservationId ||
+                    segment.retransmissions != retransmission.attempt
+            ) {
+                return@synchronized false
+            }
+            segment.retransmissions = (segment.retransmissions - 1).coerceAtLeast(0)
+            segment.queuedAtMs = nowMs - retransmissionTimeout(segment.retransmissions)
+            true
         }
 
     fun awaitEmpty(timeoutMs: Long): Boolean =

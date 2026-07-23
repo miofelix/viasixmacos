@@ -1298,6 +1298,7 @@ class Tun2SocksEngine(
                 timeoutMs = 0L,
             )
         if (!queued) {
+            session.retransmissions.deferRetransmission(due, monotonicTimeMs())
             Log.w(TAG, "TCP $reason retransmission deferred by TUN backpressure for $key")
         }
     }
