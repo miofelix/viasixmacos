@@ -28,17 +28,73 @@ data class SpeedTestParameters(
         ipRange.trim().isNotEmpty() || ipFile.trim().isNotEmpty()
 
     /**
+     * macOS [SpeedTestParameters.validated] — Chinese messages for UI.
+     * @param checkIpFileExists when true, verify [ipFile] is a non-empty regular file
+     *   if range is empty (used after resolveForRun with real paths).
+     */
+    fun validated(checkIpFileExists: Boolean = false): SpeedTestParameters {
+        if (!hasIpSource()) {
+            throw SpeedTestValidationError.MissingIPSource
+        }
+        if (ipRange.trim().isEmpty()) {
+            if (checkIpFileExists) {
+                validateIpFile(ipFile.trim())
+            }
+        } else {
+            validateIpRange(ipRange)
+        }
+        if (threads !in 1..1_000) {
+            throw SpeedTestValidationError.OutOfRange("线程数应在 1 到 1000 之间")
+        }
+        if (pingCount !in 1..100) {
+            throw SpeedTestValidationError.OutOfRange("Ping 次数应在 1 到 100 之间")
+        }
+        if (downloadCount !in 0..100) {
+            throw SpeedTestValidationError.OutOfRange("下载测速数量应在 0 到 100 之间")
+        }
+        if (downloadTime !in 1..3_600) {
+            throw SpeedTestValidationError.OutOfRange("单 IP 下载时长应在 1 到 3600 秒之间")
+        }
+        if (latencyLowerBound !in 0..999_999 ||
+            latencyUpperBound !in 1..999_999 ||
+            latencyLowerBound > latencyUpperBound
+        ) {
+            throw SpeedTestValidationError.OutOfRange("延迟上下限不合法")
+        }
+        if (lossRateUpperBound !in 0.0..1.0) {
+            throw SpeedTestValidationError.OutOfRange("丢包率应在 0 到 1 之间")
+        }
+        if (!speedLowerBound.isFinite() || speedLowerBound < 0) {
+            throw SpeedTestValidationError.OutOfRange("速度下限不合法")
+        }
+        if (port !in 1..65_535) {
+            throw SpeedTestValidationError.OutOfRange("端口应在 1 到 65535 之间")
+        }
+        if (httpingCode != 0 && httpingCode !in 100..599) {
+            throw SpeedTestValidationError.OutOfRange("HTTP 状态码应为 0 或 100 到 599")
+        }
+        if (url.trim().isNotEmpty()) {
+            validateUrl(url.trim())
+        }
+        return this
+    }
+
+    /** Null if [validated] succeeds; otherwise the macOS-style message. */
+    fun validationMessage(checkIpFileExists: Boolean = false): String? =
+        try {
+            validated(checkIpFileExists)
+            null
+        } catch (error: SpeedTestValidationError) {
+            error.message
+        }
+
+    /**
      * Build CFST argv after the executable path (no binary name).
-     * Requires either [ipRange] or [ipFile]; does not check that [ipFile] exists
-     * (caller validates filesystem).
+     * Runs [validated] (without requiring the IP file to exist — caller may
+     * pre-check after resolve).
      */
     fun commandLineArguments(resultPath: String): List<String> {
-        require(hasIpSource()) { "Either ipRange or ipFile is required" }
-        require(threads in 1..1_000) { "threads must be 1..1000" }
-        require(pingCount in 1..100) { "pingCount must be 1..100" }
-        require(downloadCount in 0..100) { "downloadCount must be 0..100" }
-        require(downloadTime in 1..3_600) { "downloadTime must be 1..3600" }
-        require(port in 1..65_535) { "port must be 1..65535" }
+        validated(checkIpFileExists = false)
 
         val args =
             mutableListOf(
@@ -140,6 +196,113 @@ data class SpeedTestParameters(
             debug = true,
         )
     }
+
+    private fun validateIpFile(path: String) {
+        if (path.isEmpty()) {
+            throw SpeedTestValidationError.MissingIPSource
+        }
+        val file = java.io.File(path)
+        if (!file.exists()) {
+            throw SpeedTestValidationError.IpFileNotFound(path)
+        }
+        if (!file.isFile || !file.canRead()) {
+            throw SpeedTestValidationError.IpFileUnreadable(path)
+        }
+        if (file.length() == 0L) {
+            throw SpeedTestValidationError.IpFileEmpty(path)
+        }
+    }
+
+    private fun validateIpRange(value: String) {
+        val entries = value.split(",")
+        for (rawEntry in entries) {
+            val entry = rawEntry.trim()
+            if (entry.isEmpty()) {
+                throw SpeedTestValidationError.InvalidIPRange(value)
+            }
+            val pieces = entry.split("/")
+            if (pieces.size > 2 || pieces.any { it.trim().isEmpty() }) {
+                throw SpeedTestValidationError.InvalidIPRange(entry)
+            }
+            val address = pieces[0].trim()
+            val maxPrefix =
+                when {
+                    isStrictIpv4(address) -> 32
+                    looksLikeIpv6(address) -> 128
+                    else -> throw SpeedTestValidationError.InvalidIPRange(entry)
+                }
+            if (pieces.size == 2) {
+                val prefix = pieces[1].trim().toIntOrNull()
+                if (prefix == null || prefix !in 0..maxPrefix) {
+                    throw SpeedTestValidationError.InvalidIPRange(entry)
+                }
+            }
+        }
+    }
+
+    private fun validateUrl(value: String) {
+        val uri =
+            try {
+                java.net.URI(value)
+            } catch (_: Exception) {
+                throw SpeedTestValidationError.InvalidURL
+            }
+        val scheme = uri.scheme?.lowercase()
+        if (scheme != "http" && scheme != "https") {
+            throw SpeedTestValidationError.InvalidURL
+        }
+        if (uri.host.isNullOrBlank()) {
+            throw SpeedTestValidationError.InvalidURL
+        }
+    }
+
+    private fun isStrictIpv4(value: String): Boolean {
+        val octets = value.split(".")
+        if (octets.size != 4) return false
+        return octets.all { octet ->
+            if (octet.isEmpty() || !octet.all { it.isDigit() }) return@all false
+            if (octet.length > 1 && octet.startsWith('0')) return@all false
+            val n = octet.toIntOrNull() ?: return@all false
+            n in 0..255
+        }
+    }
+
+    private fun looksLikeIpv6(value: String): Boolean {
+        if (value.contains('%')) return false
+        return try {
+            val addr = java.net.InetAddress.getByName(value)
+            addr is java.net.Inet6Address
+        } catch (_: Exception) {
+            // Allow compressed forms that the local resolver rejects but CFST accepts.
+            value.contains(':') && value.all {
+                it.isDigit() || it in 'a'..'f' || it in 'A'..'F' || it == ':'
+            }
+        }
+    }
+}
+
+/**
+ * macOS [SpeedTestParameterError] messages (Chinese).
+ */
+sealed class SpeedTestValidationError(override val message: String) : Exception(message) {
+    data object MissingIPSource : SpeedTestValidationError("请选择 IP 文件或填写 IP 段")
+
+    data class IpFileNotFound(val path: String) :
+        SpeedTestValidationError("找不到 IP 地址文件：$path")
+
+    data class IpFileUnreadable(val path: String) :
+        SpeedTestValidationError("无法读取 IP 地址文件：$path")
+
+    data class IpFileEmpty(val path: String) :
+        SpeedTestValidationError("IP 地址文件为空：$path")
+
+    data class InvalidIPRange(val value: String) :
+        SpeedTestValidationError("IP 段格式无效：$value")
+
+    data object InvalidURL :
+        SpeedTestValidationError("测速 URL 必须是有效的 HTTP 或 HTTPS 地址")
+
+    data class OutOfRange(val detail: String) : SpeedTestValidationError(detail)
 }
 
 /** Convenience CIDR chips derived from macOS bundled `ipv6.txt` core prefixes. */

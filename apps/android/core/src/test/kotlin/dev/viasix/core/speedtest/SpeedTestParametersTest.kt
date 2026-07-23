@@ -92,14 +92,14 @@ class SpeedTestParametersTest {
 
     @Test
     fun requiresIpSource() {
-        assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(SpeedTestValidationError.MissingIPSource::class.java) {
             SpeedTestParameters().commandLineArguments("r.csv")
         }
     }
 
     @Test
     fun rejectsOutOfRangeThreads() {
-        assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(SpeedTestValidationError.OutOfRange::class.java) {
             SpeedTestParameters(ipRange = "1::/64", threads = 0).commandLineArguments("r.csv")
         }
     }

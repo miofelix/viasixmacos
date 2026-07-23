@@ -38,6 +38,7 @@ class IPSourceModeTest {
             base.resolveForRun(
                 mode = IPSourceMode.IPV6,
                 bundledIpv6ListPath = "/data/files/cfst/ipv6.txt",
+                checkIpFileExists = false,
             )
         assertEquals("/data/files/cfst/ipv6.txt", resolved.ipFile)
         assertEquals("", resolved.ipRange)
@@ -57,7 +58,7 @@ class IPSourceModeTest {
             )
         assertEquals("", resolved.ipFile)
         assertEquals("2400:cb00::/32", resolved.ipRange)
-        assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(SpeedTestValidationError.MissingIPSource::class.java) {
             SpeedTestParameters(ipRange = "  ").resolveForRun(
                 IPSourceMode.RANGE,
                 "/bundled",
@@ -73,6 +74,7 @@ class IPSourceModeTest {
                 mode = IPSourceMode.FILE,
                 bundledIpv6ListPath = "/bundled",
                 customIpFilePath = "/sdcard/list.txt",
+                checkIpFileExists = false,
             )
         assertEquals("/sdcard/list.txt", resolved.ipFile)
         assertEquals("", resolved.ipRange)

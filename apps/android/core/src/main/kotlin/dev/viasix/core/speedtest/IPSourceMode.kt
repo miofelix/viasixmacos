@@ -44,24 +44,63 @@ fun SpeedTestParameters.resolveForRun(
     mode: IPSourceMode,
     bundledIpv6ListPath: String,
     customIpFilePath: String = "",
+    validate: Boolean = true,
+    checkIpFileExists: Boolean = true,
 ): SpeedTestParameters {
-    return when (mode) {
-        IPSourceMode.IPV6 ->
-            copy(
-                ipFile = bundledIpv6ListPath,
-                ipRange = "",
-            )
-        IPSourceMode.RANGE -> {
-            val range = ipRange.trim()
-            require(range.isNotEmpty()) { "请填写 IP 段或地址" }
-            copy(ipFile = "", ipRange = range)
+    val resolved =
+        when (mode) {
+            IPSourceMode.IPV6 ->
+                copy(
+                    ipFile = bundledIpv6ListPath,
+                    ipRange = "",
+                )
+            IPSourceMode.RANGE -> {
+                val range = ipRange.trim()
+                if (range.isEmpty()) {
+                    throw SpeedTestValidationError.MissingIPSource
+                }
+                copy(ipFile = "", ipRange = range)
+            }
+            IPSourceMode.FILE -> {
+                val path =
+                    customIpFilePath.trim().ifEmpty { ipFile.trim() }
+                if (path.isEmpty()) {
+                    throw SpeedTestValidationError.MissingIPSource
+                }
+                copy(ipFile = path, ipRange = "")
+            }
         }
-        IPSourceMode.FILE -> {
-            val path =
-                customIpFilePath.trim().ifEmpty { ipFile.trim() }
-            require(path.isNotEmpty()) { "请选择 IP 地址文件" }
-            copy(ipFile = path, ipRange = "")
+    return if (validate) {
+        resolved.validated(checkIpFileExists = checkIpFileExists && mode != IPSourceMode.RANGE)
+    } else {
+        resolved
+    }
+}
+
+/**
+ * Preview validation for UI without requiring a real bundled file path yet.
+ * RANGE validates fully; IPV6/FILE only check non-path fields unless paths provided.
+ */
+fun SpeedTestParameters.previewValidationMessage(
+    mode: IPSourceMode,
+    customIpFilePath: String = "",
+): String? {
+    return try {
+        when (mode) {
+            IPSourceMode.RANGE ->
+                copy(ipFile = "").validated(checkIpFileExists = false)
+            IPSourceMode.IPV6 ->
+                // Source path filled at run time; still validate numeric/mode fields.
+                copy(ipFile = "/preview/ipv6.txt", ipRange = "").validated(checkIpFileExists = false)
+            IPSourceMode.FILE -> {
+                val path = customIpFilePath.trim().ifEmpty { ipFile.trim() }
+                if (path.isEmpty()) throw SpeedTestValidationError.MissingIPSource
+                copy(ipFile = path, ipRange = "").validated(checkIpFileExists = false)
+            }
         }
+        null
+    } catch (error: SpeedTestValidationError) {
+        error.message
     }
 }
 
