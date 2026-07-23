@@ -1,6 +1,7 @@
 package dev.viasix.app.cfst
 
 import android.util.Log
+import dev.viasix.core.speedtest.CfstOutputParser
 import dev.viasix.core.speedtest.SpeedTestParameters
 import dev.viasix.core.speedtest.SpeedTestResult
 import dev.viasix.core.speedtest.SpeedTestResultParser
@@ -13,6 +14,9 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * One-at-a-time cancellable CFST process runner.
  * Mirrors macOS [CfstRunner] lifecycle: spawn → poll → parse result.csv → reap.
+ *
+ * @param onProgress invoked from the process reader thread when CFST bar progress changes
+ *   (`current / total`). Callers that update Compose state must hop to the main thread.
  */
 class CfstRunner {
     private val processRef = AtomicReference<Process?>(null)
@@ -40,13 +44,14 @@ class CfstRunner {
         binary: File,
         workDir: File,
         parameters: SpeedTestParameters,
+        onProgress: ((current: Int, total: Int, phaseHint: String?) -> Unit)? = null,
     ): CfstRunOutcome {
         if (!activeRunner.compareAndSet(null, this)) {
             return CfstRunOutcome.Failed("已有测速任务正在运行")
         }
         cancelRequested.set(false)
         return try {
-            runInner(binary, workDir, parameters)
+            runInner(binary, workDir, parameters, onProgress)
         } finally {
             processRef.set(null)
             activeRunner.compareAndSet(this, null)
@@ -58,6 +63,7 @@ class CfstRunner {
         binary: File,
         workDir: File,
         parameters: SpeedTestParameters,
+        onProgress: ((current: Int, total: Int, phaseHint: String?) -> Unit)?,
     ): CfstRunOutcome {
         if (!binary.isFile) {
             return CfstRunOutcome.Failed(
@@ -111,14 +117,47 @@ class CfstRunner {
             }
         processRef.set(process)
 
-        // Drain stdout so the pipe never blocks.
+        // CFST redraws progress with `\r` (no newline). Read chunks and parse live bars.
+        val outputParser = CfstOutputParser.Stream()
         val logThread =
             Thread(
                 {
                     try {
-                        process.inputStream.bufferedReader().useLines { lines ->
-                            lines.forEach { line ->
-                                if (line.isNotBlank()) logInfo(line)
+                        process.inputStream.bufferedReader().use { reader ->
+                            val buf = CharArray(1_024)
+                            while (true) {
+                                val n = reader.read(buf)
+                                if (n < 0) break
+                                if (n == 0) continue
+                                val chunk = String(buf, 0, n)
+                                val progress = outputParser.consume(chunk)
+                                if (progress != null) {
+                                    onProgress?.invoke(
+                                        progress.current,
+                                        progress.total,
+                                        outputParser.lastPhaseHint(),
+                                    )
+                                }
+                                // Log only newline-delimited slices to avoid flooding logcat
+                                // with partial progress redraws.
+                                chunk.split('\n', '\r').forEach { line ->
+                                    val clean =
+                                        CfstOutputParser.stripAnsi(line)
+                                            .trim()
+                                    if (clean.isNotEmpty() &&
+                                        !clean.contains('[') &&
+                                        clean.length < 400
+                                    ) {
+                                        logInfo(clean)
+                                    }
+                                }
+                            }
+                            outputParser.finish()?.let { progress ->
+                                onProgress?.invoke(
+                                    progress.current,
+                                    progress.total,
+                                    outputParser.lastPhaseHint(),
+                                )
                             }
                         }
                     } catch (_: Exception) {
@@ -132,6 +171,11 @@ class CfstRunner {
         while (true) {
             if (cancelRequested.get()) {
                 terminateProcess(process)
+                try {
+                    logThread.join(1_000)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
                 return CfstRunOutcome.Cancelled
             }
             try {
@@ -140,8 +184,19 @@ class CfstRunner {
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
                 process.destroyForcibly()
+                try {
+                    logThread.join(1_000)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
                 return CfstRunOutcome.Cancelled
             }
+        }
+
+        try {
+            logThread.join(2_000)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
         }
 
         if (cancelRequested.get()) {

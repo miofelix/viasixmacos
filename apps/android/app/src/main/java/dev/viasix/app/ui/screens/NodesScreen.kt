@@ -23,6 +23,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -126,6 +127,27 @@ fun NodesScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (speed.isRunning) {
+                        if (speed.hasProgress) {
+                            LinearProgressIndicator(
+                                progress = { speed.progressFraction },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(
+                                "${speed.progressCurrent} / ${speed.progressTotal}" +
+                                    "（${(speed.progressFraction * 100f).toInt()}%）",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Text(
+                                "等待 CFST 进度…",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     Text(
                         speed.parameterSummaryText,
                         style = MaterialTheme.typography.labelMedium,

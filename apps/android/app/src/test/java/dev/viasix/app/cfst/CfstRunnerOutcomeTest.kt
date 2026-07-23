@@ -174,6 +174,8 @@ class CfstRunnerOutcomeTest {
         val source = runner.readText()
         assertTrue(source.contains("CfstSslEnvironment.applyTo"))
         assertTrue(source.contains("没有任何 IP 通过测速"))
+        assertTrue(source.contains("CfstOutputParser.Stream"))
+        assertTrue(source.contains("onProgress"))
     }
 
     @Test

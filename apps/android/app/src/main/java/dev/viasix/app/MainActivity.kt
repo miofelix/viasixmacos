@@ -817,6 +817,26 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            fun applySpeedProgress(current: Int, total: Int, phaseHint: String?) {
+                if (total <= 0) return
+                val progress =
+                    dev.viasix.core.speedtest.CfstOutputParser.Progress(current, total)
+                logOnly { currentState ->
+                    if (!currentState.speedTest.isRunning) {
+                        currentState
+                    } else {
+                        currentState.copy(
+                            speedTest =
+                                currentState.speedTest.copy(
+                                    progressCurrent = current,
+                                    progressTotal = total,
+                                    message = progress.statusMessage(phaseHint),
+                                ),
+                        )
+                    }
+                }
+            }
+
             fun applySpeedOutcome(result: CfstRunOutcome, installOk: Boolean, nodeTest: Boolean) {
                 val componentInfo =
                     RuntimeComponentInfo(
@@ -846,6 +866,8 @@ class MainActivity : ComponentActivity() {
                                     it.speedTest.copy(
                                         isRunning = false,
                                         isNodeTest = false,
+                                        progressCurrent = 0,
+                                        progressTotal = 0,
                                         message =
                                             if (nodeTest) {
                                                 "当前节点测速完成：${result.results.size} 个结果"
@@ -878,6 +900,8 @@ class MainActivity : ComponentActivity() {
                                     it.speedTest.copy(
                                         isRunning = false,
                                         isNodeTest = false,
+                                        progressCurrent = 0,
+                                        progressTotal = 0,
                                         message = "测速已取消",
                                         binaryReady = installOk,
                                     ),
@@ -896,6 +920,8 @@ class MainActivity : ComponentActivity() {
                                     it.speedTest.copy(
                                         isRunning = false,
                                         isNodeTest = false,
+                                        progressCurrent = 0,
+                                        progressTotal = 0,
                                         message = result.message,
                                         binaryReady = installOk,
                                     ),
@@ -942,6 +968,8 @@ class MainActivity : ComponentActivity() {
                             it.speedTest.copy(
                                 isRunning = true,
                                 isNodeTest = false,
+                                progressCurrent = 0,
+                                progressTotal = 0,
                                 message = "正在测速…",
                             ),
                     ).appendLog("开始 IPv6 优选测速", LogLevel.Info, LogSource.Node)
@@ -958,7 +986,16 @@ class MainActivity : ComponentActivity() {
                                         customIpFilePath = customFile,
                                     )
                                 val work = CfstInstaller.workDir(this@MainActivity)
-                                cfstRunner.run(install.binary, work, parameters) to true
+                                cfstRunner.run(
+                                    install.binary,
+                                    work,
+                                    parameters,
+                                    onProgress = { current, total, phase ->
+                                        scope.launch(Dispatchers.Main.immediate) {
+                                            applySpeedProgress(current, total, phase)
+                                        }
+                                    },
+                                ) to true
                             } catch (error: Exception) {
                                 CfstRunOutcome.Failed(error.message ?: "CFST 安装失败") to false
                             }
@@ -1015,6 +1052,8 @@ class MainActivity : ComponentActivity() {
                             it.speedTest.copy(
                                 isRunning = true,
                                 isNodeTest = true,
+                                progressCurrent = 0,
+                                progressTotal = 0,
                                 message = "正在对当前节点测速 $normalized…",
                             ),
                     ).appendLog(
@@ -1029,7 +1068,16 @@ class MainActivity : ComponentActivity() {
                             try {
                                 val install = CfstInstaller.installIfNeeded(this@MainActivity)
                                 val work = CfstInstaller.workDir(this@MainActivity)
-                                cfstRunner.run(install.binary, work, parameters) to true
+                                cfstRunner.run(
+                                    install.binary,
+                                    work,
+                                    parameters,
+                                    onProgress = { current, total, phase ->
+                                        scope.launch(Dispatchers.Main.immediate) {
+                                            applySpeedProgress(current, total, phase)
+                                        }
+                                    },
+                                ) to true
                             } catch (error: Exception) {
                                 CfstRunOutcome.Failed(error.message ?: "CFST 安装失败") to false
                             }

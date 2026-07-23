@@ -92,6 +92,9 @@ data class SpeedTestUiState(
     val isNodeTest: Boolean = false,
     val message: String = "需要先执行 node scripts/fetch-cfst.mjs 下载 CFST（arm64）",
     val results: List<SpeedTestResult> = emptyList(),
+    /** Live CFST bar progress (macOS speedTest.current / total). 0 total = unknown. */
+    val progressCurrent: Int = 0,
+    val progressTotal: Int = 0,
     /** macOS [IPSourceMode] — Nodes picker excludes IPv4. */
     val ipSourceMode: IPSourceMode = IPSourceMode.IPV6,
     /** Full CFST parameters (macOS [SpeedTestParameters]). */
@@ -105,6 +108,17 @@ data class SpeedTestUiState(
 ) {
     val sortedResults: List<SpeedTestResult>
         get() = NodeResultSorting.sorted(results, sortKey, sortAscending)
+
+    val hasProgress: Boolean
+        get() = isRunning && progressTotal > 0
+
+    val progressFraction: Float
+        get() =
+            if (progressTotal <= 0) {
+                0f
+            } else {
+                (progressCurrent.toFloat() / progressTotal.toFloat()).coerceIn(0f, 1f)
+            }
 
     val parameterSummaryText: String
         get() = parameters.parameterSummary(ipSourceMode)
