@@ -337,6 +337,9 @@ class ViaSixVpnService : VpnService() {
             Builder()
                 .setSession("ViaSix")
                 .setMtu(vpnMtu)
+                // Tun2SocksEngine uses blocking FileChannel reads; the platform default
+                // is a non-blocking TUN descriptor whose EAGAIN would stop the reader.
+                .setBlocking(fullTunnel)
                 .addAddress("10.10.0.2", 32)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(vpnMetered)
