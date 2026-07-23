@@ -5,6 +5,14 @@ import dev.viasix.app.mihomo.TrafficSnapshot
 import dev.viasix.app.state.RuntimeSnapshot
 import dev.viasix.app.vpn.ViaSixVpnService
 
+/** Stable identity for one published controller session; never exposed through UI state. */
+data class RuntimeSessionKey(
+    val processToken: String,
+    val secret: String,
+    val startedAtMillis: Long?,
+    val controllerPort: Int,
+)
+
 /** Last runtime state published by [ViaSixVpnService], available across UI process recreation. */
 data class SessionRuntimeStatus(
     val running: Boolean = false,
@@ -48,6 +56,22 @@ data class SessionRuntimeStatus(
             underlyingNetwork = underlyingNetwork,
         )
 }
+
+fun SessionRuntimeStatus.sessionKey(): RuntimeSessionKey? =
+    if (
+        phase == ConnectionPhase.RUNNING &&
+        processToken.isNotBlank() &&
+        secret.isNotBlank()
+    ) {
+        RuntimeSessionKey(
+            processToken = processToken,
+            secret = secret,
+            startedAtMillis = startedAtMillis,
+            controllerPort = controllerPort,
+        )
+    } else {
+        null
+    }
 
 class SessionRuntimeStore(context: Context) {
     private val prefs =

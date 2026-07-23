@@ -46,10 +46,12 @@ import dev.viasix.app.session.NotificationPermissionState
 import dev.viasix.app.session.POST_NOTIFICATIONS_PERMISSION
 import dev.viasix.app.session.ProfileDraftGate
 import dev.viasix.app.session.ProfileImportText
+import dev.viasix.app.session.RuntimeSessionKey
 import dev.viasix.app.session.SessionRuntimeStore
 import dev.viasix.app.session.SessionStartGate
 import dev.viasix.app.session.VpnPermissionState
 import dev.viasix.app.session.VpnSessionCommands
+import dev.viasix.app.session.sessionKey
 import dev.viasix.app.state.DelayTestState
 import dev.viasix.app.state.LogLevel
 import dev.viasix.app.state.LogSource
@@ -78,10 +80,10 @@ class MainActivity : ComponentActivity() {
     private var pendingNotificationStartReason: String? = null
     private lateinit var prefsStore: SessionPrefsStore
     private lateinit var runtimeStore: SessionRuntimeStore
-    private val trafficSampler = TrafficSampler()
+    private var trafficSampler = TrafficSampler()
     private val cfstRunner = CfstRunner()
     private var lastImportedEventId: Long = 0L
-    private var wasRunning: Boolean = false
+    private var trafficSessionKey: RuntimeSessionKey? = null
     /** Wall clock when STARTING began; used for start-timeout reconcile. */
     private var startingSinceMillis: Long = 0L
     private var onVpnPermissionResult: ((granted: Boolean) -> Unit)? = null
@@ -91,6 +93,11 @@ class MainActivity : ComponentActivity() {
     private var onRefreshBatteryOptimization: (() -> Unit)? = null
     private var onLaunchIntent: ((Intent) -> Unit)? = null
 
+    private fun resetTrafficSampling() {
+        trafficSampler = TrafficSampler()
+        trafficSessionKey = null
+    }
+
     private val vpnPermission =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val granted =
@@ -98,7 +105,7 @@ class MainActivity : ComponentActivity() {
                     VpnService.prepare(this) == null
             if (granted) {
                 pendingVpnStartReason?.let { reason ->
-                    trafficSampler.reset()
+                    resetTrafficSampling()
                     startingSinceMillis = System.currentTimeMillis()
                     startForegroundService(
                         VpnSessionCommands.buildStartIntent(
@@ -148,7 +155,7 @@ class MainActivity : ComponentActivity() {
         runtimeStore = SessionRuntimeStore(this)
         val initialPrefs = prefsStore.load()
         val initialRuntime = runtimeStore.load()
-        wasRunning = initialRuntime.running
+        trafficSessionKey = initialRuntime.sessionKey()
         val initial =
             SessionUiState.fromPrefs(initialPrefs).copy(
                 notificationPermission =
@@ -293,26 +300,35 @@ class MainActivity : ComponentActivity() {
 
             LaunchedEffect(Unit) {
                 while (true) {
-                    val runtimeStatus = runtimeStore.load()
-                    val running = runtimeStatus.running
-
-                    if (!running && wasRunning) {
-                        trafficSampler.reset()
+                    var runtimeStatus = runtimeStore.load()
+                    val sampleKey = runtimeStatus.sessionKey()
+                    if (sampleKey != trafficSessionKey) {
+                        resetTrafficSampling()
+                        trafficSessionKey = sampleKey
                     }
-                    wasRunning = running
 
-                    val traffic =
-                        if (running && runtimeStatus.secret.isNotBlank()) {
+                    var traffic = TrafficSnapshot.Idle
+                    if (sampleKey != null) {
+                        val sampler = trafficSampler
+                        val sampled =
                             withContext(Dispatchers.IO) {
-                                trafficSampler.sample(
-                                    "127.0.0.1",
-                                    runtimeStatus.controllerPort,
-                                    runtimeStatus.secret,
+                                sampler.sample(
+                                    host = "127.0.0.1",
+                                    port = runtimeStatus.controllerPort,
+                                    secret = runtimeStatus.secret,
                                 )
                             }
-                        } else {
-                            TrafficSnapshot.Idle
+                        val latestRuntime = runtimeStore.load()
+                        val latestKey = latestRuntime.sessionKey()
+                        runtimeStatus = latestRuntime
+                        if (latestKey == sampleKey && trafficSampler === sampler) {
+                            traffic = sampled
+                        } else if (trafficSampler === sampler) {
+                            resetTrafficSampling()
+                            trafficSessionKey = latestKey
                         }
+                    }
+                    val running = runtimeStatus.running
 
                     // Merge VPN service events into UI logs (newest first, skip known).
                     val imported = mutableListOf<Triple<Long, String, LogLevel>>()
@@ -418,7 +434,7 @@ class MainActivity : ComponentActivity() {
                     // Start timeout begins only after consent, not while the system dialog is open.
                     startingSinceMillis = 0L
                 } else {
-                    trafficSampler.reset()
+                    resetTrafficSampling()
                     startingSinceMillis = System.currentTimeMillis()
                     startForegroundService(
                         VpnSessionCommands.buildStartIntent(
@@ -610,7 +626,7 @@ class MainActivity : ComponentActivity() {
                     Intent(this@MainActivity, ViaSixVpnService::class.java)
                         .setAction(ViaSixVpnService.ACTION_STOP),
                 )
-                trafficSampler.reset()
+                resetTrafficSampling()
                 startingSinceMillis = 0L
                 update {
                     it.copy(connectionPhase = ConnectionPhase.STOPPING)
@@ -1083,6 +1099,7 @@ class MainActivity : ComponentActivity() {
             fun detectExitIp() {
                 val detectionMode = state.exitIP.mode
                 val detectionEndpoint = state.exitIP.endpoint
+                val detectionSessionKey = runtimeStore.load().sessionKey()
                 val proxy =
                     ExitIPRoutePolicy.proxyForRuntime(
                         running = state.runtime.running,
@@ -1099,6 +1116,7 @@ class MainActivity : ComponentActivity() {
                         )
                     return current.exitIP.mode == detectionMode &&
                         currentEndpoint == detectionServiceEndpoint &&
+                        runtimeStore.load().sessionKey() == detectionSessionKey &&
                         ExitIPRoutePolicy.routeForRuntime(current.runtime.running) == route
                 }
                 update {
@@ -1188,35 +1206,55 @@ class MainActivity : ComponentActivity() {
                     }
                     return
                 }
+                val runtime = runtimeStore.load()
+                val delaySessionKey = runtime.sessionKey()
+                if (delaySessionKey == null) {
+                    update {
+                        it.appendLog(
+                            "延迟测试会话已变化，请等待连接稳定后重试",
+                            LogLevel.Warning,
+                            LogSource.Proxy,
+                        )
+                    }
+                    return
+                }
                 update {
                     it.copy(delayTest = DelayTestState(isRunning = true))
                         .appendLog("测试代理延迟：$name", LogLevel.Info, LogSource.Proxy)
                 }
                 scope.launch {
-                    val secret =
-                        getSharedPreferences(ViaSixVpnService.RUNTIME_PREFS, MODE_PRIVATE)
-                            .getString(ViaSixVpnService.KEY_SECRET, "")
-                            .orEmpty()
                     val result =
                         withContext(Dispatchers.IO) {
                             ControllerClient.proxyDelay(
                                 host = "127.0.0.1",
-                                port = state.runtime.controllerPort,
-                                secret = secret,
+                                port = runtime.controllerPort,
+                                secret = runtime.secret,
                                 proxyName = name,
                             )
                         }
                     update {
-                        it.copy(delayTest = DelayTestState(isRunning = false, last = result))
-                            .appendLog(
-                                if (result.ok) {
-                                    "延迟 $name：${result.message}"
-                                } else {
-                                    "延迟测试失败：$name · ${result.message}"
-                                },
-                                if (result.ok) LogLevel.Success else LogLevel.Error,
-                                LogSource.Proxy,
-                            )
+                        if (
+                            runtimeStore.load().sessionKey() != delaySessionKey ||
+                            it.profileSummary.primary?.name != name
+                        ) {
+                            it.copy(delayTest = it.delayTest.copy(isRunning = false))
+                                .appendLog(
+                                    "延迟测试会话或节点已变化，已忽略旧结果",
+                                    LogLevel.Warning,
+                                    LogSource.Proxy,
+                                )
+                        } else {
+                            it.copy(delayTest = DelayTestState(isRunning = false, last = result))
+                                .appendLog(
+                                    if (result.ok) {
+                                        "延迟 $name：${result.message}"
+                                    } else {
+                                        "延迟测试失败：$name · ${result.message}"
+                                    },
+                                    if (result.ok) LogLevel.Success else LogLevel.Error,
+                                    LogSource.Proxy,
+                                )
+                        }
                     }
                 }
             }
