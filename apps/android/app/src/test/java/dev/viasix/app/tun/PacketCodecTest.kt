@@ -140,6 +140,26 @@ class PacketCodecTest {
     }
 
     @Test
+    fun tcpAdvertisedWindow_roundTrips() {
+        val bytes =
+            Packet.buildIp6Tcp(
+                source = remote6,
+                destination = client6,
+                sourcePort = 443,
+                destPort = 40_000,
+                seq = 1_000L,
+                ack = 2_001L,
+                flags = Packet.ACK,
+                payload = ByteArray(0),
+                window = 1_234,
+            )
+        val buffer = ByteBuffer.wrap(bytes)
+        val tcp = Packet.parseTcp(buffer, Packet.parseIp6(buffer)!!)!!
+
+        assertEquals(1_234, tcp.window)
+    }
+
+    @Test
     fun ipv6Udp_roundTrip() {
         val payload = "quic".toByteArray()
         val bytes =

@@ -370,8 +370,10 @@ internal object Packet {
         payload: ByteArray,
         maximumSegmentSize: Int? = null,
         windowScale: Int? = null,
+        window: Int = TCP_WINDOW_SIZE,
     ): ByteArray {
         val options = tcpOptions(maximumSegmentSize, windowScale, flags)
+        require(window in 0..TCP_WINDOW_SIZE) { "TCP window must be 0..$TCP_WINDOW_SIZE" }
         requireBuildFields(
             source,
             destination,
@@ -400,7 +402,7 @@ internal object Packet {
         buf.putInt(ack.toInt())
         buf.put(((tcpHeaderSize / 4) shl 4).toByte())
         buf.put(flags.toByte())
-        buf.putShort(TCP_WINDOW_SIZE.toShort())
+        buf.putShort(window.toShort())
         buf.putShort(0) // checksum
         buf.putShort(0) // urgent
         buf.put(options)
@@ -477,8 +479,10 @@ internal object Packet {
         payload: ByteArray,
         maximumSegmentSize: Int? = null,
         windowScale: Int? = null,
+        window: Int = TCP_WINDOW_SIZE,
     ): ByteArray {
         val options = tcpOptions(maximumSegmentSize, windowScale, flags)
+        require(window in 0..TCP_WINDOW_SIZE) { "TCP window must be 0..$TCP_WINDOW_SIZE" }
         requireBuildFields(
             source,
             destination,
@@ -505,7 +509,7 @@ internal object Packet {
         buf.putInt(ack.toInt())
         buf.put(((tcpHeaderSize / 4) shl 4).toByte())
         buf.put(flags.toByte())
-        buf.putShort(TCP_WINDOW_SIZE.toShort())
+        buf.putShort(window.toShort())
         buf.putShort(0)
         buf.putShort(0)
         buf.put(options)

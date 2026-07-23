@@ -462,13 +462,13 @@ class Tun2SocksEngine(
                     enqueueAck(session)
                     return
                 }
+                session.clientNextSeq =
+                    TcpSequence.advance(tcp.seq, payloadLength = tcp.payloadLength)
                 if (!ensureTcpUpstreamWriter(key, session)) {
                     Log.w(TAG, "TCP upstream writer limit reached for $key")
                     rejectTcpSession(key, session)
                     return
                 }
-                session.clientNextSeq =
-                    TcpSequence.advance(tcp.seq, payloadLength = tcp.payloadLength)
                 enqueueAck(session)
             }
         }
@@ -740,6 +740,7 @@ class Tun2SocksEngine(
                 payload = payload,
                 maximumSegmentSize = maximumSegmentSize,
                 windowScale = windowScale,
+                window = session.upstream.advertisedWindow(),
             )
         } else {
             Packet.buildIp4Tcp(
@@ -753,6 +754,7 @@ class Tun2SocksEngine(
                 payload = payload,
                 maximumSegmentSize = maximumSegmentSize,
                 windowScale = windowScale,
+                window = session.upstream.advertisedWindow(),
             )
         }
 
@@ -792,7 +794,9 @@ class Tun2SocksEngine(
                 if (payload != null) {
                     output.write(payload)
                     output.flush()
-                    session.upstream.complete(payload.size)
+                    if (session.upstream.complete(payload.size)) {
+                        session.windowUpdatePending.set(true)
+                    }
                     idleSinceMs = monotonicTimeMs()
                     continue
                 }
@@ -1204,6 +1208,13 @@ class Tun2SocksEngine(
         for ((key, session) in sessions.entries) {
             if (
                 sessions[key] === session &&
+                    session.windowUpdatePending.compareAndSet(true, false) &&
+                    !enqueueAck(session)
+            ) {
+                session.windowUpdatePending.set(true)
+            }
+            if (
+                sessions[key] === session &&
                     !session.handshake.isComplete &&
                     session.handshakeDeadlineMs > 0L &&
                     nowMs >= session.handshakeDeadlineMs
@@ -1257,7 +1268,7 @@ class Tun2SocksEngine(
         }
     }
 
-    private fun enqueueAck(session: TcpSession) {
+    private fun enqueueAck(session: TcpSession): Boolean =
         enqueuePacket(
             buildTcpPacket(
                 session = session,
@@ -1267,7 +1278,6 @@ class Tun2SocksEngine(
                 payload = ByteArray(0),
             ),
         )
-    }
 
     private fun enqueueChallengeAck(session: TcpSession) {
         if (session.challengeAcks.tryAcquire(monotonicTimeMs())) enqueueAck(session)
@@ -1319,6 +1329,7 @@ class Tun2SocksEngine(
         val retransmissions = TcpRetransmissionQueue()
         val closeState = TcpCloseState()
         val challengeAcks = TcpChallengeAckLimiter()
+        val windowUpdatePending = AtomicBoolean(false)
         val upstream = TcpUpstreamQueue()
         val outputShutdown = AtomicBoolean(false)
         val downstreamReaderStarted = AtomicBoolean(false)

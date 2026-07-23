@@ -21,6 +21,8 @@ class TcpUpstreamQueue(
                 !cancelled && (queue.isNotEmpty() || inFlightSegments > 0)
             }
 
+    fun advertisedWindow(): Int = synchronized(monitor) { availableBytes() }
+
     fun offer(payload: ByteArray): Boolean =
         synchronized(monitor) {
             if (cancelled || payload.isEmpty()) return@synchronized !cancelled
@@ -58,14 +60,15 @@ class TcpUpstreamQueue(
             payload
         }
 
-    fun complete(payloadLength: Int) {
+    fun complete(payloadLength: Int): Boolean =
         synchronized(monitor) {
-            if (cancelled || inFlightSegments <= 0) return
+            if (cancelled || inFlightSegments <= 0) return@synchronized false
+            val wasClosed = availableBytes() == 0
             bufferedBytes = (bufferedBytes - payloadLength.coerceAtLeast(0)).coerceAtLeast(0)
             inFlightSegments -= 1
             monitor.notifyAll()
+            wasClosed && availableBytes() > 0
         }
-    }
 
     fun awaitEmpty(timeoutMs: Long): Boolean =
         synchronized(monitor) {
@@ -94,6 +97,11 @@ class TcpUpstreamQueue(
             inFlightSegments = 0
             monitor.notifyAll()
         }
+    }
+
+    private fun availableBytes(): Int {
+        if (cancelled || queue.size + inFlightSegments >= maxSegments) return 0
+        return (maxBytes - bufferedBytes).coerceIn(0, Packet.TCP_WINDOW_SIZE)
     }
 
     private companion object {

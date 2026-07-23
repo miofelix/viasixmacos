@@ -3,6 +3,7 @@ package dev.viasix.app.tun
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.net.InetAddress
 import java.nio.ByteBuffer
@@ -85,6 +86,23 @@ class PacketValidationTest {
         duplicate.position(Packet.TCP_HEADER_SIZE)
         duplicate.put(byteArrayOf(3, 3, 1, 1, 3, 3, 2, 0))
         assertNull(Packet.parseTcp(duplicate, payloadOffset = 0, l4Length = duplicate.capacity()))
+    }
+
+    @Test
+    fun rejectsInvalidAdvertisedWindowWhenBuildingTcp() {
+        assertThrows(IllegalArgumentException::class.java) {
+            Packet.buildIp4Tcp(
+                source = InetAddress.getByName("10.10.0.2"),
+                destination = InetAddress.getByName("1.1.1.1"),
+                sourcePort = 53_000,
+                destPort = 443,
+                seq = 1,
+                ack = 2,
+                flags = Packet.ACK,
+                payload = ByteArray(0),
+                window = 65_536,
+            )
+        }
     }
 
     @Test
