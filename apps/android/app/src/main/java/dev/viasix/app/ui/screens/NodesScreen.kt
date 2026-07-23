@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import dev.viasix.app.runtime.RuntimeComponentId
 import dev.viasix.app.state.SessionUiState
 import dev.viasix.app.ui.AppSection
 import dev.viasix.app.ui.theme.AppPageHeader
@@ -70,6 +71,7 @@ fun NodesScreen(
     val colors = LocalViaSixColors.current
     val looksValid = Ipv6Address.isValid(state.selectedAddress)
     val speed = state.speedTest
+    val cfstRepairing = state.runtimeComponents.repairing == RuntimeComponentId.CFST
 
     Column(Modifier.fillMaxSize()) {
         AppPageHeader(
@@ -246,12 +248,13 @@ fun NodesScreen(
                     ) {
                         Button(
                             onClick = onStartSpeedTest,
-                            enabled = speed.canStartSpeedTest,
+                            enabled = speed.canStartSpeedTest && !cfstRepairing,
                             modifier = Modifier.weight(1f),
                         ) {
                             Text(
                                 when {
                                     speed.isRunning && !speed.isNodeTest -> "测速中…"
+                                    cfstRepairing -> "CFST 修复中…"
                                     else -> "开始测速"
                                 },
                             )
@@ -266,12 +269,14 @@ fun NodesScreen(
                     }
                     OutlinedButton(
                         onClick = onStartCurrentNodeTest,
-                        enabled = !speed.isRunning && looksValid,
+                        enabled = !speed.isRunning && looksValid && !cfstRepairing,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
                             if (speed.isRunning && speed.isNodeTest) {
                                 "当前节点测速中…"
+                            } else if (cfstRepairing) {
+                                "CFST 修复中…"
                             } else {
                                 "当前节点测速"
                             },

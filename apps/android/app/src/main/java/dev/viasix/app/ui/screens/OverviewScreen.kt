@@ -51,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.viasix.app.BuildConfig
 import dev.viasix.app.net.ExitIPDetectionMode
+import dev.viasix.app.runtime.RuntimeComponentId
 import dev.viasix.app.session.AppRoutingMode
 import dev.viasix.app.session.ConnectionPhase
 import dev.viasix.app.state.LogLevel
@@ -205,15 +206,22 @@ fun OverviewScreen(
                                 }
                             }
                             ConnectionPhase.STOPPED -> {
+                                val mihomoRepairing =
+                                    state.runtimeComponents.repairing == RuntimeComponentId.MIHOMO
                                 Button(
                                     onClick = onStart,
-                                    enabled = profileReady || state.routingMode == RoutingMode.DIRECT,
+                                    enabled =
+                                        !mihomoRepairing &&
+                                            (profileReady || state.routingMode == RoutingMode.DIRECT),
                                     modifier =
                                         Modifier
                                             .height(52.dp)
                                             .padding(start = VisualStyle.spacing4),
                                 ) {
-                                    Text("连接", fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        if (mihomoRepairing) "内核修复中…" else "连接",
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
                                 }
                             }
                         }
@@ -621,6 +629,8 @@ fun OverviewScreen(
                     // macOS Overview “测试节点” configuration CFST on selected IPv6.
                     val nodeTestRunning =
                         state.speedTest.isRunning && state.speedTest.isNodeTest
+                    val cfstRepairing =
+                        state.runtimeComponents.repairing == RuntimeComponentId.CFST
                     OutlinedButton(
                         onClick = {
                             if (nodeTestRunning) {
@@ -631,13 +641,14 @@ fun OverviewScreen(
                         },
                         enabled =
                             nodeTestRunning ||
-                                (selectedIsIpv6 && !state.speedTest.isRunning),
+                                (selectedIsIpv6 && !state.speedTest.isRunning && !cfstRepairing),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
                             when {
                                 nodeTestRunning -> "停止测试"
                                 state.speedTest.isRunning -> "测速占用中…"
+                                cfstRepairing -> "CFST 修复中…"
                                 else -> "测试节点"
                             },
                         )

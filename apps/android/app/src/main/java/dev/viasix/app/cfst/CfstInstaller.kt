@@ -28,6 +28,7 @@ object CfstInstaller {
         val ipv6List: File,
     )
 
+    @Synchronized
     fun installIfNeeded(
         context: Context,
         force: Boolean = false,

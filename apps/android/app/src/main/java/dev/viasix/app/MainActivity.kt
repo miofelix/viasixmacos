@@ -472,6 +472,17 @@ class MainActivity : ComponentActivity() {
             }
 
             fun startVpn(reason: String = "connect") {
+                if (state.runtimeComponents.repairing == RuntimeComponentId.MIHOMO) {
+                    update {
+                        it.appendLog(
+                            "mihomo 正在修复，完成后再启动 VPN",
+                            LogLevel.Warning,
+                            LogSource.System,
+                            asNotice = true,
+                        )
+                    }
+                    return
+                }
                 // Avoid double-start from tile + home; allow apply-node restart while running.
                 when (state.connectionPhase) {
                     ConnectionPhase.STARTING -> return
@@ -868,6 +879,17 @@ class MainActivity : ComponentActivity() {
                     }
                     return
                 }
+                if (state.runtimeComponents.repairing == RuntimeComponentId.CFST) {
+                    update {
+                        it.appendLog(
+                            "CFST 正在修复，完成后再开始测速",
+                            LogLevel.Warning,
+                            LogSource.System,
+                            asNotice = true,
+                        )
+                    }
+                    return
+                }
                 state.speedTest.parameterValidationMessage?.let { msg ->
                     update {
                         it.appendLog(msg, LogLevel.Error, LogSource.Node)
@@ -912,6 +934,17 @@ class MainActivity : ComponentActivity() {
                 if (state.speedTest.isRunning || cfstRunner.isRunning) {
                     update {
                         it.appendLog("测速已在进行中", LogLevel.Warning, LogSource.Node)
+                    }
+                    return
+                }
+                if (state.runtimeComponents.repairing == RuntimeComponentId.CFST) {
+                    update {
+                        it.appendLog(
+                            "CFST 正在修复，完成后再测试当前节点",
+                            LogLevel.Warning,
+                            LogSource.System,
+                            asNotice = true,
+                        )
                     }
                     return
                 }

@@ -18,6 +18,7 @@ object MihomoInstaller {
     const val ASSET_ARM64 = "mihomo/mihomo-arm64"
     const val BINARY_NAME = "mihomo"
 
+    @Synchronized
     fun installIfNeeded(
         context: Context,
         force: Boolean = false,
