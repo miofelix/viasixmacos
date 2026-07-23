@@ -71,17 +71,43 @@ enum class ConnectionPhase {
             }
 
         /**
-         * After a long [STARTING] without runtime, treat as failed start.
+         * After a long UI [STARTING] without reaching [RUNNING], treat as failed start.
+         *
+         * Covers both “service never left STOPPED” (permission / never launched) and
+         * “service stuck in STARTING” (worker hung after publishing STARTING). A late
+         * [RUNNING] publication still wins.
          */
         fun afterStartTimeout(
             current: ConnectionPhase,
             runtimePhase: ConnectionPhase,
         ): ConnectionPhase =
             when {
-                runtimePhase != STOPPED -> runtimePhase
+                runtimePhase == RUNNING -> RUNNING
                 current == STARTING -> STOPPED
                 else -> current
             }
+
+        /**
+         * Whether the Activity poll loop should apply [afterStartTimeout].
+         * [startingSinceMillis] is wall-clock when the UI entered STARTING for a
+         * real start attempt (0 means no timed attempt).
+         */
+        fun shouldApplyStartTimeout(
+            uiPhase: ConnectionPhase,
+            runtimePhase: ConnectionPhase,
+            runtimeRunning: Boolean,
+            startingSinceMillis: Long,
+            nowMillis: Long,
+            timeoutMs: Long,
+        ): Boolean {
+            if (uiPhase != STARTING || runtimeRunning || startingSinceMillis <= 0L) {
+                return false
+            }
+            if (runtimePhase == RUNNING) {
+                return false
+            }
+            return nowMillis - startingSinceMillis > timeoutMs
+        }
 
         fun parse(value: String?): ConnectionPhase? =
             entries.firstOrNull { it.wire.equals(value, ignoreCase = true) }

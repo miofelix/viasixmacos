@@ -302,35 +302,16 @@ class MainActivity : ComponentActivity() {
 
             LaunchedEffect(Unit) {
                 while (true) {
+                    // Publish phase/events before any controller I/O. Traffic sampling can
+                    // stall on some OEM VPN stacks even with URLConnection timeouts, and must
+                    // never freeze connectionPhase updates (UI stuck on 连接中 while runtime
+                    // is already RUNNING).
                     var runtimeStatus = runtimeStore.load()
                     val sampleKey = runtimeStatus.sessionKey()
                     if (sampleKey != trafficSessionKey) {
                         resetTrafficSampling()
                         trafficSessionKey = sampleKey
                     }
-
-                    var traffic = TrafficSnapshot.Idle
-                    if (sampleKey != null) {
-                        val sampler = trafficSampler
-                        val sampled =
-                            withContext(Dispatchers.IO) {
-                                sampler.sample(
-                                    host = "127.0.0.1",
-                                    port = runtimeStatus.controllerPort,
-                                    secret = runtimeStatus.secret,
-                                )
-                            }
-                        val latestRuntime = runtimeStore.load()
-                        val latestKey = latestRuntime.sessionKey()
-                        runtimeStatus = latestRuntime
-                        if (latestKey == sampleKey && trafficSampler === sampler) {
-                            traffic = sampled
-                        } else if (trafficSampler === sampler) {
-                            resetTrafficSampling()
-                            trafficSessionKey = latestKey
-                        }
-                    }
-                    val running = runtimeStatus.running
 
                     // Merge VPN service events into UI logs (newest first, skip known).
                     val imported = mutableListOf<Triple<Long, String, LogLevel>>()
@@ -355,20 +336,30 @@ class MainActivity : ComponentActivity() {
                     } catch (_: Exception) {
                     }
 
+                    var stopStuckStartup = false
+                    val running = runtimeStatus.running
                     logOnly { current ->
                         var phase =
                             ConnectionPhase.reconcile(
                                 current.connectionPhase,
                                 runtimeStatus.phase,
                             )
-                        // STARTING without runtime for too long → failed start.
+                        // STARTING without RUNNING for too long → failed start.
+                        // Includes runtime stuck in STARTING (not only never-started STOPPED).
+                        val now = System.currentTimeMillis()
                         if (
-                            phase == ConnectionPhase.STARTING &&
-                                !running &&
-                                runtimeStatus.phase == ConnectionPhase.STOPPED &&
-                                startingSinceMillis > 0L &&
-                                System.currentTimeMillis() - startingSinceMillis > START_TIMEOUT_MS
+                            ConnectionPhase.shouldApplyStartTimeout(
+                                uiPhase = phase,
+                                runtimePhase = runtimeStatus.phase,
+                                runtimeRunning = running,
+                                startingSinceMillis = startingSinceMillis,
+                                nowMillis = now,
+                                timeoutMs = START_TIMEOUT_MS,
+                            )
                         ) {
+                            if (runtimeStatus.phase == ConnectionPhase.STARTING) {
+                                stopStuckStartup = true
+                            }
                             phase =
                                 ConnectionPhase.afterStartTimeout(
                                     current.connectionPhase,
@@ -391,7 +382,7 @@ class MainActivity : ComponentActivity() {
                             }
                         var next =
                             current.copy(
-                                runtime = runtimeStatus.toUiSnapshot(traffic),
+                                runtime = runtimeStatus.toUiSnapshot(current.runtime.traffic),
                                 connectionPhase = phase,
                                 exitIP = exitIP,
                             )
@@ -418,6 +409,50 @@ class MainActivity : ComponentActivity() {
                                 )
                         }
                         next
+                    }
+                    if (stopStuckStartup) {
+                        // Tear down a VPN worker that published STARTING but never RUNNING.
+                        startService(
+                            Intent(this@MainActivity, ViaSixVpnService::class.java)
+                                .setAction(ViaSixVpnService.ACTION_STOP),
+                        )
+                    }
+
+                    if (sampleKey != null) {
+                        val sampler = trafficSampler
+                        val port = runtimeStatus.controllerPort
+                        val secret = runtimeStatus.secret
+                        val sampled =
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    kotlinx.coroutines.withTimeout(6_000L) {
+                                        sampler.sample(
+                                            host = "127.0.0.1",
+                                            port = port,
+                                            secret = secret,
+                                        )
+                                    }
+                                }
+                            } catch (_: Exception) {
+                                TrafficSnapshot.Idle
+                            }
+                        val latestRuntime = runtimeStore.load()
+                        val latestKey = latestRuntime.sessionKey()
+                        if (latestKey == sampleKey && trafficSampler === sampler) {
+                            logOnly { current ->
+                                current.copy(
+                                    runtime = latestRuntime.toUiSnapshot(sampled),
+                                    connectionPhase =
+                                        ConnectionPhase.reconcile(
+                                            current.connectionPhase,
+                                            latestRuntime.phase,
+                                        ),
+                                )
+                            }
+                        } else if (trafficSampler === sampler) {
+                            resetTrafficSampling()
+                            trafficSessionKey = latestKey
+                        }
                     }
 
                     kotlinx.coroutines.delay(1200)

@@ -59,6 +59,72 @@ class ConnectionPhaseTest {
     }
 
     @Test
+    fun afterStartTimeout_clearsStuckRuntimeStarting() {
+        // Service published STARTING but never reached RUNNING (hung worker).
+        assertEquals(
+            ConnectionPhase.STOPPED,
+            ConnectionPhase.afterStartTimeout(
+                ConnectionPhase.STARTING,
+                ConnectionPhase.STARTING,
+            ),
+        )
+        // Late success still wins.
+        assertEquals(
+            ConnectionPhase.RUNNING,
+            ConnectionPhase.afterStartTimeout(
+                ConnectionPhase.STARTING,
+                ConnectionPhase.RUNNING,
+            ),
+        )
+    }
+
+    @Test
+    fun shouldApplyStartTimeout_coversStoppedAndStuckStarting() {
+        val t0 = 1_000_000L
+        val timeout = 25_000L
+        assertTrue(
+            ConnectionPhase.shouldApplyStartTimeout(
+                uiPhase = ConnectionPhase.STARTING,
+                runtimePhase = ConnectionPhase.STOPPED,
+                runtimeRunning = false,
+                startingSinceMillis = t0,
+                nowMillis = t0 + timeout + 1,
+                timeoutMs = timeout,
+            ),
+        )
+        assertTrue(
+            ConnectionPhase.shouldApplyStartTimeout(
+                uiPhase = ConnectionPhase.STARTING,
+                runtimePhase = ConnectionPhase.STARTING,
+                runtimeRunning = false,
+                startingSinceMillis = t0,
+                nowMillis = t0 + timeout + 1,
+                timeoutMs = timeout,
+            ),
+        )
+        assertFalse(
+            ConnectionPhase.shouldApplyStartTimeout(
+                uiPhase = ConnectionPhase.STARTING,
+                runtimePhase = ConnectionPhase.STARTING,
+                runtimeRunning = false,
+                startingSinceMillis = t0,
+                nowMillis = t0 + timeout - 1,
+                timeoutMs = timeout,
+            ),
+        )
+        assertFalse(
+            ConnectionPhase.shouldApplyStartTimeout(
+                uiPhase = ConnectionPhase.STARTING,
+                runtimePhase = ConnectionPhase.RUNNING,
+                runtimeRunning = true,
+                startingSinceMillis = t0,
+                nowMillis = t0 + timeout + 1,
+                timeoutMs = timeout,
+            ),
+        )
+    }
+
+    @Test
     fun reconcile_unexpectedDropFromRunning() {
         assertEquals(
             ConnectionPhase.STOPPED,
